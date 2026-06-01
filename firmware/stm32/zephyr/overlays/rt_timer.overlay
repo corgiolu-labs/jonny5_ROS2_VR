@@ -1,0 +1,38 @@
+/*
+ * RT loop tick source — TIM6 @ 1 kHz (hardware timer).
+ *
+ * TIM6 e' un "basic timer": ha solo contatore + interrupt di UPDATE, NESSUN
+ * pin I/O. Non puo' quindi entrare in conflitto con i PWM dei servo/pick&place
+ * (TIM1, TIM2, TIM8). Lo usiamo come sorgente di tick deterministica per il
+ * loop di controllo a 1 kHz, indipendente dalla granularita' dello scheduler
+ * RTOS (CONFIG_SYS_CLOCK_TICKS_PER_SEC=1000 -> tick = 1 ms, troppo grossolano).
+ *
+ * Il nodo timers6 NON e' nel DTS base del Nucleo-F446RE (eredita da f401, che
+ * non lo definisce), quindi lo dichiariamo qui sotto /soc — stesso pattern gia'
+ * usato per timers8 in pwm.overlay. I valori reg/clocks/resets/interrupts sono
+ * quelli ufficiali di stm32f405.dtsi (TIM6 @ 0x40001000, APB1 bit 4, IRQ 54).
+ *
+ * st,prescaler = 83 -> il driver counter STM32 imposta freq = tim_clk/(83+1).
+ * Con il clock APB1-timer del F446 (~84-90 MHz) la frequenza del contatore e'
+ * ~1 MHz: 1 ms = ~1000 conteggi, ampiamente entro i 16 bit di TIM6 (max 65535).
+ * counter_us_to_ticks() converte usando la freq REALE letta dal driver, quindi
+ * il periodo resta esattamente 1000 us a prescindere dal valore preciso del
+ * clock di bus.
+ */
+&{/soc} {
+	timers6: timers@40001000 {
+		compatible = "st,stm32-timers";
+		reg = <0x40001000 0x400>;
+		clocks = <&rcc STM32_CLOCK(APB1, 4U)>;
+		resets = <&rctl STM32_RESET(APB1, 4U)>;
+		interrupts = <54 0>;
+		interrupt-names = "global";
+		st,prescaler = <83>;
+		status = "okay";
+
+		rt_tick_counter: counter {
+			compatible = "st,stm32-counter";
+			status = "okay";
+		};
+	};
+};

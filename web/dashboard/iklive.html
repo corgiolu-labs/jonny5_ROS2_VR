@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <title>JONNY5 – IK Live · validazione cinematica</title>
+    <link rel="stylesheet" href="../shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+    <style>
+        :root {
+            --ikl-target: #00e5ff;
+            --ikl-tcp: #5dffa8;
+            --ikl-imu: #5db8ff;
+            --ikl-fk: #ff5577;
+            --ikl-warn: #ffb84d;
+            --ikl-bg: #02060c;
+        }
+
+        body { background: radial-gradient(ellipse at top, #0a1c30 0%, var(--ikl-bg) 70%); }
+
+        /* HERO cinematografica */
+        .ikl-hero {
+            background: linear-gradient(135deg, rgba(0,229,255,0.08), rgba(93,255,168,0.04));
+            border-left: 4px solid var(--ikl-target);
+            box-shadow: 0 4px 24px rgba(0,229,255,0.08);
+        }
+        .ikl-hero .hero-title {
+            background: linear-gradient(90deg, #00e5ff, #5dffa8, #5db8ff);
+            -webkit-background-clip: text; background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 800; letter-spacing: 0.04em;
+        }
+        .ikl-hero-pills {
+            display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.85rem;
+        }
+
+        /* Sezione collassabile */
+        .ikl-section { margin-bottom: 1.2rem; }
+        .ikl-section-header {
+            display:flex; align-items:center; justify-content:space-between;
+            cursor:pointer; user-select:none;
+            padding: 0.6rem 0; border-bottom: 1px solid rgba(0,229,255,0.18);
+            margin-bottom: 1rem;
+        }
+        .ikl-section-header h2 { font-size: 1rem; margin: 0; color: var(--text); letter-spacing: 0.03em; }
+        .ikl-section-header .chevron {
+            font-size: 0.85rem; color: var(--muted); transition: transform 0.2s;
+        }
+        .ikl-section-header.collapsed .chevron { transform: rotate(-90deg); }
+        .ikl-section-body { overflow: hidden; }
+
+        /* Vista 3D — la star del video */
+        #ikl-3d-wrap {
+            position: relative;
+            width: 100%;
+            height: 600px;
+            background: radial-gradient(ellipse at center, rgba(0,229,255,0.08), #02060c 75%);
+            border: 1px solid rgba(0,229,255,0.22);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 6px 36px rgba(0,229,255,0.05);
+        }
+        #ikl-3d-canvas { display: block; width: 100%; height: 100%; }
+        .ikl-overlay-tl {
+            position:absolute; top:14px; left:14px;
+            display:flex; gap:0.4rem;
+            background: rgba(2,6,12,0.7); backdrop-filter: blur(8px);
+            padding: 0.45rem 0.6rem; border-radius: 8px;
+            border: 1px solid rgba(0,229,255,0.22);
+            z-index: 5;
+        }
+        .ikl-overlay-tl .btn { padding: 0.32rem 0.65rem; font-size: 0.78rem; }
+        .ikl-overlay-tr {
+            position:absolute; top:14px; right:14px;
+            background: rgba(2,6,12,0.78); backdrop-filter: blur(8px);
+            padding: 0.55rem 0.8rem; border-radius: 8px;
+            border: 1px solid rgba(0,229,255,0.22);
+            font-size: 0.82rem; color: var(--text);
+            font-variant-numeric: tabular-nums;
+            z-index: 5;
+            min-width: 200px;
+        }
+        .ikl-overlay-tr .row { display:flex; justify-content:space-between; gap:0.6rem; padding: 1px 0; }
+        .ikl-overlay-tr .row span:first-child { color: var(--muted); }
+        .ikl-overlay-bl {
+            position:absolute; bottom:14px; left:14px;
+            background: rgba(2,6,12,0.7); backdrop-filter: blur(8px);
+            padding: 0.5rem 0.75rem; border-radius: 8px;
+            border: 1px solid rgba(0,229,255,0.22);
+            font-size: 0.74rem; color: var(--muted);
+            line-height: 1.6;
+            z-index: 5;
+        }
+        .ikl-overlay-bl .lg-dot {
+            display:inline-block; width: 12px; height: 12px;
+            border-radius: 50%; margin-right: 6px; vertical-align: middle;
+            box-shadow: 0 0 6px currentColor;
+        }
+        .ikl-overlay-br {
+            position:absolute; bottom:14px; right:14px;
+            background: rgba(2,6,12,0.85); backdrop-filter: blur(8px);
+            padding: 0.45rem 0.7rem; border-radius: 8px;
+            border: 1px solid rgba(0,229,255,0.3);
+            font-size: 0.92rem; color: var(--text);
+            font-weight: 700; font-variant-numeric: tabular-nums;
+            z-index: 5;
+        }
+        .ikl-overlay-br .seq { color: var(--ikl-target); }
+
+        /* BIG metrics — l'attrazione visiva del video */
+        .ikl-big-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        @media (max-width: 800px) { .ikl-big-grid { grid-template-columns: 1fr; } }
+        .ikl-big-cell {
+            background: linear-gradient(180deg, rgba(0,229,255,0.06), rgba(2,6,12,0.4));
+            border: 1px solid rgba(0,229,255,0.22);
+            border-radius: 10px;
+            padding: 1rem 1.1rem;
+            text-align: center;
+            transition: all 0.25s;
+        }
+        .ikl-big-cell.active { border-color: var(--ikl-target); box-shadow: 0 0 16px rgba(0,229,255,0.18); }
+        .ikl-big-cell .label {
+            font-size: 0.72rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-weight: 700;
+        }
+        .ikl-big-cell .value {
+            font-size: 2.4rem;
+            font-weight: 800;
+            font-variant-numeric: tabular-nums;
+            margin: 0.25rem 0 0.1rem;
+            line-height: 1;
+            letter-spacing: -0.02em;
+            text-shadow: 0 0 20px rgba(0,229,255,0.18);
+        }
+        .ikl-big-cell .value.green { color: var(--ikl-tcp); }
+        .ikl-big-cell .value.cyan  { color: var(--ikl-target); }
+        .ikl-big-cell .value.blue  { color: var(--ikl-imu); }
+        .ikl-big-cell .value.warn  { color: var(--ikl-warn); }
+        .ikl-big-cell .value.err   { color: var(--danger); }
+        .ikl-big-cell .unit { font-size: 0.85rem; color: var(--muted); font-weight: 500; }
+        .ikl-big-cell .bar {
+            height: 5px; background: rgba(255,255,255,0.06);
+            border-radius: 3px; margin-top: 0.6rem; overflow: hidden;
+        }
+        .ikl-big-cell .bar > div {
+            height: 100%; background: var(--ikl-tcp);
+            transition: width 0.2s, background 0.2s;
+        }
+
+        /* Numeri secondari — coordinate target/FK */
+        .ikl-coord-grid {
+            display: grid; grid-template-columns: 130px 1fr 1fr; gap: 0.6rem;
+            align-items: center; padding: 0.5rem 0.7rem;
+            background: rgba(0,229,255,0.04);
+            border: 1px solid rgba(0,229,255,0.15);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            font-size: 0.86rem;
+            font-variant-numeric: tabular-nums;
+        }
+        .ikl-coord-grid .row-label {
+            font-weight: 700; color: var(--muted); text-transform: uppercase;
+            font-size: 0.74rem; letter-spacing: 0.06em;
+        }
+        .ikl-coord-grid .vals {
+            display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.35rem;
+            text-align: center;
+        }
+        .ikl-coord-grid .vals .v { padding: 0.2rem 0.3rem; background: rgba(2,6,12,0.5); border-radius: 4px; color: var(--text); }
+        .ikl-coord-grid .vals .v.tgt { color: var(--ikl-target); font-weight: 700; }
+        .ikl-coord-grid .vals .v.fk  { color: var(--ikl-tcp); font-weight: 700; }
+        .ikl-coord-grid .vals .v.imu { color: var(--ikl-imu); font-weight: 700; }
+
+        /* Demo controls */
+        .ikl-demo-row {
+            display: flex; gap: 0.7rem; align-items: center; flex-wrap: wrap;
+            margin-bottom: 0.85rem;
+        }
+        .ikl-pattern-tabs { display: flex; gap: 0.35rem; }
+        .ikl-pattern-tab {
+            padding: 0.4rem 0.9rem; border-radius: 7px;
+            background: rgba(2,6,12,0.6);
+            border: 1px solid rgba(0,229,255,0.24);
+            color: var(--muted);
+            cursor: pointer; font-size: 0.82rem; font-weight: 700;
+            transition: all 0.15s;
+        }
+        .ikl-pattern-tab:hover { color: var(--text); border-color: rgba(0,229,255,0.5); }
+        .ikl-pattern-tab.active {
+            background: rgba(0,229,255,0.18);
+            color: var(--ikl-target); border-color: var(--ikl-target);
+            box-shadow: 0 0 12px rgba(0,229,255,0.25);
+        }
+
+        .ikl-demo-status {
+            margin-top: 0.5rem;
+            padding: 0.7rem 0.9rem;
+            background: rgba(0,229,255,0.05);
+            border: 1px solid rgba(0,229,255,0.18);
+            border-radius: 8px;
+            font-size: 0.86rem;
+            display:flex; align-items:center; gap:0.7rem;
+            min-height: 2.6rem;
+        }
+        .ikl-demo-dot {
+            display:inline-block; width:10px; height:10px; border-radius:50%;
+            background: var(--muted);
+        }
+        .ikl-demo-dot.active { background: var(--ikl-target); animation: ikl-pulse 1.2s infinite; }
+        .ikl-demo-dot.done   { background: var(--ikl-tcp); }
+        .ikl-demo-dot.fail   { background: var(--danger); }
+        @keyframes ikl-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(0,229,255,0.6); }
+            50%      { opacity: 0.5; transform: scale(1.5); box-shadow: 0 0 0 6px rgba(0,229,255,0); }
+        }
+
+        /* Stat aggregati */
+        .ikl-stats-grid {
+            display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem;
+            margin-top: 0.85rem;
+        }
+        @media (max-width: 800px) { .ikl-stats-grid { grid-template-columns: repeat(2, 1fr); } }
+        .ikl-stat {
+            background: rgba(2,6,12,0.6);
+            border: 1px solid rgba(0,229,255,0.15);
+            border-radius: 7px;
+            padding: 0.6rem;
+            text-align: center;
+        }
+        .ikl-stat .lab { font-size: 0.66rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700; }
+        .ikl-stat .val { font-size: 1.05rem; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+
+        /* Errore vs tempo chart */
+        #ikl-err-chart-wrap {
+            position: relative;
+            height: 240px;
+            background: #02060c;
+            border: 1px solid rgba(0,229,255,0.18);
+            border-radius: 8px;
+            padding: 0.5rem;
+            box-sizing: border-box;
+        }
+        #ikl-err-chart { display: block; width: 100%; height: 100%; }
+
+        /* Manual target collapsed */
+        .ikl-manual-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.5rem; margin-bottom: 0.6rem; }
+        @media (max-width: 720px) { .ikl-manual-grid { grid-template-columns: repeat(3, 1fr); } }
+        .ikl-manual-grid label {
+            display: flex; flex-direction: column; gap: 0.2rem;
+            font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+            color: var(--ikl-target); text-align: center;
+        }
+        .ikl-manual-grid label.lab-rot { color: var(--ikl-imu); }
+        .ikl-manual-grid input {
+            padding: 0.4rem;
+            background: rgba(2,6,12,0.7);
+            border: 1px solid rgba(0,229,255,0.25);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 0.9rem; text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+    </style>
+</head>
+<body>
+<div id="navbar"></div>
+
+<div class="content">
+
+    <!-- HERO -->
+    <section class="hero panel-elevated ikl-hero">
+        <h1 class="hero-title">IK Live · validazione cinematica</h1>
+        <p class="hero-subtitle">Risoluzione cinematica inversa POE · confronto FK ↔ IMU sul polso · pattern demo per validazione visiva</p>
+        <div class="ikl-hero-pills">
+            <div class="diag-box">
+                <div class="diag-label">WebSocket</div>
+                <div id="diag-ws" class="diag-value state-pill state-off">OFFLINE</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">STM32</div>
+                <div id="pill-stm32" class="diag-value state-pill state-unknown">–</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">IMU BNO085</div>
+                <div id="pill-imu" class="diag-value state-pill state-unknown">–</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">Solver POE</div>
+                <div id="pill-solver" class="diag-value state-pill state-on">READY</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">Demo</div>
+                <div id="pill-demo" class="diag-value state-pill state-off">idle</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">Robot</div>
+                <div id="pill-robot" class="diag-value state-pill state-unknown">–</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- DEMO PATH AUTOMATICA -->
+    <section class="panel panel-elevated ikl-section" id="sec-demo">
+        <div class="ikl-section-header" data-target="body-demo">
+            <h2>Demo path automatica</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="ikl-section-body" id="body-demo">
+            <div class="ikl-demo-row">
+                <span style="font-size:0.78rem;color:var(--muted);font-weight:700;text-transform:uppercase;">Pattern:</span>
+                <div class="ikl-pattern-tabs" id="pattern-tabs">
+                    <button class="ikl-pattern-tab active" data-pattern="cube">CUBO</button>
+                    <button class="ikl-pattern-tab" data-pattern="circle">CERCHIO</button>
+                    <button class="ikl-pattern-tab" data-pattern="line">LINEA</button>
+                    <button class="ikl-pattern-tab" data-pattern="spline">SPLINE</button>
+                    <button class="ikl-pattern-tab" data-pattern="random">RANDOM</button>
+                </div>
+                <span style="display:flex;align-items:center;gap:0.5rem;flex:1;min-width:200px;">
+                    <span style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Time/step:</span>
+                    <input type="number" id="demo-step-ms" value="1500" min="200" max="10000" step="100" style="width:80px;padding:0.35rem;background:rgba(2,6,12,0.7);border:1px solid rgba(0,229,255,0.25);border-radius:6px;color:var(--text);font-size:0.88rem;text-align:center;font-variant-numeric:tabular-nums;">
+                    <span style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;font-weight:700;">ms · Profilo:</span>
+                    <select id="demo-profile" style="padding:0.32rem 0.5rem;background:rgba(2,6,12,0.7);border:1px solid rgba(0,229,255,0.25);border-radius:6px;color:var(--text);font-size:0.88rem;">
+                        <option>RTR3</option>
+                        <option selected>RTR5</option>
+                        <option>BCB</option>
+                        <option>BB</option>
+                    </select>
+                </span>
+            </div>
+            <div class="ikl-demo-row">
+                <span style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Centro:</span>
+                <input type="number" id="demo-cx" value="180" style="width:70px;padding:0.35rem;background:rgba(2,6,12,0.7);border:1px solid rgba(0,229,255,0.25);border-radius:6px;color:var(--text);text-align:center;">
+                <input type="number" id="demo-cy" value="0"   style="width:70px;padding:0.35rem;background:rgba(2,6,12,0.7);border:1px solid rgba(0,229,255,0.25);border-radius:6px;color:var(--text);text-align:center;">
+                <input type="number" id="demo-cz" value="200" style="width:70px;padding:0.35rem;background:rgba(2,6,12,0.7);border:1px solid rgba(0,229,255,0.25);border-radius:6px;color:var(--text);text-align:center;">
+                <span style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Dim:</span>
+                <input type="number" id="demo-size" value="100" min="20" max="200" step="5" style="width:70px;padding:0.35rem;background:rgba(2,6,12,0.7);border:1px solid rgba(0,229,255,0.25);border-radius:6px;color:var(--text);text-align:center;">
+                <span style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;font-weight:700;">N pts:</span>
+                <input type="number" id="demo-n" value="8" min="2" max="40" step="1" style="width:60px;padding:0.35rem;background:rgba(2,6,12,0.7);border:1px solid rgba(0,229,255,0.25);border-radius:6px;color:var(--text);text-align:center;">
+                <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.78rem;color:var(--muted);">
+                    <input type="checkbox" id="demo-loop"> Loop
+                </label>
+            </div>
+
+            <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-top:0.4rem;align-items:center;">
+                <button class="btn primary sm" id="btn-demo-start">▶ Start demo</button>
+                <button class="btn ghost sm" id="btn-demo-stop">⏹ Stop</button>
+                <button class="btn ghost sm" id="btn-demo-stats-reset">↺ Reset stats</button>
+                <button class="btn ghost sm" id="btn-zero-ref" title="Va a HOME e azzera il quaternion di riferimento IMU (elimina bias di montaggio)">⊙ Azzera riferimento (HOME)</button>
+                <span style="flex:1"></span>
+                <span id="ref-status" style="font-size:0.74rem;color:var(--muted);font-style:italic;">riferimento: non registrato</span>
+                <button class="btn ghost sm" id="btn-go-home">HOME</button>
+                <button class="btn primary sm" id="btn-recover">↻ Ripristina</button>
+            </div>
+
+            <div class="ikl-demo-status">
+                <span class="ikl-demo-dot" id="demo-dot"></span>
+                <span id="demo-status-text">Pronto. Scegli un pattern e premi Start.</span>
+            </div>
+
+            <!-- Stats aggregati -->
+            <div class="ikl-stats-grid" style="grid-template-columns: repeat(5, 1fr);">
+                <div class="ikl-stat"><div class="lab">Punti completati</div><div class="val" id="stat-n">0/0</div></div>
+                <div class="ikl-stat"><div class="lab">RMS pos (mm)</div><div class="val" id="stat-rms-pos">–</div></div>
+                <div class="ikl-stat"><div class="lab">Max pos (mm)</div><div class="val" id="stat-max-pos">–</div></div>
+                <div class="ikl-stat" title="Deviazione max della posizione TCP fra i 6 campioni mediati per punto. Indice di stabilità meccanica post-arrivo.">
+                    <div class="lab">Jitter (mm)</div><div class="val" id="stat-jitter">–</div>
+                </div>
+                <div class="ikl-stat"><div class="lab">RMS Δ IMU (°)</div><div class="val" id="stat-rms-imu">–</div></div>
+            </div>
+            <p style="font-size:0.72rem;color:var(--muted);margin:0.4rem 0 0;line-height:1.5;">
+                ℹ Sample taking: <strong>800 ms</strong> di settle dopo SETPOSE_DONE +
+                <strong>media di 6 campioni</strong> a 80 ms di intervallo (totale 1.3 s/punto).
+                Il <strong>jitter</strong> è il range di oscillazione residua dei servo: quanto più basso, tanto più stabile è il robot in posizione finale.
+            </p>
+        </div>
+    </section>
+
+    <!-- VISTA 3D + overlay -->
+    <section class="panel panel-elevated ikl-section" id="sec-3d">
+        <div class="ikl-section-header" data-target="body-3d">
+            <h2>Vista 3D · braccio FK live · target · TCP · orientamento polso</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="ikl-section-body" id="body-3d">
+            <div id="ikl-3d-wrap">
+                <canvas id="ikl-3d-canvas"></canvas>
+                <div class="ikl-overlay-tl">
+                    <button class="btn ghost sm" data-view="iso">Iso</button>
+                    <button class="btn ghost sm" data-view="top">Top</button>
+                    <button class="btn ghost sm" data-view="front">Front</button>
+                    <button class="btn ghost sm" data-view="side">Side</button>
+                    <button class="btn ghost sm" id="btn-3d-clear-trail">Pulisci trail</button>
+                    <button class="btn ghost sm" id="btn-3d-toggle-arrows">Frecce ON/OFF</button>
+                    <button class="btn ghost sm" id="btn-3d-toggle-smooth" title="Filtro EMA sulla visualizzazione del modello 3D + marker TCP. Smussa l'hunting servo PWM nelle riprese senza alterare le statistiche di precisione.">✦ Smooth ON</button>
+                </div>
+                <div class="ikl-overlay-tr">
+                    <div class="row"><span>TCP X</span><span id="hud-fk-x" class="" style="color:var(--ikl-tcp);font-weight:700;">–</span></div>
+                    <div class="row"><span>TCP Y</span><span id="hud-fk-y" style="color:var(--ikl-tcp);font-weight:700;">–</span></div>
+                    <div class="row"><span>TCP Z</span><span id="hud-fk-z" style="color:var(--ikl-tcp);font-weight:700;">–</span></div>
+                    <div class="row"><span>Target Δ</span><span id="hud-tgt-delta" style="color:var(--ikl-target);font-weight:700;">–</span></div>
+                    <div class="row"><span>IMU Δ ori</span><span id="hud-imu-delta" style="color:var(--ikl-imu);font-weight:700;">–</span></div>
+                </div>
+                <div class="ikl-overlay-bl">
+                    <div><span class="lg-dot" style="background:var(--ikl-target);color:var(--ikl-target)"></span> Target IK richiesto</div>
+                    <div><span class="lg-dot" style="background:var(--ikl-tcp);color:var(--ikl-tcp)"></span> TCP raggiunto (FK)</div>
+                    <div><span class="lg-dot" style="background:var(--ikl-fk);color:var(--ikl-fk)"></span> Polso FK (atteso)</div>
+                    <div><span class="lg-dot" style="background:var(--ikl-imu);color:var(--ikl-imu)"></span> Polso IMU (misurato)</div>
+                </div>
+                <div class="ikl-overlay-br" id="ikl-step-indicator" style="display:none;">
+                    <span class="seq">DEMO</span> · <span id="hud-step-text">step 0/0</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- METRICHE BIG -->
+    <section class="panel panel-elevated ikl-section" id="sec-big">
+        <div class="ikl-section-header" data-target="body-big">
+            <h2>Metriche di precisione live</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="ikl-section-body" id="body-big">
+            <div class="ikl-big-grid">
+                <div class="ikl-big-cell" id="big-cell-pos">
+                    <div class="label">Errore posizione (target → FK)</div>
+                    <div class="value cyan" id="big-err-pos">–<span class="unit">mm</span></div>
+                    <div class="bar"><div id="big-err-pos-bar" style="width:0%"></div></div>
+                </div>
+                <div class="ikl-big-cell" id="big-cell-ori">
+                    <div class="label">Errore orientamento (target → FK)</div>
+                    <div class="value cyan" id="big-err-ori">–<span class="unit">°</span></div>
+                    <div class="bar"><div id="big-err-ori-bar" style="width:0%"></div></div>
+                </div>
+                <div class="ikl-big-cell" id="big-cell-imu">
+                    <div class="label">Δ IMU vs FK (validazione esterna)</div>
+                    <div class="value blue" id="big-err-imu">–<span class="unit">°</span></div>
+                    <div class="bar"><div id="big-err-imu-bar" style="width:0%;background:var(--ikl-imu);"></div></div>
+                </div>
+            </div>
+
+            <div class="ikl-coord-grid">
+                <span class="row-label">Target richiesto</span>
+                <div class="vals" data-axes="pos">
+                    <span class="v tgt" id="coord-tgt-x">–</span>
+                    <span class="v tgt" id="coord-tgt-y">–</span>
+                    <span class="v tgt" id="coord-tgt-z">–</span>
+                </div>
+                <div class="vals" data-axes="rpy">
+                    <span class="v tgt" id="coord-tgt-roll">–</span>
+                    <span class="v tgt" id="coord-tgt-pitch">–</span>
+                    <span class="v tgt" id="coord-tgt-yaw">–</span>
+                </div>
+            </div>
+            <div class="ikl-coord-grid">
+                <span class="row-label">FK live (modello)</span>
+                <div class="vals">
+                    <span class="v fk" id="coord-fk-x">–</span>
+                    <span class="v fk" id="coord-fk-y">–</span>
+                    <span class="v fk" id="coord-fk-z">–</span>
+                </div>
+                <div class="vals">
+                    <span class="v fk" id="coord-fk-roll">–</span>
+                    <span class="v fk" id="coord-fk-pitch">–</span>
+                    <span class="v fk" id="coord-fk-yaw">–</span>
+                </div>
+            </div>
+            <div class="ikl-coord-grid">
+                <span class="row-label">Polso IMU (misurato)</span>
+                <div class="vals">
+                    <span class="v" style="opacity:0.4">N/A</span>
+                    <span class="v" style="opacity:0.4">N/A</span>
+                    <span class="v" style="opacity:0.4">N/A</span>
+                </div>
+                <div class="vals">
+                    <span class="v imu" id="coord-imu-roll">–</span>
+                    <span class="v imu" id="coord-imu-pitch">–</span>
+                    <span class="v imu" id="coord-imu-yaw">–</span>
+                </div>
+            </div>
+            <p style="font-size:0.74rem;color:var(--muted);margin:0.5rem 0 0;line-height:1.55;">
+                ℹ <strong>L'IMU è al polso → misura solo orientamento</strong>, non posizione cartesiana (X,Y,Z).
+                La validazione esterna riguarda quindi <strong>l'orientamento del polso</strong>: errore IMU vs FK = quanto il polso reale devia dalla posa modellata.
+            </p>
+        </div>
+    </section>
+
+    <!-- ERROR vs TIME chart -->
+    <section class="panel panel-elevated ikl-section" id="sec-err">
+        <div class="ikl-section-header" data-target="body-err">
+            <h2>Errore vs tempo</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="ikl-section-body" id="body-err">
+            <p style="font-size:0.8rem;color:var(--muted);margin:0 0 0.6rem;">
+                <span style="display:inline-block;width:14px;height:3px;background:var(--ikl-tcp);vertical-align:middle;margin-right:6px;"></span>err posizione (mm)
+                ·
+                <span style="display:inline-block;width:14px;height:3px;background:var(--ikl-imu);vertical-align:middle;margin-right:6px;"></span>Δ IMU vs FK (°)
+                · linee verticali tratteggiate = SETPOSE_DONE
+            </p>
+            <div id="ikl-err-chart-wrap"><canvas id="ikl-err-chart"></canvas></div>
+        </div>
+    </section>
+
+    <!-- TARGET MANUALE -->
+    <section class="panel panel-elevated ikl-section" id="sec-manual">
+        <div class="ikl-section-header collapsed" data-target="body-manual">
+            <h2>Target cartesiano manuale (IK + SETPOSE)</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="ikl-section-body" id="body-manual" style="display:none;">
+            <div class="ikl-manual-grid">
+                <label>X mm <input type="number" id="man-x" value="180" step="1"></label>
+                <label>Y mm <input type="number" id="man-y" value="0"   step="1"></label>
+                <label>Z mm <input type="number" id="man-z" value="200" step="1"></label>
+                <label class="lab-rot">Roll ° <input type="number" id="man-roll"  value="0" step="1"></label>
+                <label class="lab-rot">Pitch ° <input type="number" id="man-pitch" value="0" step="1"></label>
+                <label class="lab-rot">Yaw ° <input type="number" id="man-yaw"   value="0" step="1"></label>
+            </div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                <button class="btn primary sm" id="btn-man-ik">Calcola IK</button>
+                <button class="btn primary sm" id="btn-man-exec">Esegui SETPOSE</button>
+                <span class="save-feedback" id="fb-manual"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Event log -->
+    <section class="panel panel-elevated">
+        <h3 class="section-title" style="font-size:0.92rem;">Event Log</h3>
+        <div id="event-log" class="event-log" style="max-height:140px;overflow:auto;"></div>
+    </section>
+
+</div>
+
+<script src="../shared/js/vendor/three.min.js"></script>
+<script src="../shared/js/j5_config.js"></script>
+<script type="module" src="js/pages/iklive.js"></script>
+<script>
+  fetch("navbar.html")
+    .then(r => r.text())
+    .then(html => {
+      document.getElementById("navbar").innerHTML = html;
+      document.dispatchEvent(new CustomEvent("navbar-loaded"));
+    });
+</script>
+</body>
+</html>

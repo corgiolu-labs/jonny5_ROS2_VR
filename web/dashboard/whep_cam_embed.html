@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WHEP cam</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #111; color: #aaa; font: 12px/1.35 system-ui, sans-serif; }
+    #err { display: none; padding: 6px 8px; color: #f66; white-space: pre-wrap; word-break: break-word; }
+    .root { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
+    video { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #000; }
+  </style>
+</head>
+<body>
+  <div class="root">
+    <div id="err"></div>
+    <video id="v" playsinline muted autoplay></video>
+  </div>
+  <script>
+(function () {
+  var ALLOWED = { cam0: 1, cam1: 1 };
+  var path = new URLSearchParams(window.location.search).get("path");
+  var errEl = document.getElementById("err");
+  var videoEl = document.getElementById("v");
+
+  function showErr(msg) {
+    errEl.textContent = msg;
+    errEl.style.display = "block";
+  }
+
+  if (!path || !ALLOWED[path]) {
+    showErr("Parametro path mancante o non valido. Usa solo path=cam0 oppure path=cam1.");
+    return;
+  }
+
+  function connect() {
+    var pc = new RTCPeerConnection({ iceServers: [] });
+    pc.addTransceiver("video", { direction: "recvonly" });
+
+    var streamTid;
+    var streamPromise = new Promise(function (resolve, reject) {
+      streamTid = setTimeout(function () {
+        reject(new Error("Timeout in attesa del video (WHEP)"));
+      }, 15000);
+      pc.ontrack = function (ev) {
+        var stream = (ev.streams && ev.streams[0])
+          ? ev.streams[0]
+          : ((ev.track && ev.track.kind === "video") ? new MediaStream([ev.track]) : null);
+        if (stream) {
+          clearTimeout(streamTid);
+          resolve(stream);
+        }
+      };
+      pc.onconnectionstatechange = function () {
+        if (pc.connectionState === "failed") {
+          clearTimeout(streamTid);
+          reject(new Error("WebRTC: connessione fallita"));
+        }
+      };
+    });
+
+    pc.createOffer()
+      .then(function (offer) { return pc.setLocalDescription(offer); })
+      .then(function () {
+        var base = window.location.origin;
+        return fetch(base + "/api/webrtc-whep?path=" + encodeURIComponent(path), {
+          method: "POST",
+          headers: { "Content-Type": "application/sdp" },
+          body: pc.localDescription.sdp,
+        });
+      })
+      .then(function (resp) {
+        if (!resp.ok) {
+          return resp.text().then(function (t) {
+            throw new Error("WHEP " + resp.status + (t ? ": " + String(t).slice(0, 240) : ""));
+          });
+        }
+        return resp.text();
+      })
+      .then(function (answerSdp) {
+        return pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      })
+      .then(function () {
+        return streamPromise;
+      })
+      .then(function (stream) {
+        videoEl.srcObject = stream;
+        errEl.style.display = "none";
+        return videoEl.play();
+      })
+      .catch(function (e) {
+        if (e && e.name === "NotAllowedError") {
+          showErr("Riproduzione bloccata dal browser (autoplay).");
+          return;
+        }
+        try { pc.close(); } catch (_) {}
+        showErr(e && e.message ? e.message : String(e));
+      });
+  }
+
+  connect();
+})();
+  </script>
+</body>
+</html>

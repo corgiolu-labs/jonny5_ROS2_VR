@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <title>JONNY5 – Controllers</title>
+    <link rel="stylesheet" href="../shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+    <style>
+        /* ── Tabs modalità ─────────────────────────────────────── */
+        .mode-tabs {
+            display: flex; gap: 0.3rem; flex-wrap: wrap;
+            padding: 0.4rem; background: var(--panel);
+            border: 1px solid rgba(61,157,255,0.18);
+            border-radius: 8px; margin-bottom: 1rem;
+        }
+        .mode-tabs button {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--muted);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-family: ui-monospace, monospace;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.12s;
+        }
+        .mode-tabs button:hover {
+            color: var(--text);
+            background: rgba(255,255,255,0.04);
+        }
+        .mode-tabs button.active {
+            color: var(--primary);
+            background: rgba(61,157,255,0.18);
+            border-color: rgba(61,157,255,0.4);
+        }
+        .mode-tabs button .count {
+            display: inline-block; margin-left: 0.4rem;
+            background: rgba(255,255,255,0.08);
+            border-radius: 999px;
+            padding: 0 0.5rem;
+            font-size: 0.7rem;
+        }
+        .mode-tabs button.active .count {
+            background: rgba(61,157,255,0.3);
+            color: var(--text);
+        }
+
+        /* ── Filtri edge + modifier ─────────────────────────────── */
+        .filter-bar {
+            display: flex; gap: 1.25rem; align-items: center;
+            background: var(--panel);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 8px;
+            padding: 0.6rem 1rem; margin-bottom: 1rem;
+            flex-wrap: wrap;
+            font-size: 0.85rem;
+        }
+        .filter-group { display: flex; align-items: center; gap: 0.5rem; }
+        .filter-group .lbl { color: var(--muted); font-weight: 600; }
+        .edge-radio {
+            display: inline-flex; gap: 0.15rem;
+            background: rgba(0,0,0,0.3); border-radius: 6px; padding: 0.15rem;
+        }
+        .edge-radio label {
+            cursor: pointer;
+            padding: 0.3rem 0.7rem;
+            border-radius: 4px;
+            color: var(--muted);
+            font-family: ui-monospace, monospace;
+            font-size: 0.78rem;
+            transition: all 0.1s;
+            user-select: none;
+        }
+        .edge-radio label:hover { color: var(--text); }
+        .edge-radio input[type=radio] { display: none; }
+        .edge-radio input[type=radio]:checked + span {
+            color: var(--text);
+        }
+        .edge-radio label:has(input:checked) {
+            background: rgba(61,157,255,0.25);
+            color: var(--primary);
+        }
+
+        select, input[type=text] {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.12);
+            color: var(--text);
+            border-radius: 5px;
+            font-family: ui-monospace, monospace;
+            font-size: 0.85rem;
+            padding: 0.35rem 0.5rem;
+        }
+
+        /* ── Controllers grid ───────────────────────────────────── */
+        .controllers-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+        @media (max-width: 1100px) {
+            .controllers-grid { grid-template-columns: 1fr; }
+        }
+
+        .ctrl-card {
+            background: var(--panel);
+            border: 1px solid rgba(61,157,255,0.18);
+            border-radius: 14px;
+            padding: 1rem 1rem 1.25rem;
+            position: relative;
+        }
+        .ctrl-card h2 {
+            margin: 0 0 0.85rem;
+            font-size: 1.05rem;
+            text-align: center;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            color: var(--text);
+        }
+        .ctrl-card h2 .hand-icon {
+            display: inline-block;
+            width: 22px; height: 22px;
+            background: rgba(61,157,255,0.25);
+            color: var(--primary);
+            border-radius: 50%;
+            line-height: 22px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            margin-right: 0.5rem;
+        }
+
+        .ctrl-mock {
+            display: flex; flex-direction: column;
+            gap: 0.6rem;
+        }
+        .btn-slot {
+            display: grid;
+            grid-template-columns: 130px 1fr;
+            gap: 0.6rem;
+            align-items: center;
+            padding: 0.5rem;
+            background: rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 8px;
+            transition: border-color 0.12s;
+        }
+        .btn-slot.set {
+            border-color: rgba(76,175,80,0.35);
+            background: rgba(76,175,80,0.06);
+        }
+        .btn-slot.unset {
+            opacity: 0.78;
+        }
+        .btn-slot:hover { border-color: rgba(61,157,255,0.3); }
+
+        .btn-icon {
+            display: flex; align-items: center; gap: 0.5rem;
+            font-family: ui-monospace, monospace;
+            font-size: 0.82rem;
+            color: var(--text);
+        }
+        .btn-icon .glyph {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 32px; height: 28px;
+            background: linear-gradient(180deg, #2a3650, #1a2236);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 6px;
+            font-weight: 700;
+            color: var(--text);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06);
+            font-size: 0.85rem;
+            padding: 0 0.4rem;
+        }
+        .btn-icon .glyph.face   { background: linear-gradient(180deg, #3a4870, #1f2840); }
+        .btn-icon .glyph.trig   { background: linear-gradient(180deg, #4a3050, #2a1830); width: 56px; }
+        .btn-icon .glyph.grip   { background: linear-gradient(180deg, #305040, #182a20); width: 56px; }
+        .btn-icon .glyph.thumb  { border-radius: 50%; width: 28px; background: radial-gradient(circle at 30% 30%, #4a5070, #1a2030); }
+        .btn-icon .name { font-weight: 600; color: var(--muted); font-size: 0.78rem; }
+
+        .btn-slot .slot-rhs {
+            display: flex; flex-direction: column; gap: 0.25rem;
+        }
+        .btn-slot select {
+            width: 100%;
+        }
+        .fw-note {
+            display: flex; align-items: center; gap: 0.4rem;
+            font-family: ui-monospace, monospace;
+            font-size: 0.7rem;
+            color: var(--muted);
+            padding-left: 0.1rem;
+        }
+        .fw-note .fw-tag {
+            padding: 0 0.3rem;
+            border-radius: 3px;
+            font-weight: 700;
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border: 1px solid;
+        }
+        .fw-note .fw-desc { color: var(--text); opacity: 0.85; }
+        /* src=fw -> arancione (firmware STM32) */
+        .fw-note.src-fw .fw-tag {
+            background: rgba(255,152,0,0.18);
+            color: #ffb95a;
+            border-color: rgba(255,152,0,0.35);
+        }
+        /* src=viewer -> ciano (hardcoded nel viewer JS) */
+        .fw-note.src-viewer .fw-tag {
+            background: rgba(18,194,178,0.18);
+            color: #5be0d0;
+            border-color: rgba(18,194,178,0.35);
+        }
+
+        .other-bindings {
+            display: flex; flex-wrap: wrap; align-items: center;
+            gap: 0.3rem;
+            font-family: ui-monospace, monospace;
+            font-size: 0.68rem;
+            padding-left: 0.1rem;
+            margin-top: 0.15rem;
+        }
+        .other-bindings .ob-label {
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+            font-size: 0.62rem;
+        }
+        .other-bindings .ob-chip {
+            background: rgba(61, 157, 255, 0.10);
+            border: 1px solid rgba(61, 157, 255, 0.28);
+            color: #b0d0f5;
+            padding: 0.1rem 0.45rem;
+            border-radius: 999px;
+            white-space: nowrap;
+        }
+
+        /* ── Stick widget (sola lettura) ─────────────────────────── */
+        .stick-section {
+            margin-top: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px dashed rgba(255,255,255,0.10);
+        }
+        .stick-section .stick-title {
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 0.78rem;
+            color: var(--muted);
+            margin-bottom: 0.6rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+        }
+        .stick-section .ro-tag {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--muted);
+            border-radius: 999px;
+            padding: 0.1rem 0.55rem;
+            font-size: 0.68rem;
+            font-family: ui-monospace, monospace;
+            text-transform: lowercase;
+            letter-spacing: 0;
+        }
+        .stick-row {
+            display: grid;
+            grid-template-columns: 80px 1fr;
+            gap: 0.75rem;
+            align-items: center;
+            padding: 0.5rem;
+            background: rgba(0,0,0,0.18);
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 8px;
+        }
+        .stick-mock {
+            width: 60px; height: 60px;
+            background: radial-gradient(circle at 30% 30%, #3a4870 0%, #1a2236 70%);
+            border: 2px solid rgba(255,255,255,0.12);
+            border-radius: 50%;
+            position: relative;
+            margin: 0 auto;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .stick-mock::after {
+            content: "";
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 24px; height: 24px;
+            background: radial-gradient(circle at 35% 35%, #6a7090, #2a3050);
+            border: 1px solid rgba(255,255,255,0.25);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        }
+        .stick-mock .axis-arrows {
+            position: absolute;
+            inset: -10px;
+            color: rgba(255,255,255,0.18);
+            font-size: 0.7rem;
+            pointer-events: none;
+        }
+        .stick-mock .axis-arrows .ar {
+            position: absolute;
+            font-family: ui-monospace, monospace;
+        }
+        .stick-mock .axis-arrows .up    { top: -2px; left: 50%; transform: translateX(-50%); }
+        .stick-mock .axis-arrows .down  { bottom: -2px; left: 50%; transform: translateX(-50%); }
+        .stick-mock .axis-arrows .left  { left: -2px; top: 50%; transform: translateY(-50%); }
+        .stick-mock .axis-arrows .right { right: -2px; top: 50%; transform: translateY(-50%); }
+
+        .stick-info {
+            font-family: ui-monospace, monospace;
+            font-size: 0.78rem;
+            line-height: 1.6;
+            color: var(--text);
+        }
+        .stick-info .axis-row { display: flex; gap: 0.4rem; }
+        .stick-info .axis-lbl { color: var(--muted); font-weight: 600; min-width: 50px; }
+        .stick-info .axis-desc { color: var(--text); }
+        .stick-info .axis-desc.muted { color: var(--muted); font-style: italic; }
+
+        /* ── Modifier badge ──────────────────────────────────────── */
+        .mod-badge {
+            display: inline-block;
+            font-size: 0.72rem;
+            background: rgba(255,152,0,0.18);
+            color: #ffb95a;
+            border: 1px solid rgba(255,152,0,0.35);
+            padding: 0.1rem 0.5rem;
+            border-radius: 999px;
+            font-family: ui-monospace, monospace;
+            margin-left: 0.5rem;
+        }
+
+        /* ── Toolbar ─────────────────────────────────────────────── */
+        .toolbar {
+            position: sticky; bottom: 0;
+            background: linear-gradient(180deg, transparent, var(--bg) 50%);
+            padding: 1rem 0 0.5rem;
+            display: flex; gap: 0.6rem; align-items: center;
+            margin-top: 1rem;
+        }
+        .toolbar .status { color: var(--muted); margin-left: auto; font-size: 0.85rem; }
+        .toolbar .status.ok { color: var(--success); }
+        .toolbar .status.warn { color: var(--warning); }
+        .toolbar .status.err { color: var(--danger); }
+        .toolbar .dirty-dot {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: var(--warning);
+            display: none;
+            box-shadow: 0 0 6px var(--warning);
+        }
+        .toolbar.dirty .dirty-dot { display: inline-block; }
+
+        .info-banner {
+            background: rgba(18,194,178,0.06);
+            border: 1px solid rgba(18,194,178,0.22);
+            border-radius: 6px;
+            padding: 0.55rem 0.85rem;
+            font-size: 0.82rem;
+            color: #8fe6da;
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+        .info-banner code { background: rgba(255,255,255,0.05); padding: 0 0.3rem; border-radius: 3px; }
+    </style>
+</head>
+
+<body>
+<div id="navbar"></div>
+
+<div class="content">
+
+    <section class="hero panel-elevated" style="padding: 1.25rem 1.5rem; margin-bottom: 1rem;">
+        <h1 class="hero-title" style="margin:0 0 0.4rem; font-size:1.5rem;">Controllers — Mappatura runtime</h1>
+        <p class="hero-subtitle" style="margin:0; color: var(--muted); font-size:0.9rem;">
+            Per ogni modalità, assegna un'azione a ciascun pulsante del controller. Le modifiche si applicano in tempo reale al viewer XR.
+        </p>
+    </section>
+
+    <div class="info-banner">
+        <strong>Come funziona:</strong> seleziona la <strong>modalità</strong> (tab in alto), il <strong>tipo evento</strong> (press/held/release) e l'eventuale <strong>modificatore</strong> (es. <code>bothGrips</code>). Per ogni pulsante visualizzato, scegli l'azione dal menu a tendina.
+        Salva &amp; applica con il bottone in basso.
+    </div>
+
+    <!-- TABS MODALITÀ -->
+    <div class="mode-tabs" id="mode-tabs"></div>
+
+    <!-- FILTRI EDGE + MODIFIER -->
+    <div class="filter-bar">
+        <div class="filter-group">
+            <span class="lbl">Tipo evento:</span>
+            <div class="edge-radio" id="edge-radio">
+                <label><input type="radio" name="edge" value="press" checked><span>press</span></label>
+                <label><input type="radio" name="edge" value="held"><span>held</span></label>
+                <label><input type="radio" name="edge" value="release"><span>release</span></label>
+                <label><input type="radio" name="edge" value="click"><span>click</span></label>
+            </div>
+        </div>
+        <div class="filter-group">
+            <span class="lbl">Modificatore:</span>
+            <select id="mod-select">
+                <option value="">(nessuno)</option>
+                <option value="bothGrips">bothGrips</option>
+                <option value="noGrips">noGrips</option>
+                <option value="leftGrip">leftGrip</option>
+                <option value="rightGrip">rightGrip</option>
+            </select>
+        </div>
+        <div style="margin-left:auto;color:var(--muted);font-size:0.78rem;">
+            Evento corrente: <code id="evt-preview">left.X.press</code>
+        </div>
+    </div>
+
+    <!-- CONTROLLERS GRID -->
+    <div class="controllers-grid">
+
+        <div class="ctrl-card">
+            <h2><span class="hand-icon">SX</span>Controller sinistro</h2>
+            <div class="ctrl-mock" id="ctrl-left"></div>
+            <div class="stick-section">
+                <div class="stick-title">
+                    <span>Stick analogico SX</span>
+                    <span class="ro-tag">solo lettura</span>
+                </div>
+                <div class="stick-row">
+                    <div class="stick-mock">
+                        <div class="axis-arrows"><span class="ar up">↑</span><span class="ar down">↓</span><span class="ar left">←</span><span class="ar right">→</span></div>
+                    </div>
+                    <div class="stick-info">
+                        <div class="axis-row"><span class="axis-lbl">Asse X:</span><span class="axis-desc" id="left-stick-x-desc">—</span></div>
+                        <div class="axis-row"><span class="axis-lbl">Asse Y:</span><span class="axis-desc" id="left-stick-y-desc">—</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="ctrl-card">
+            <h2><span class="hand-icon">DX</span>Controller destro</h2>
+            <div class="ctrl-mock" id="ctrl-right"></div>
+            <div class="stick-section">
+                <div class="stick-title">
+                    <span>Stick analogico DX</span>
+                    <span class="ro-tag">solo lettura</span>
+                </div>
+                <div class="stick-row">
+                    <div class="stick-mock">
+                        <div class="axis-arrows"><span class="ar up">↑</span><span class="ar down">↓</span><span class="ar left">←</span><span class="ar right">→</span></div>
+                    </div>
+                    <div class="stick-info">
+                        <div class="axis-row"><span class="axis-lbl">Asse X:</span><span class="axis-desc" id="right-stick-x-desc">—</span></div>
+                        <div class="axis-row"><span class="axis-lbl">Asse Y:</span><span class="axis-desc" id="right-stick-y-desc">—</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- TOOLBAR -->
+    <div id="toolbar" class="toolbar">
+        <button id="btn-reload" class="btn ghost">↻ Ricarica dal server</button>
+        <button id="btn-save" class="btn primary">Salva &amp; Applica</button>
+        <span class="dirty-dot" title="Modifiche non salvate"></span>
+        <span id="status" class="status">—</span>
+    </div>
+
+</div>
+
+<script src="../shared/js/j5_config.js"></script>
+<script src="../shared/js/controller_remap.js"></script>
+<script type="module" src="js/controllers.js"></script>
+<script>
+  fetch("navbar.html")
+    .then(r => r.text())
+    .then(html => {
+      document.getElementById("navbar").innerHTML = html;
+      try {
+        const here = (location.pathname.split("/").pop() || "index.html");
+        document.querySelectorAll("#navbar a").forEach(a => {
+          if (a.getAttribute("href") === here) a.classList.add("active");
+        });
+      } catch (_) {}
+      document.dispatchEvent(new CustomEvent("navbar-loaded"));
+    });
+</script>
+</body>
+</html>

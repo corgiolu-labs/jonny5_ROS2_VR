@@ -1,0 +1,7 @@
+[Unit]
+Description=JONNY5 — periodic camera AF refresh (restart MediaMTX)
+After=jonny5-mediamtx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart jonny5-mediamtx

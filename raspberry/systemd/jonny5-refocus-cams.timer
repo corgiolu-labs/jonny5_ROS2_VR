@@ -1,0 +1,17 @@
+[Unit]
+Description=JONNY5 — trigger periodico AF refresh (re-init libcamera AF)
+# Per cambiare frequenza modifica OnUnitActiveSec qui sotto, poi:
+#   sudo systemctl daemon-reload && sudo systemctl restart jonny5-refocus-cams.timer
+
+[Timer]
+# Primo run: 10 min dopo l'attivazione del timer (o dal boot, se piu' tardi)
+OnActiveSec=10min
+OnBootSec=10min
+# Intervallo tra restart successivi
+OnUnitActiveSec=10min
+AccuracySec=10s
+Unit=jonny5-refocus-cams.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

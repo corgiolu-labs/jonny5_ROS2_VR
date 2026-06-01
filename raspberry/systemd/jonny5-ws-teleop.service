@@ -1,0 +1,16 @@
+[Unit]
+Description=JONNY5 WS-TELEOP (porta 8557)
+After=network.target
+
+[Service]
+WorkingDirectory=/home/jonny5/raspberry5/controller/web_services
+Environment=PYTHONPATH=/home/jonny5/raspberry5
+Environment=WEBRTC_CERT_FILE=/home/jonny5/raspberry5/config_runtime/tls/webrtc.crt
+Environment=WEBRTC_KEY_FILE=/home/jonny5/raspberry5/config_runtime/tls/webrtc.key
+ExecStart=/home/jonny5/raspberry5/.venv/bin/python3 -u /home/jonny5/raspberry5/controller/web_services/ws_server.py
+Restart=always
+RestartSec=1
+User=jonny5
+
+[Install]
+WantedBy=multi-user.target

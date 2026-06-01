@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <title>JONNY5 – Impostazioni</title>
+    <link rel="stylesheet" href="../shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+    <style>
+        /* Stili specifici pagina Impostazioni */
+        .settings-section {
+            margin-bottom: 1.25rem;
+        }
+
+        .settings-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid rgba(61, 157, 255, 0.18);
+            margin-bottom: 1rem;
+        }
+
+        .settings-section-header h2 {
+            font-size: 1rem;
+            color: var(--text, #f6f8fb);
+            margin: 0;
+        }
+
+        .settings-section-header .chevron {
+            font-size: 0.85rem;
+            color: var(--muted, #9db1cc);
+            transition: transform 0.2s;
+        }
+
+        .settings-section-header.collapsed .chevron {
+            transform: rotate(-90deg);
+        }
+
+        .settings-section-body {
+            overflow: hidden;
+        }
+
+        .pwm-input {
+            padding: 0.35rem 0.5rem;
+            background: #0a1120;
+            border: 1px solid rgba(61, 157, 255, 0.25);
+            border-radius: 6px;
+            color: var(--text, #f6f8fb);
+            font-size: 0.9rem;
+            text-align: right;
+        }
+        .pwm-input:focus {
+            outline: none;
+            border-color: rgba(61, 157, 255, 0.6);
+        }
+
+        /* Griglia 6 angoli */
+        .angle-grid {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        @media (max-width: 640px) {
+            .angle-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+
+        .angle-cell {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .angle-cell label {
+            font-size: 0.75rem;
+            color: var(--muted, #9db1cc);
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .angle-cell input[type="number"] {
+            width: 100%;
+            padding: 0.4rem 0.3rem;
+            background: #0a1120;
+            border: 1px solid rgba(61, 157, 255, 0.25);
+            border-radius: 6px;
+            color: var(--text, #f6f8fb);
+            font-size: 0.95rem;
+            text-align: center;
+        }
+
+        .angle-cell input[type="number"]:focus {
+            outline: none;
+            border-color: var(--primary, #3d9dff);
+        }
+
+        .angle-cell input[type="number"]:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        /* Riga pose HOME / PARK / VR */
+        .pose-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .pose-row-label {
+            min-width: 3rem;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--primary, #3d9dff);
+            text-transform: uppercase;
+        }
+
+        .pose-row .angle-grid {
+            flex: 1;
+            margin-bottom: 0;
+            min-width: 200px;
+        }
+
+        .pose-row-actions {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        /* Parametri sistema */
+        .param-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            flex-wrap: wrap;
+        }
+
+        .param-row:last-child { border-bottom: none; }
+
+        .param-label {
+            min-width: 140px;
+            font-size: 0.85rem;
+            color: var(--muted, #9db1cc);
+        }
+
+        .param-value {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .param-value input[type="range"] {
+            flex: 1;
+            accent-color: var(--primary, #3d9dff);
+        }
+
+        .param-value select {
+            background: #0a1120;
+            border: 1px solid rgba(61, 157, 255, 0.25);
+            border-radius: 6px;
+            color: var(--text, #f6f8fb);
+            padding: 0.35rem 0.6rem;
+            font-size: 0.9rem;
+        }
+
+        .param-value select:focus {
+            outline: none;
+            border-color: var(--primary, #3d9dff);
+        }
+
+        .param-derived {
+            min-width: 80px;
+            font-size: 0.82rem;
+            color: var(--muted, #9db1cc);
+            text-align: right;
+        }
+
+        /* Demo step rows */
+        .demo-step-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.45rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            flex-wrap: wrap;
+        }
+        .demo-step-row:last-child { border-bottom: none; }
+
+        .demo-step-num {
+            min-width: 1.6rem;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--primary, #3d9dff);
+            text-align: center;
+        }
+
+        .demo-step-row .angle-grid {
+            flex: 1;
+            margin-bottom: 0;
+            min-width: 180px;
+        }
+
+        .demo-step-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex-shrink: 0;
+        }
+
+        .demo-step-controls input[type="number"] {
+            width: 52px;
+            padding: 0.3rem 0.3rem;
+            background: #0a1120;
+            border: 1px solid rgba(61, 157, 255, 0.25);
+            border-radius: 6px;
+            color: var(--text, #f6f8fb);
+            font-size: 0.85rem;
+            text-align: center;
+        }
+
+        .demo-step-controls select {
+            background: #0a1120;
+            border: 1px solid rgba(61, 157, 255, 0.25);
+            border-radius: 6px;
+            color: var(--text, #f6f8fb);
+            padding: 0.3rem 0.4rem;
+            font-size: 0.82rem;
+        }
+
+        .demo-step-controls .btn-del {
+            background: none;
+            border: 1px solid rgba(231, 76, 60, 0.4);
+            color: #e74c3c;
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 0.78rem;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .demo-step-controls .btn-del:hover { background: rgba(231,76,60,0.12); }
+
+        .demo-col-label {
+            font-size: 0.7rem;
+            color: var(--muted);
+            white-space: nowrap;
+        }
+
+        .limits-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.75rem;
+        }
+        @media (max-width: 700px) { .limits-grid { grid-template-columns: 1fr; } }
+        .limit-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(61,157,255,0.12);
+            border-radius: 8px;
+            padding: 0.75rem 0.9rem;
+        }
+        .limit-card .lc-name {
+            font-weight: 700;
+            color: var(--primary,#3d9dff);
+            font-size: 0.92rem;
+            margin-bottom: 0.5rem;
+        }
+        .limit-card .lc-row {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.82rem;
+            color: var(--muted,#9db1cc);
+            margin-bottom: 0.3rem;
+        }
+        .limit-card input[type=number] {
+            width: 64px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(61,157,255,0.25);
+            border-radius: 5px;
+            color: var(--text,#f6f8fb);
+            padding: 3px 7px;
+            font-size: 0.85rem;
+            text-align: center;
+        }
+
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.88rem;
+        }
+        .param-table th {
+            text-align: center;
+            color: var(--muted, #9db1cc);
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 0.4rem 0.5rem;
+            border-bottom: 1px solid rgba(61, 157, 255, 0.18);
+        }
+        .param-table th.col-link { text-align: left; min-width: 3rem; }
+        .param-table td {
+            padding: 0.35rem 0.4rem;
+            text-align: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        .param-table td.col-link {
+            text-align: left;
+            color: var(--primary, #3d9dff);
+            font-weight: 700;
+            font-size: 0.8rem;
+        }
+        .param-table input[type="number"] {
+            width: 72px;
+            padding: 0.3rem 0.25rem;
+            background: #0a1120;
+            border: 1px solid rgba(61, 157, 255, 0.22);
+            border-radius: 6px;
+            color: var(--text, #f6f8fb);
+            font-size: 0.88rem;
+            text-align: center;
+        }
+
+    </style>
+</head>
+<body>
+<div id="navbar"></div>
+
+<div class="content">
+
+    <!-- HERO -->
+    <section class="hero panel-elevated">
+        <h1 class="hero-title">Impostazioni</h1>
+        <p class="hero-subtitle">Parametri cinematici · Offset · Pose · Sistema</p>
+        <div class="diagnostic-row">
+            <div class="diag-box">
+                <div class="diag-label">WebSocket</div>
+                <div id="diag-ws" class="diag-value state-pill state-off">Disconnesso</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Parametri cinematici: POE -->
+    <section class="panel panel-elevated settings-section" id="sec-robot-params">
+        <div class="settings-section-header" data-target="body-robot-params">
+            <h2>Parametri cinematici del robot</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="settings-section-body" id="body-robot-params">
+            <h3 style="font-size:0.92rem; color:var(--primary); margin:0 0 0.5rem 0;">Parametri POE</h3>
+            <p style="font-size:0.78rem; color:#7ab8ff; margin:0 0 0.35rem 0; font-weight:700;">Modello cinematico principale utilizzato da FK/IK</p>
+            <p style="font-size:0.82rem; color:var(--muted); margin-bottom:0.85rem; line-height:1.5;">
+                Assi di vite <strong style="color:var(--text)">S</strong>: componenti <strong style="color:var(--text)">ω</strong> (adimensionali) e
+                <strong style="color:var(--text)">v</strong> (qui in <strong style="color:var(--text)">mm</strong> in interfaccia; sul file JSON restano in metri per compatibilità con il backend).
+                Matrice <strong style="color:var(--text)">M</strong> 4×4 (base→utensile a q=0): rotazioni adimensionali, <strong style="color:var(--text)">traslazioni in mm</strong> in questa schermata.
+                <strong style="color:var(--text)">Verità sul Raspberry:</strong> <code>j5_poe_params.json</code> (lettura/scrittura via WebSocket). Il browser mantiene <code>localStorage</code> (<code>j5_poe_params</code>) solo come copia offline / fallback.
+            </p>
+            <div style="overflow-x:auto; margin-bottom:0.75rem;">
+                <table class="param-table">
+                    <thead>
+                        <tr>
+                            <th class="col-link">Asse</th>
+                            <th>ωx</th><th>ωy</th><th>ωz</th>
+                            <th>vx (mm)</th><th>vy (mm)</th><th>vz (mm)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="settings-poe-s-tbody"></tbody>
+                </table>
+            </div>
+            <p style="font-size:0.8rem; color:var(--muted); margin-bottom:0.4rem;"><strong style="color:var(--text)">M</strong> (4×4) — elementi di traslazione nella quarta colonna in <strong style="color:var(--text)">mm</strong></p>
+            <div style="overflow-x:auto; margin-bottom:0.9rem;">
+                <table class="param-table">
+                    <tbody id="settings-poe-m-tbody"></tbody>
+                </table>
+            </div>
+            <div class="row" style="gap:0.5rem; flex-wrap:wrap;">
+                <button class="btn primary sm" id="btn-settings-save-poe">Salva parametri POE</button>
+                <button class="btn ghost sm" id="btn-settings-reset-poe">Ripristina POE predefiniti</button>
+                <span class="save-feedback" id="fb-settings-poe"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- PANNELLO OFFSET MECCANICI -->
+    <section class="panel panel-elevated settings-section" id="sec-offsets">
+        <div class="settings-section-header" data-target="body-offsets">
+            <h2>Offset meccanici</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="settings-section-body" id="body-offsets">
+            <p style="font-size:0.82rem; color:var(--muted); margin-bottom:0.9rem;">
+                Corrispondono a <code>servo_offset_deg[]</code> nel firmware (<code>servo_control.c</code>).
+                Sono la posizione HOME/neutra di ogni giunto.
+                <strong style="color:var(--text)">Applica al firmware</strong> invia il comando
+                <code>SET_OFFSETS</code> via UART (attivo fino al prossimo riavvio STM32)
+                e salva automaticamente in <code>settings.json</code>.
+                <strong style="color:var(--text)">Salva</strong> aggiorna solo <code>settings.json</code>
+                senza toccare il firmware.
+            </p>
+            <div class="angle-grid" id="offsets-grid">
+                <!-- popolato da settings.js -->
+            </div>
+            <p style="font-size:0.78rem; color:var(--muted); margin:0.6rem 0 0.2rem;">
+                Verso di rotazione giunti (usato per tradurre le pose virtuali in angoli fisici inviati ai servo).
+            </p>
+            <div class="angle-grid" id="dirs-grid">
+                <!-- toggle Normale / Invertito, popolato da settings.js -->
+            </div>
+            <div class="row" style="gap:0.5rem; margin-top:0.5rem;">
+                <button class="btn primary sm" id="btn-apply-offsets">Applica al firmware</button>
+                <button class="btn ghost sm" id="btn-save-offsets">Salva in settings.json</button>
+                <span class="save-feedback" id="fb-offsets"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- PANNELLO POSE PREDEFINITE -->
+    <section class="panel panel-elevated settings-section" id="sec-poses">
+        <div class="settings-section-header" data-target="body-poses">
+            <h2>Pose predefinite</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="settings-section-body" id="body-poses">
+            <p style="font-size:0.82rem; color:var(--muted); margin-bottom:1rem;">
+                Le pose vengono applicate al robot via <code>SETPOSE</code> UART con la velocità e il profilo
+                configurati in <em>Parametri sistema</em>. Le modifiche vengono salvate in <code>settings.json</code>.
+            </p>
+
+            <!-- HOME -->
+            <div class="pose-row" id="pose-home-row">
+                <span class="pose-row-label">HOME</span>
+                <div class="angle-grid" id="home-grid"></div>
+                <div class="pose-row-actions">
+                    <button class="btn ghost sm" id="btn-apply-home">Applica</button>
+                    <button class="btn ghost sm" id="btn-save-home">Salva</button>
+                    <span class="save-feedback" id="fb-home"></span>
+                </div>
+            </div>
+
+            <!-- PARK -->
+            <div class="pose-row" id="pose-park-row">
+                <span class="pose-row-label">PARK</span>
+                <div class="angle-grid" id="park-grid"></div>
+                <div class="pose-row-actions">
+                    <button class="btn ghost sm" id="btn-apply-park">Applica</button>
+                    <button class="btn ghost sm" id="btn-save-park">Salva</button>
+                    <span class="save-feedback" id="fb-park"></span>
+                </div>
+            </div>
+
+            <!-- VR -->
+            <div class="pose-row" id="pose-vr-row">
+                <span class="pose-row-label">VR</span>
+                <div class="angle-grid" id="vr-grid"></div>
+                <div class="pose-row-actions">
+                    <button class="btn ghost sm" id="btn-apply-vr">Applica</button>
+                    <button class="btn ghost sm" id="btn-save-vr">Salva</button>
+                    <span class="save-feedback" id="fb-vr"></span>
+                </div>
+            </div>
+            <p style="font-size:0.78rem; color:var(--muted); margin:-0.25rem 0 0.75rem 0;">
+                HEAD ASSIST (mode=5), overflow polso e tuning: pagina
+                <a href="imu-vr.html#head-assist-panel" style="color:var(--accent,#5dade2);">IMU / VR routing</a>
+                → salva <code>routing_config.json</code>.
+            </p>
+        </div>
+    </section>
+
+    <!-- PANNELLO DEMO SEQUENCE -->
+    <section class="panel panel-elevated settings-section" id="sec-demo">
+        <div class="settings-section-header" data-target="body-demo">
+            <h2>Sequenza Demo</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="settings-section-body" id="body-demo">
+            <p style="font-size:0.82rem; color:var(--muted); margin-bottom:1rem;">
+                La sequenza DEMO è orchestrata dal Raspberry Pi: ogni passo invia un
+                <code>SETPOSE</code> al firmware e attende il completamento prima del successivo.
+                Angoli in gradi virtuali (90 = HOME meccanica). Max 16 step.
+                <strong style="color:var(--text)">STOP</strong> interrompe immediatamente la demo.
+            </p>
+            <div id="demo-steps-container">
+                <!-- step rows generate da settings.js -->
+            </div>
+            <div class="row" style="gap:0.5rem; margin-top:0.75rem; flex-wrap:wrap;">
+                <button class="btn ghost sm" id="btn-demo-add-step">+ Aggiungi step</button>
+                <button class="btn primary sm" id="btn-save-demo">Salva sequenza</button>
+                <span class="save-feedback" id="fb-demo"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- PANNELLO LIMITI GLOBALI GIUNTI -->
+    <section class="panel panel-elevated settings-section" id="sec-joint-limits">
+        <div class="settings-section-header" data-target="body-joint-limits">
+            <h2>Limiti angolari globali del robot</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="settings-section-body" id="body-joint-limits">
+            <p style="font-size:0.82rem; color:var(--muted); margin-bottom:0.9rem;">
+                Limiti fisici globali (base, spalla, gomito, imbardata, beccheggio, rollio). Valori
+                salvati in <code>routing_config.json</code> e inviati allo STM32 con
+                <code>SET_JOINT_LIMITS</code> all'applicazione della configurazione.
+            </p>
+            <div class="limits-grid">
+                <div class="limit-card">
+                    <div class="lc-name">Base</div>
+                    <div class="lc-row">Minimo <input type="number" id="lim-base-min" value="10" min="0" max="180"> °</div>
+                    <div class="lc-row">Massimo <input type="number" id="lim-base-max" value="170" min="0" max="180"> °</div>
+                </div>
+                <div class="limit-card">
+                    <div class="lc-name">Spalla</div>
+                    <div class="lc-row">Minimo <input type="number" id="lim-spalla-min" value="10" min="0" max="180"> °</div>
+                    <div class="lc-row">Massimo <input type="number" id="lim-spalla-max" value="170" min="0" max="180"> °</div>
+                </div>
+                <div class="limit-card">
+                    <div class="lc-name">Gomito</div>
+                    <div class="lc-row">Minimo <input type="number" id="lim-gomito-min" value="10" min="0" max="180"> °</div>
+                    <div class="lc-row">Massimo <input type="number" id="lim-gomito-max" value="170" min="0" max="180"> °</div>
+                </div>
+                <div class="limit-card">
+                    <div class="lc-name">Imbardata</div>
+                    <div class="lc-row">Minimo <input type="number" id="lim-yaw-min" value="10" min="0" max="180"> °</div>
+                    <div class="lc-row">Massimo <input type="number" id="lim-yaw-max" value="170" min="0" max="180"> °</div>
+                </div>
+                <div class="limit-card">
+                    <div class="lc-name">Beccheggio</div>
+                    <div class="lc-row">Minimo <input type="number" id="lim-pitch-min" value="60" min="0" max="180"> °</div>
+                    <div class="lc-row">Massimo <input type="number" id="lim-pitch-max" value="120" min="0" max="180"> °</div>
+                </div>
+                <div class="limit-card">
+                    <div class="lc-name">Rollio</div>
+                    <div class="lc-row">Minimo <input type="number" id="lim-roll-min" value="60" min="0" max="180"> °</div>
+                    <div class="lc-row">Massimo <input type="number" id="lim-roll-max" value="120" min="0" max="180"> °</div>
+                </div>
+            </div>
+            <div class="row" style="margin-top:0.9rem;">
+                <button class="btn primary sm" id="btn-save-joint-limits">Salva + Applica limiti globali</button>
+                <span class="save-feedback" id="fb-joint-limits"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- PANNELLO PARAMETRI SISTEMA -->
+    <section class="panel panel-elevated settings-section" id="sec-params">
+        <div class="settings-section-header" data-target="body-params">
+            <h2>Parametri sistema</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="settings-section-body" id="body-params">
+
+            <div class="param-row">
+                <span class="param-label">Velocità massima</span>
+                <div class="param-value">
+                    <input type="range" id="param-vel-slider" min="1" max="120" step="1" value="80" />
+                    <span class="param-derived" id="param-vel-text">80 °/s</span>
+                </div>
+            </div>
+
+            <div class="param-row">
+                <span class="param-label">Profilo di moto default</span>
+                <div class="param-value">
+                    <select id="param-profile">
+                        <option value="RTR3">RTR3 — Hermite cubico</option>
+                        <option value="RTR5" selected>RTR5 — Quintico (default)</option>
+                        <option value="BB">BB — Bang-Bang</option>
+                        <option value="BCB">BCB — Raised Cosine</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="param-row">
+                <span class="param-label">Porta WebSocket</span>
+                <div class="param-value">
+                    <input type="number" id="param-ws-port" value="8557" disabled
+                           style="width:90px; padding:0.35rem 0.5rem; background:#0a1120;
+                                  border:1px solid rgba(61,157,255,0.2); border-radius:6px;
+                                  color:var(--muted); font-size:0.9rem;" />
+                    <span class="badge-readonly">sola lettura</span>
+                </div>
+            </div>
+
+            <div class="row" style="margin-top:0.9rem;">
+                <button class="btn primary sm" id="btn-save-params">Salva parametri</button>
+                <span class="save-feedback" id="fb-params"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Profilo video MediaMTX ─────────────────────────────────────────── -->
+    <section class="panel panel-elevated settings-section" id="sec-video-profile">
+        <div class="settings-section-header" data-target="body-video-profile">
+            <h2>Profilo video (MediaMTX)</h2>
+            <span class="chevron">▾</span>
+        </div>
+        <div class="settings-section-body" id="body-video-profile">
+            <p style="color:var(--muted); font-size:0.9em;">
+                Seleziona il profilo di acquisizione/streaming delle telecamere stereo.
+                Il cambio comporta un riavvio rapido del servizio MediaMTX (~4&nbsp;s);
+                le viste video si riconnettono automaticamente. Profili sicuri per uso
+                misto VR + dashboard. Il profilo MAX-RES (4608×2592 @ 14 FPS) è disponibile
+                solo nella pagina <em>VR Live</em> perché non compatibile con la teleoperazione VR.
+            </p>
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-top:0.5rem;">
+                <label for="settings-video-profile">Profilo:</label>
+                <select id="settings-video-profile" style="padding:0.25rem 0.4rem;">
+                    <option value="lowlatency">Low-latency  (800×450 @ 120 FPS, ~37 ms)</option>
+                    <option value="zoomfriendly">Zoom-friendly  (1280×720 @ 60 FPS)</option>
+                    <option value="inspection">Inspection  (1920×1080 @ 30 FPS, no VR teleop)</option>
+                </select>
+                <button type="button" id="settings-video-profile-apply" class="btn">Applica</button>
+                <span id="settings-video-profile-status" style="font-size:0.85em; color:var(--muted);"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Configurazione PWM Servo ───────────────────────────────────────── -->
+    <section class="panel panel-elevated settings-section" id="sec-pwm">
+        <div class="settings-section-header" data-target="body-pwm">
+            <h2>Configurazione PWM Servo</h2>
+            <span class="chevron">▾</span>
+        </div>
+        <div class="settings-section-body" id="body-pwm">
+            <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem;">
+                Parametri PWM per i due gruppi timer. Si applicano immediatamente al firmware e vengono
+                ripristinati automaticamente ad ogni avvio.<br>
+                <strong>TIM8</strong>: BASE / SPALLA / GOMITO / YAW &nbsp;·&nbsp;
+                <strong>TIM1</strong>: PITCH / ROLL
+            </p>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+
+                <!-- TIM8 -->
+                <div>
+                    <h3 style="font-size:0.9rem;color:var(--accent,#5dade2);margin-bottom:0.75rem;">
+                        TIM8 — BASE / SPALLA / GOMITO / YAW
+                    </h3>
+                    <div class="param-row">
+                        <span class="param-label">Frequenza (Hz)</span>
+                        <input type="number" id="pwm-tim8-hz" value="50" min="10" max="400" step="1"
+                               style="width:80px;" class="pwm-input" />
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Impulso min (µs)</span>
+                        <input type="number" id="pwm-tim8-min-us" value="500" min="400" max="1500" step="1"
+                               style="width:80px;" class="pwm-input" />
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Impulso max (µs)</span>
+                        <input type="number" id="pwm-tim8-max-us" value="2500" min="1000" max="2600" step="1"
+                               style="width:80px;" class="pwm-input" />
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Corsa max (gradi)</span>
+                        <input type="number" id="pwm-tim8-max-deg" value="180" min="60" max="360" step="1"
+                               style="width:80px;" class="pwm-input" />
+                    </div>
+                </div>
+
+                <!-- TIM1 -->
+                <div>
+                    <h3 style="font-size:0.9rem;color:var(--accent,#5dade2);margin-bottom:0.75rem;">
+                        TIM1 — PITCH / ROLL
+                    </h3>
+                    <div class="param-row">
+                        <span class="param-label">Frequenza (Hz)</span>
+                        <input type="number" id="pwm-tim1-hz" value="50" min="10" max="400" step="1"
+                               style="width:80px;" class="pwm-input" />
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Impulso min (µs)</span>
+                        <input type="number" id="pwm-tim1-min-us" value="500" min="400" max="1500" step="1"
+                               style="width:80px;" class="pwm-input" />
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Impulso max (µs)</span>
+                        <input type="number" id="pwm-tim1-max-us" value="2500" min="1000" max="2600" step="1"
+                               style="width:80px;" class="pwm-input" />
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Corsa max (gradi)</span>
+                        <input type="number" id="pwm-tim1-max-deg" value="180" min="60" max="360" step="1"
+                               style="width:80px;" class="pwm-input" />
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top:0.5rem;padding:0.6rem 0.8rem;background:rgba(243,156,18,0.08);
+                        border:1px solid rgba(243,156,18,0.25);border-radius:6px;
+                        font-size:0.8rem;color:#f39c12;">
+                ⚠ Servo analogici: max 60 Hz. Servo digitali: fino a 333 Hz.
+                Impulsi fuori range possono danneggiare meccanicamente il servo.
+            </div>
+
+            <div class="row" style="margin-top:0.9rem;gap:0.6rem;">
+                <button class="btn primary sm" id="btn-apply-pwm">Applica al firmware</button>
+                <span class="save-feedback" id="fb-pwm"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Pick & Place – Test attuatori (PA0/PA1 → IRFZ44N) ──────────────── -->
+    <section class="panel panel-elevated settings-section" id="sec-pickplace">
+        <div class="settings-section-header" data-target="body-pickplace">
+            <h2>Pick &amp; Place — Test attuatori</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="settings-section-body" id="body-pickplace">
+            <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem;line-height:1.5;">
+                Pannello diagnostico per i 2 canali PWM dedicati al pick&amp;place.
+                I comandi <code>PP1</code>/<code>PP2 &lt;duty 0..100&gt;</code> vengono inviati
+                via UART al firmware (TIM2 @ 20 kHz, polarità NORMAL: duty 0% = MOSFET OFF).
+                <strong style="color:var(--text)">Sicurezza:</strong> i comandi <code>STOP</code>,
+                <code>SAFE</code>, <code>RESET</code> azzerano automaticamente entrambi i canali.
+                <strong style="color:var(--text)">Niente persistenza</strong>: i valori NON vengono
+                salvati in <code>settings.json</code>.
+            </p>
+
+            <!-- PP1 — Elettrovalvola -->
+            <div class="param-row">
+                <span class="param-label">PP1 — Elettrovalvola<br><small style="color:var(--muted);">PA0 · TIM2_CH1</small></span>
+                <div class="param-value">
+                    <input type="range" id="pp1-slider" min="0" max="100" step="1" value="0" />
+                    <span class="param-derived" id="pp1-text">0 %</span>
+                </div>
+                <div style="display:flex; gap:0.4rem;">
+                    <button class="btn ghost sm" id="btn-pp1-on">ON</button>
+                    <button class="btn ghost sm" id="btn-pp1-off">OFF</button>
+                </div>
+            </div>
+
+            <!-- PP2 — Vacuum motors -->
+            <div class="param-row">
+                <span class="param-label">PP2 — Motori vuoto<br><small style="color:var(--muted);">PA1 · TIM2_CH2</small></span>
+                <div class="param-value">
+                    <input type="range" id="pp2-slider" min="0" max="100" step="1" value="0" />
+                    <span class="param-derived" id="pp2-text">0 %</span>
+                </div>
+                <div style="display:flex; gap:0.4rem;">
+                    <button class="btn ghost sm" id="btn-pp2-on">ON</button>
+                    <button class="btn ghost sm" id="btn-pp2-off">OFF</button>
+                </div>
+            </div>
+
+            <div style="margin-top:0.6rem; padding:0.6rem 0.8rem;
+                        background:rgba(231,76,60,0.08);
+                        border:1px solid rgba(231,76,60,0.25);
+                        border-radius:6px; font-size:0.8rem; color:#e74c3c;">
+                ⚠ <strong>IRFZ44N non logic-level</strong>: a 3,3 V GPIO il MOSFET non satura
+                completamente (R<sub>DS(on)</sub> ~80–150 mΩ). Per assorbimenti elevati dei motori
+                vuoto valuta IRLZ44N o un gate driver dedicato.
+            </div>
+
+            <div class="row" style="margin-top:0.9rem; gap:0.6rem;">
+                <button class="btn primary sm" id="btn-pp-stop-all">STOP entrambi</button>
+                <button class="btn ghost sm" id="btn-pp-status">Leggi stato (PP?)</button>
+                <span class="save-feedback" id="fb-pickplace"></span>
+            </div>
+        </div>
+    </section>
+
+</div>
+
+<script src="../shared/js/j5_config.js"></script>
+<script type="module" src="js/pages/settings.js"></script>
+<script>
+  fetch("navbar.html")
+    .then(r => r.text())
+    .then(html => {
+      document.getElementById("navbar").innerHTML = html;
+      document.dispatchEvent(new CustomEvent("navbar-loaded"));
+    });
+</script>
+</body>
+</html>

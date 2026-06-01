@@ -1,0 +1,19 @@
+[Unit]
+Description=JONNY5 HTTPS server for WebRTC viewers (port 8443)
+After=network.target
+
+[Service]
+WorkingDirectory=/home/jonny5/raspberry5/controller/web_services
+ExecStart=/home/jonny5/raspberry5/.venv/bin/python3 -u https_server.py --root /home/jonny5/raspberry5/web
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/jonny5/raspberry5
+Environment=HTTPS_BIND=::
+Environment=HTTPS_PORT=8443
+Environment=HTTPS_CERT_FILE=/home/jonny5/raspberry5/config_runtime/tls/webrtc.crt
+Environment=HTTPS_KEY_FILE=/home/jonny5/raspberry5/config_runtime/tls/webrtc.key
+Restart=always
+RestartSec=1
+User=jonny5
+
+[Install]
+WantedBy=multi-user.target

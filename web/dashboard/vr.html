@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <title>JONNY5 – VR Control</title>
+    <link rel="icon" href="img/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <style>
+        /* ── Video side-by-side ─────────────────────────────────────────── */
+        .vr-video-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 1rem;
+        }
+        .vr-video-box {
+            flex: 1;
+            min-width: 0;
+            background: #0a0f18;
+            border: 1px solid rgba(61, 157, 255, 0.15);
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+        }
+        .vr-video-box img,
+        .vr-video-box video {
+            width: 100%;
+            display: block;
+            background: #000;
+            aspect-ratio: 16/9;
+            object-fit: cover;
+        }
+        .vr-video-label {
+            position: absolute;
+            top: 6px;
+            left: 8px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: rgba(255,255,255,0.65);
+            letter-spacing: 0.5px;
+            pointer-events: none;
+        }
+        .vr-cam-status {
+            font-size: 0.7rem;
+            color: var(--muted, #9db1cc);
+            padding: 4px 8px;
+            text-align: center;
+        }
+
+        /* ── Calibrazione slider ────────────────────────────────────────── */
+        .calib-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem 1.25rem;
+        }
+        @media (max-width: 600px) {
+            .calib-grid { grid-template-columns: 1fr; }
+            .vr-video-row { flex-direction: column; }
+        }
+        .calib-row {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .calib-row label {
+            font-size: 0.78rem;
+            color: var(--muted, #9db1cc);
+            display: flex;
+            justify-content: space-between;
+        }
+        .calib-row label span {
+            font-weight: 600;
+            color: var(--text, #f6f8fb);
+            font-variant-numeric: tabular-nums;
+        }
+        input[type="range"].calib-slider {
+            width: 100%;
+            accent-color: var(--primary, #3d9dff);
+        }
+
+        /* ── Telemetria compatta ────────────────────────────────────────── */
+        .vr-tele-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.75rem;
+        }
+        @media (max-width: 700px) {
+            .vr-tele-grid { grid-template-columns: 1fr 1fr; }
+        }
+        .vr-tele-panel {
+            background: var(--panel, #111a28);
+            border: 1px solid rgba(61, 157, 255, 0.12);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+        }
+        .vr-tele-panel h3 {
+            font-size: 0.8rem;
+            color: var(--muted, #9db1cc);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin: 0 0 0.5rem;
+        }
+        .vr-tele-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.82rem;
+            padding: 2px 0;
+            color: var(--text, #f6f8fb);
+        }
+        .vr-tele-row span:first-child { color: var(--muted, #9db1cc); }
+        .vr-tele-row--muted { opacity: 0.55; font-size: 0.78rem; }
+
+        /* ── iframe video ───────────────────────────────────────────────── */
+        /* Container che ritaglia l'iframe quando viene scalato oltre il box */
+        .vr-video-box { overflow: hidden; }
+        .vr-iframe {
+            /* Zoom comune: scala l'intero iframe (il transform CSS sul <video>
+               interno non si propaga oltre il confine cross-document). */
+            transform: scale(var(--vr-zoom, 1));
+            transform-origin: center center;
+            transition: transform 80ms ease-out;
+            width: 100%;
+            aspect-ratio: 16/9;
+            border: 0;
+            background: #000;
+            display: block;
+        }
+        .vr-video-err {
+            color: var(--danger, #ff5161);
+            font-size: 0.85rem;
+            margin: 0 0 0.5rem;
+        }
+
+        /* ── VR DESIGN MIRROR PANEL ─────────────────────────────────────── */
+        #vr-design-panel {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .vr-mirror-note {
+            margin-top: 0.75rem;
+            font-size: 0.78rem;
+            color: var(--muted, #9db1cc);
+        }
+    </style>
+</head>
+<body>
+<div id="navbar"></div>
+
+<div class="content">
+    <h1>VR Control</h1>
+
+    <section class="panel">
+        <h2 class="section-title">VR CONTROL PANEL (MIRROR)</h2>
+        <!--
+        VR DESIGN MIRROR PANEL
+        This section mirrors the controls present in the VR page
+        so the dashboard VR tab can be used to design the layout
+        without opening the VR page.
+        -->
+        <div class="vr-mirror-row" style="display:flex; flex-wrap:wrap; align-items:center; gap:1rem;">
+            <div id="vr-design-panel" style="flex:1 1 auto;"></div>
+            <div id="vr-zoom-bar" style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; padding:0.4rem 0.6rem; border-left:1px dashed rgba(255,255,255,0.18);">
+                <span style="color:var(--muted, #9db1cc); font-size:0.9em;">Zoom comune:</span>
+                <button type="button" id="btn-zoom-minus" class="btn">−</button>
+                <span id="zoom-common-val" style="min-width:4.5em; text-align:center; font-family:ui-monospace,monospace;">1.00×</span>
+                <button type="button" id="btn-zoom-plus" class="btn">+</button>
+                <button type="button" id="btn-zoom-reset" class="btn">Reset</button>
+                <label style="font-size:0.85em; display:flex; gap:0.3rem; align-items:center;">
+                    Step
+                    <input type="number" id="zoom-common-step" min="0.05" max="2.0" step="0.05" value="0.2" style="width:4.5em;" />
+                </label>
+            </div>
+        </div>
+        <p class="vr-mirror-note">
+            Pannello di design: stessi controlli visibili nel viewer VR, concentrati nella tab VR dashboard.
+        </p>
+    </section>
+
+    <!-- ── Video feed ──────────────────────────────────────────────────── -->
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Video Live</h2>
+            <button class="btn primary btn-sm" id="vr-btn-start">▶ Start video</button>
+        </div>
+
+        <p id="vr-video-err" class="vr-video-err" style="display:none;"></p>
+        <div class="vr-video-row" id="vr-webrtc-row" style="display:none;">
+            <div class="vr-video-box">
+                <span class="vr-video-label">CAM 0 — SX (WebRTC)</span>
+                <iframe id="vr-webrtc-iframe0" title="WebRTC cam0" class="vr-iframe"></iframe>
+                <div class="vr-cam-status" id="vr-cam-status-webrtc0">in attesa…</div>
+            </div>
+            <div class="vr-video-box">
+                <span class="vr-video-label">CAM 1 — DX (WebRTC)</span>
+                <iframe id="vr-webrtc-iframe1" title="WebRTC cam1" class="vr-iframe"></iframe>
+                <div class="vr-cam-status" id="vr-cam-status-webrtc1">in attesa…</div>
+            </div>
+        </div>
+
+        <p class="section-copy" style="margin:0;">
+            <span id="vr-video-desc">Anteprima WebRTC (WHEP via HTTPS). Premi <strong>Start video</strong> dopo aver verificato che il server esponga <code>video_pipeline: webrtc</code>.</span>
+        </p>
+    </section>
+
+    <!-- ── Calibrazione stereo ──────────────────────────────────────────── -->
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Calibrazione Stereo</h2>
+            <button class="btn ghost btn-sm" id="vr-btn-reset-calib">Reset</button>
+        </div>
+        <p class="section-copy">
+            Le modifiche vengono inviate in tempo reale al visore VR tramite WebSocket (teleop).
+            Zoom, roll e focus nei slider sono parametri di calibrazione stereo e vengono trasmessi con <code>vr_calib</code>.
+        </p>
+
+        <div class="calib-grid">
+
+            <div class="calib-row">
+                <label>Convergenza (px) <span id="calib-val-convPx">0 px</span></label>
+                <input type="range" class="calib-slider" id="calib-slider-convPx"
+                       min="-200" max="200" step="1" value="0" />
+            </div>
+
+            <div class="calib-row">
+                <label>Offset verticale <span id="calib-val-vertPx">0 px</span></label>
+                <input type="range" class="calib-slider" id="calib-slider-vertPx"
+                       min="-200" max="200" step="1" value="0" />
+            </div>
+
+            <div class="calib-row">
+                <label>Roll cam0 (°) <span id="calib-val-rollDeg0">0.0°</span></label>
+                <input type="range" class="calib-slider" id="calib-slider-rollDeg0"
+                       min="-5" max="5" step="0.1" value="0" />
+            </div>
+
+            <div class="calib-row">
+                <label>Roll cam1 (°) <span id="calib-val-rollDeg1">0.0°</span></label>
+                <input type="range" class="calib-slider" id="calib-slider-rollDeg1"
+                       min="-5" max="5" step="0.1" value="0" />
+            </div>
+
+            <div class="calib-row">
+                <label>Zoom cam0 <span id="calib-val-zoom0">1.000</span></label>
+                <input type="range" class="calib-slider" id="calib-slider-zoom0"
+                       min="0.50" max="2.00" step="0.002" value="1" />
+            </div>
+
+            <div class="calib-row">
+                <label>Zoom cam1 <span id="calib-val-zoom1">1.000</span></label>
+                <input type="range" class="calib-slider" id="calib-slider-zoom1"
+                       min="0.50" max="2.00" step="0.002" value="1" />
+            </div>
+
+            <div class="calib-row" id="vr-focus-row-0">
+                <label>Focus cam0 <span id="calib-val-focusPos0">1.00</span></label>
+                <input type="range" class="calib-slider" id="calib-slider-focusPos0"
+                       min="0" max="10" step="0.01" value="1" />
+            </div>
+
+            <div class="calib-row" id="vr-focus-row-1">
+                <label>Focus cam1 <span id="calib-val-focusPos1">1.00</span></label>
+                <input type="range" class="calib-slider" id="calib-slider-focusPos1"
+                       min="0" max="10" step="0.01" value="1" />
+            </div>
+
+        </div>
+    </section>
+
+    <!-- ── Telemetria ───────────────────────────────────────────────────── -->
+    <section>
+        <div class="vr-tele-grid">
+
+            <div class="vr-tele-panel">
+                <h3>Servo</h3>
+                <div class="vr-tele-row"><span>Base</span>   <span id="vr-s-base">–</span></div>
+                <div class="vr-tele-row"><span>Spalla</span> <span id="vr-s-spalla">–</span></div>
+                <div class="vr-tele-row"><span>Gomito</span> <span id="vr-s-gomito">–</span></div>
+                <div class="vr-tele-row"><span>Roll</span>   <span id="vr-s-roll">–</span></div>
+                <div class="vr-tele-row"><span>Pitch</span>  <span id="vr-s-pitch">–</span></div>
+                <div class="vr-tele-row"><span>Yaw</span>    <span id="vr-s-yaw">–</span></div>
+            </div>
+
+            <div class="vr-tele-panel">
+                <h3>IMU</h3>
+                <div class="vr-tele-row"><span>Roll</span>  <span id="vr-imu-roll">–</span></div>
+                <div class="vr-tele-row"><span>Pitch</span> <span id="vr-imu-pitch">–</span></div>
+                <div class="vr-tele-row"><span>Yaw</span>   <span id="vr-imu-yaw">–</span></div>
+                <div class="vr-tele-row vr-tele-row--muted"><span>W</span> <span id="vr-imu-qw">–</span></div>
+                <div class="vr-tele-row vr-tele-row--muted"><span>X</span> <span id="vr-imu-qx">–</span></div>
+                <div class="vr-tele-row vr-tele-row--muted"><span>Y</span> <span id="vr-imu-qy">–</span></div>
+                <div class="vr-tele-row vr-tele-row--muted"><span>Z</span> <span id="vr-imu-qz">–</span></div>
+            </div>
+
+            <div class="vr-tele-panel">
+                <h3>VR Headset</h3>
+                <div class="vr-tele-row"><span>Roll</span>  <span id="vr-hmd-roll">–</span></div>
+                <div class="vr-tele-row"><span>Pitch</span> <span id="vr-hmd-pitch">–</span></div>
+                <div class="vr-tele-row"><span>Yaw</span>   <span id="vr-hmd-yaw">–</span></div>
+                <div class="vr-tele-row vr-tele-row--muted"><span>W</span> <span id="vr-hmd-qw">–</span></div>
+                <div class="vr-tele-row vr-tele-row--muted"><span>X</span> <span id="vr-hmd-qx">–</span></div>
+                <div class="vr-tele-row vr-tele-row--muted"><span>Y</span> <span id="vr-hmd-qy">–</span></div>
+                <div class="vr-tele-row vr-tele-row--muted"><span>Z</span> <span id="vr-hmd-qz">–</span></div>
+            </div>
+
+        </div>
+    </section>
+
+</div>
+
+<script src="../shared/js/vr_controls.js"></script>
+<script src="../shared/js/j5_config.js"></script>
+<script type="module" src="js/dashboard.js"></script>
+<script type="module" src="js/pages/vr.js"></script>
+<script>
+    fetch("navbar.html")
+        .then(r => r.text())
+        .then(html => {
+            document.getElementById("navbar").innerHTML = html;
+            document.dispatchEvent(new CustomEvent("navbar-loaded"));
+        });
+</script>
+</body>
+</html>

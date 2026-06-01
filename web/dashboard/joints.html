@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <title>JONNY5 – Joints</title>
+  <link rel="stylesheet" href="../shared/css/base.css" />
+  <link rel="stylesheet" href="css/dashboard.css" />
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+  <style>
+    /* ----------------------------------------------------------------
+       Stili specifici pagina Joints
+    ---------------------------------------------------------------- */
+
+    .joints-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .joint-card {
+      background: var(--panel, #111a28);
+      border: 1px solid rgba(61, 157, 255, 0.15);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+    }
+
+    .joint-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 0.5rem;
+    }
+
+    .joint-label {
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--text, #f6f8fb);
+    }
+
+    .joint-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--primary, #3d9dff);
+      font-variant-numeric: tabular-nums;
+      min-width: 5ch;
+      text-align: right;
+    }
+
+    /* Barra progresso */
+    .joint-bar-bg {
+      height: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 0.75rem;
+    }
+
+    .joint-bar {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.12s ease, background 0.25s;
+    }
+
+    /* Slider */
+    .joint-slider-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.6rem;
+    }
+
+    .joint-min,
+    .joint-max {
+      color: var(--muted, #9db1cc);
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+
+    .joint-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(61, 157, 255, 0.25);
+      outline: none;
+      cursor: ew-resize;
+    }
+
+    .joint-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--primary, #3d9dff);
+      cursor: ew-resize;
+      box-shadow: 0 0 4px rgba(61, 157, 255, 0.5);
+    }
+
+    .joint-slider::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--primary, #3d9dff);
+      cursor: ew-resize;
+      border: none;
+    }
+
+    /* Riga "Attuale" — posizione live dal robot, distinta dal target */
+    .joint-live-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 0.4rem;
+    }
+
+    .joint-live-label {
+      font-size: 0.75rem;
+      color: var(--muted, #9db1cc);
+    }
+
+    .joint-live-val {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted, #9db1cc);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Nota per-card */
+    .joint-note {
+      margin-top: 0.5rem;
+      font-size: 0.72rem;
+      color: var(--muted, #9db1cc);
+      opacity: 0.65;
+    }
+
+    /* ---- Sezione controlli SETPOSE ---- */
+    .setpose-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .control-row label,
+    .control-row span {
+      font-size: 0.88rem;
+      color: var(--muted, #9db1cc);
+      white-space: nowrap;
+      min-width: 9rem;
+    }
+
+    #speed-slider,
+    #time-slider {
+      flex: 1;
+      min-width: 120px;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(61, 157, 255, 0.25);
+      outline: none;
+      cursor: ew-resize;
+    }
+
+    #speed-slider::-webkit-slider-thumb,
+    #time-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--primary, #3d9dff);
+      cursor: ew-resize;
+    }
+
+    #speed-slider::-moz-range-thumb,
+    #time-slider::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--primary, #3d9dff);
+      border: none;
+    }
+
+    #speed-value,
+    #time-value {
+      min-width: 5rem;
+      text-align: right;
+      font-weight: 600;
+      color: var(--primary, #3d9dff);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Toggle group pulsanti planner */
+    .planner-group {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .planner-btn {
+      padding: 6px 14px;
+      border: 1px solid rgba(61, 157, 255, 0.35);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted, #9db1cc);
+      font-size: 0.83rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    .planner-btn:hover {
+      border-color: var(--primary, #3d9dff);
+      color: var(--text, #f6f8fb);
+    }
+
+    .planner-btn.active {
+      background: var(--primary, #3d9dff);
+      border-color: var(--primary, #3d9dff);
+      color: #fff;
+    }
+
+    /* Riga azioni (Applica + Centra tutto) */
+    .actions-row {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    /* Pulsante applica posa / centra tutto */
+    .apply-btn {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px;
+      background: var(--primary, #3d9dff);
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    .apply-btn:hover  { opacity: 0.85; }
+    .apply-btn:active { opacity: 0.7;  }
+
+    .apply-btn.secondary {
+      background: transparent;
+      border: 1px solid rgba(61, 157, 255, 0.45);
+      color: var(--primary, #3d9dff);
+    }
+
+    .apply-btn.secondary:hover {
+      background: rgba(61, 157, 255, 0.1);
+      opacity: 1;
+    }
+
+    .apply-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    /* Retrocompatibilità: apply-pose-btn usato nei listener JS */
+    #apply-pose-btn { /* stili ora in .apply-btn */ }
+
+    /* Toggle modalità Velocità / Tempo */
+    .mode-toggle {
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .mode-toggle label {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.88rem;
+      color: var(--text, #f6f8fb);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .mode-toggle input[type="radio"] {
+      accent-color: var(--primary, #3d9dff);
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+    }
+
+    /* Info derivata (T stimato / vel stimata) — testo muted a destra dello slider */
+    .derived-info {
+      font-size: 0.82rem;
+      color: var(--muted, #9db1cc);
+      min-width: 14rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Banner info limitazione firmware */
+    .joints-info-banner {
+      background: rgba(255, 152, 0, 0.08);
+      border: 1px solid rgba(255, 152, 0, 0.3);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      color: var(--text, #f6f8fb);
+      line-height: 1.5;
+    }
+
+    .joints-info-banner strong { color: var(--warning, #ff9800); }
+    .joints-info-banner code {
+      background: rgba(255,255,255,0.08);
+      padding: 0 4px;
+      border-radius: 3px;
+      font-size: 0.82rem;
+    }
+
+    /* ---- Box telemetria SETPOSE_DONE ---- */
+    .setpose-telemetry {
+      display: none; /* nascosto finché non arriva il primo SETPOSE_DONE */
+      background: rgba(61, 157, 255, 0.06);
+      border: 1px solid rgba(61, 157, 255, 0.25);
+      border-radius: 8px;
+      padding: 0.75rem 1.1rem;
+      margin-top: 0.5rem;
+    }
+
+    .setpose-telemetry.visible { display: block; }
+
+    .setpose-telemetry-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--primary, #3d9dff);
+      margin-bottom: 0.5rem;
+    }
+
+    .setpose-telemetry-grid {
+      display: flex;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .setpose-tel-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .setpose-tel-label {
+      font-size: 0.72rem;
+      color: var(--muted, #9db1cc);
+    }
+
+    .setpose-tel-value {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text, #f6f8fb);
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+
+<body>
+<div id="navbar"></div>
+
+<div class="content">
+
+  <!-- HERO -->
+  <section class="hero panel-elevated">
+    <h1 class="hero-title">Joints</h1>
+    <p class="hero-subtitle">Angoli correnti dei 6 servo — lettura live dalla telemetria SPI</p>
+
+    <div class="diagnostic-row">
+      <div class="diag-box">
+        <div class="diag-label">WebSocket</div>
+        <div id="diag-ws" class="diag-value state-pill state-off">OFFLINE</div>
+      </div>
+      <div class="diag-box">
+        <div class="diag-label">SPI Bridge</div>
+        <div id="pill_spi" class="diag-value state-pill state-unknown">–</div>
+      </div>
+      <div class="diag-box">
+        <div class="diag-label">STM32</div>
+        <div id="pill_stm32" class="diag-value state-pill state-unknown">–</div>
+      </div>
+      <div class="diag-box">
+        <div class="diag-label">UART</div>
+        <div id="pill_uart" class="diag-value state-pill state-unknown">–</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONTROLLI SETPOSE -->
+  <section class="panel panel-elevated">
+    <h2 class="section-title">Parametri movimento — SETPOSE</h2>
+    <div class="setpose-panel">
+
+      <!-- Selezione modalità: Velocità o Tempo -->
+      <div class="control-row">
+        <span>Modalità</span>
+        <div class="mode-toggle">
+          <label><input type="radio" name="pose-mode" value="speed" checked /> Velocità (°/s)</label>
+          <label><input type="radio" name="pose-mode" value="time" /> Tempo totale (s)</label>
+        </div>
+      </div>
+
+      <!-- Slider velocità (visible in mode=speed) -->
+      <div id="speed-mode" class="control-row">
+        <label for="speed-slider">Velocità (°/s)</label>
+        <input id="speed-slider" type="range" min="20" max="120" value="60" step="1" />
+        <span id="speed-value">60 °/s</span>
+        <span id="speed-derived" class="derived-info"></span>
+      </div>
+
+      <!-- Slider tempo (visible in mode=time) -->
+      <div id="time-mode" class="control-row" style="display:none">
+        <label for="time-slider">Tempo (s)</label>
+        <input id="time-slider" type="range" min="0.2" max="3" step="0.1" value="1" />
+        <span id="time-value">1.0 s</span>
+        <span id="time-derived" class="derived-info"></span>
+      </div>
+
+      <!-- Toggle profilo di moto -->
+      <div class="control-row">
+        <span>Profilo di moto</span>
+        <div class="planner-group">
+          <button class="planner-btn" data-planner="RTR3">RTR3</button>
+          <button class="planner-btn active" data-planner="RTR5">RTR5</button>
+          <button class="planner-btn" data-planner="BB">B-B</button>
+          <button class="planner-btn" data-planner="BCB">B-C-B</button>
+        </div>
+      </div>
+
+      <!-- Pulsanti azione: Applica pose + Posa precedente + Centra tutto -->
+      <div class="actions-row">
+        <button id="apply-pose-btn" class="apply-btn">&#9654; Applica pose ai 6 giunti</button>
+        <button id="btn-undo-pose" class="apply-btn secondary" disabled>&#8617; Posa precedente</button>
+        <button id="btn-center-all" class="apply-btn secondary">&#9711; Centra tutto</button>
+      </div>
+
+      <!-- Telemetria ultima esecuzione SETPOSE/SETPOSE_T -->
+      <div class="setpose-telemetry" id="setpose-telemetry-box">
+        <div class="setpose-telemetry-title">&#10003; Esecuzione completata</div>
+        <div class="setpose-telemetry-grid">
+          <div class="setpose-tel-item">
+            <span class="setpose-tel-label">Tempo</span>
+            <span class="setpose-tel-value" id="tel-time">–</span>
+          </div>
+          <div class="setpose-tel-item">
+            <span class="setpose-tel-label">Vel. max</span>
+            <span class="setpose-tel-value" id="tel-vel">–</span>
+          </div>
+          <div class="setpose-tel-item">
+            <span class="setpose-tel-label">Acc. max</span>
+            <span class="setpose-tel-value" id="tel-acc">–</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- GIUNTI LIVE -->
+  <section class="panel panel-elevated">
+    <h2 class="section-title">Posizioni correnti</h2>
+
+    <!-- Banner limitazione firmware -->
+    <div class="joints-info-banner" id="joints-move-note">
+      <!-- Popolato da joints.js -->
+    </div>
+
+    <div class="joints-grid" id="joints-container">
+      <!-- Card generate dinamicamente da joints.js -->
+    </div>
+  </section>
+
+  <!-- EVENT LOG -->
+  <section class="panel panel-elevated">
+    <h3 class="section-title">Event Log</h3>
+    <div id="event-log" class="event-log"></div>
+  </section>
+
+</div>
+
+<!-- Solo il modulo specifico di questa pagina (auto-connette WS) -->
+<script src="../shared/js/j5_config.js"></script>
+<script type="module" src="js/pages/joints.js?v=3"></script>
+
+<!-- Navbar loader con highlight link attivo -->
+<script>
+  fetch("navbar.html")
+    .then(r => r.text())
+    .then(html => {
+      document.getElementById("navbar").innerHTML = html;
+      document.dispatchEvent(new CustomEvent("navbar-loaded"));
+      const page = window.location.pathname.split("/").pop() || "index.html";
+      document.querySelectorAll(".navbar a").forEach(a => {
+        a.classList.toggle("active", (a.getAttribute("href") || "") === page);
+      });
+    });
+</script>
+</body>
+</html>

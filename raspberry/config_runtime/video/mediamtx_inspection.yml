@@ -1,0 +1,44 @@
+# MediaMTX — profilo INSPECTION (dettaglio statico, no teleop VR)
+# Dual camera 1920x1080 @ 30 FPS, bitrate 8 Mbps.
+# Latenza video stimata ~70-90 ms; zoom utile fino a ~3.5x. Adatto a ispezione
+# fotografica con visore non attivo o in modalita' supervisore.
+
+logLevel: info
+writeQueueSize: 64
+readTimeout: 5s
+writeTimeout: 5s
+
+rtsp: true
+rtspAddress: :8554
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcLocalTCPAddress: ":8189"
+webrtcHandshakeTimeout: 5s
+webrtcTrackGatherTimeout: 2s
+
+paths:
+  cam0:
+    source: rpiCamera
+    rpiCameraCamID: 0
+    rpiCameraWidth: 1920
+    rpiCameraHeight: 1080
+    rpiCameraFPS: 30
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 30
+    rpiCameraBitrate: 8000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal
+  cam1:
+    source: rpiCamera
+    rpiCameraCamID: 1
+    rpiCameraWidth: 1920
+    rpiCameraHeight: 1080
+    rpiCameraFPS: 30
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 30
+    rpiCameraBitrate: 8000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal

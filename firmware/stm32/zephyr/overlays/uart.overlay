@@ -1,0 +1,16 @@
+/ {
+};
+
+/* USART2: console (ST-Link VCP) */
+&usart2 {
+	status = "okay";
+	current-speed = <115200>;
+};
+
+/* USART1: control plane (fisico PA9/PA10 - collegamento Raspberry Pi) */
+&usart1 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&usart1_tx_pa9 &usart1_rx_pa10>;
+	pinctrl-names = "default";
+};

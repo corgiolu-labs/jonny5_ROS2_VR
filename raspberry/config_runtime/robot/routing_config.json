@@ -1,0 +1,175 @@
+{
+  "pbState": {
+    "roll": {
+      "src": 0,
+      "sign": -1
+    },
+    "pitch": {
+      "src": 2,
+      "sign": 1
+    },
+    "yaw": {
+      "src": 1,
+      "sign": 1
+    }
+  },
+  "pbEn": {
+    "roll": true,
+    "pitch": true,
+    "yaw": true
+  },
+  "savedAt": "2026-04-11T14:30:27.491Z",
+  "tuning": {
+    "tg-vel-base": 54,
+    "tg-vel-spalla": 54,
+    "tg-vel-gomito": 54,
+    "tg-vel-yaw": 20,
+    "tg-vel-pitch": 20,
+    "tg-vel-roll": 20,
+    "tg-vel-yaw-head": 400,
+    "tg-vel-pitch-head": 200,
+    "tg-vel-roll-head": 200,
+    "tg-vel-base-head": 600,
+    "tg-vel-spalla-head": 54,
+    "tg-vel-gomito-head": 54,
+    "tg-roll-level": false,
+    "tg-pitch-level": false,
+    "tg-yaw-level": false
+  },
+  "limits": {
+    "base": {
+      "min": 45,
+      "max": 135
+    },
+    "spalla": {
+      "min": 30,
+      "max": 145
+    },
+    "gomito": {
+      "min": 30,
+      "max": 145
+    },
+    "yaw": {
+      "min": 45,
+      "max": 135
+    },
+    "pitch": {
+      "min": 35,
+      "max": 120
+    },
+    "roll": {
+      "min": 45,
+      "max": 135
+    }
+  },
+  "manualRpyUi": {
+    "roll": 90,
+    "pitch": 90,
+    "yaw": 90,
+    "vel": 30
+  },
+  "controllerMappings": {
+    "right": {
+      "state": {
+        "base": {
+          "src": 0,
+          "sign": 1
+        },
+        "spalla": {
+          "src": 2,
+          "sign": -1
+        },
+        "gomito": {
+          "src": 1,
+          "sign": 1
+        }
+      },
+      "en": {
+        "base": true,
+        "spalla": true,
+        "gomito": true
+      }
+    },
+    "left": {
+      "state": {
+        "base": {
+          "src": 0,
+          "sign": 1
+        },
+        "spalla": {
+          "src": 1,
+          "sign": 1
+        },
+        "gomito": {
+          "src": 2,
+          "sign": 1
+        }
+      },
+      "en": {
+        "base": true,
+        "spalla": true,
+        "gomito": true
+      }
+    }
+  },
+  "armControl": {
+    "preferredController": "right",
+    "enabledControllers": {
+      "right": true,
+      "left": true
+    }
+  },
+  "headAssist": {
+    "enabled": true,
+    "yaw": {
+      "warnDeg": 20,
+      "critDeg": 10
+    },
+    "pitch": {
+      "warnDeg": 20,
+      "critDeg": 10
+    },
+    "roll": {
+      "warnDeg": 20,
+      "critDeg": 10
+    },
+    "assistEnable": {
+      "yaw": true,
+      "pitch": true,
+      "roll": false
+    },
+    "signYaw": -1,
+    "signPitch": -1,
+    "signRoll": 1,
+    "gainBase": 1.2,
+    "gainSpalla": 1.2,
+    "gainGomito": 1.2,
+    "gainRollArm": 0.21,
+    "critGainMul": 3.5,
+    "pitchSplit": {
+      "spalla": 0.45,
+      "gomito": 0.55
+    },
+    "rollSplit": {
+      "spalla": 0.5,
+      "gomito": 0.5
+    },
+    "assistAlpha": 0.72,
+    "freeFollowAlpha": 0.26,
+    "maxStepDegPerTick": 4.0,
+    "reliefDeadband": 0.02,
+    "releaseGraceMs": 220.0,
+    "armReliefGainMul": 2.2,
+    "armAssistAlphaMul": 2.0,
+    "minSpallaStepDeg": 0.45,
+    "minGomitoStepDeg": 0.35,
+    "headMotionFollow": true,
+    "headMotionDeadbandDeg": 0.18,
+    "headMotionGainYaw": 1.0,
+    "headMotionGainPitch": 1.3,
+    "headMotionGainRoll": 0.0,
+    "headMotionMaxStepDegPerTick": 4.0,
+    "pitchReachEnabled": true,
+    "pitchReachBias": 0.82
+  }
+}

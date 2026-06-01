@@ -1,0 +1,19 @@
+/ {
+	/* Pulsante user Nucleo-F446RE (PC13) per CENTER ALL SERVOS */
+	center_button: center_button {
+		compatible = "gpio-keys";
+		status = "okay";
+		label = "Center Button";
+		gpios = <&gpioc 13 GPIO_ACTIVE_LOW>;
+		zephyr,code = <INPUT_KEY_0>;
+	};
+	
+	aliases {
+		center-button = &center_button;
+	};
+};
+
+/* Abilita GPIO Port C */
+&gpioc {
+	status = "okay";
+};

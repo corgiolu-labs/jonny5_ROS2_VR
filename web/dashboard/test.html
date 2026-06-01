@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <title>JONNY5 – Test</title>
+    <link rel="stylesheet" href="../shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+    <style>
+        .status-grid {
+            display: grid;
+            gap: 0.6rem;
+        }
+        /* Layout fisso a 4 colonne per le frequenze, 3 per le latenze.
+           Su schermi stretti collassa a 2 colonne preservando coppie logiche. */
+        .status-grid-4 { grid-template-columns: repeat(4, 1fr); }
+        .status-grid-3 { grid-template-columns: repeat(3, 1fr); }
+        @media (max-width: 900px) {
+            .status-grid-4, .status-grid-3 { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 520px) {
+            .status-grid-4, .status-grid-3 { grid-template-columns: 1fr; }
+        }
+        /* Sotto-header dei gruppi (frequenze / latenze) */
+        .status-group-title {
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--muted, #9db1cc);
+            margin: 1.0rem 0 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+        }
+        .status-group-title:first-of-type { margin-top: 0.5rem; }
+        .status-group-dot {
+            display: inline-block;
+            width: 0.55rem; height: 0.55rem;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .status-group-freq .status-group-dot { background: #3d9dff; box-shadow: 0 0 6px #3d9dff80; }
+        .status-group-lat  .status-group-dot { background: #5dd6a0; box-shadow: 0 0 6px #5dd6a080; }
+        .status-group-hint {
+            font-size: 0.74rem;
+            text-transform: none;
+            letter-spacing: 0.02em;
+            font-weight: 400;
+            color: var(--muted);
+            opacity: 0.75;
+            margin-left: auto;
+            font-style: italic;
+        }
+        .status-card {
+            background: var(--panel, #111a28);
+            border: 1px solid rgba(61, 157, 255, 0.18);
+            border-radius: 8px;
+            padding: 0.7rem 0.9rem;
+            text-align: center;
+            min-height: 5.6rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .status-card .label {
+            font-size: 0.75rem;
+            color: var(--muted, #9db1cc);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .status-card .value {
+            font-family: ui-monospace, monospace;
+            font-size: 1.35rem;
+            font-weight: 600;
+            color: var(--text, #f6f8fb);
+            margin-top: 0.2rem;
+        }
+        .status-card .unit {
+            font-size: 0.85rem;
+            color: var(--muted);
+            margin-left: 0.18em;
+        }
+        .status-card.ok    { border-color: rgba(80, 200, 120, 0.55); }
+        .status-card.warn  { border-color: rgba(255, 200, 80, 0.55); }
+        .status-card.err   { border-color: rgba(255, 90, 90, 0.55); }
+        .led {
+            display: inline-block;
+            width: 0.55rem; height: 0.55rem;
+            border-radius: 50%;
+            margin-right: 0.4rem;
+            vertical-align: middle;
+        }
+        .led.ok   { background: #50c878; box-shadow: 0 0 6px #50c87880; }
+        .led.warn { background: #ffc850; }
+        .led.err  { background: #ff5a5a; }
+        .latency-controls {
+            display: flex; flex-wrap: wrap; gap: 0.6rem;
+            align-items: center; margin-bottom: 0.8rem;
+        }
+        .latency-controls select, .latency-controls input[type="number"] {
+            background: var(--panel);
+            color: var(--text);
+            border: 1px solid rgba(61,157,255,0.25);
+            border-radius: 6px;
+            padding: 0.4rem 0.6rem;
+            font-family: ui-monospace, monospace;
+        }
+        .progress-wrap {
+            background: rgba(61,157,255,0.12);
+            border-radius: 6px;
+            overflow: hidden;
+            height: 0.6rem;
+            margin: 0.6rem 0;
+        }
+        .progress-bar {
+            background: linear-gradient(90deg, #3d9dff, #66bb6a);
+            height: 100%;
+            width: 0%;
+            transition: width 0.2s ease-out;
+        }
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: ui-monospace, monospace;
+            font-size: 0.92rem;
+        }
+        .results-table th, .results-table td {
+            padding: 0.45rem 0.7rem;
+            border-bottom: 1px solid rgba(61,157,255,0.12);
+        }
+        .results-table th { color: var(--muted); text-align: left; }
+        .results-table td.num { text-align: right; }
+        .results-table tr.historical td { color: var(--muted); font-style: italic; }
+        .results-table tr.measured td   { color: var(--text); font-weight: 600; }
+        .bar-chart {
+            margin-top: 1rem;
+            background: rgba(61,157,255,0.05);
+            border-radius: 6px;
+            padding: 0.8rem;
+        }
+        .bar-row {
+            display: grid;
+            grid-template-columns: 220px 1fr 80px;
+            gap: 0.6rem;
+            align-items: center;
+            margin: 0.35rem 0;
+            font-family: ui-monospace, monospace;
+            font-size: 0.88rem;
+        }
+        .bar-track {
+            background: rgba(255,255,255,0.06);
+            border-radius: 4px;
+            height: 1.1rem;
+            position: relative;
+            overflow: hidden;
+        }
+        .bar-fill {
+            position: absolute; left: 0; top: 0; bottom: 0;
+            background: linear-gradient(90deg, #3d9dff, #5dd6a0);
+            transition: width 0.4s ease-out;
+        }
+        .bar-fill.historical { background: linear-gradient(90deg, #6a7280, #9aa3ad); }
+        .bar-fill.measured   { background: linear-gradient(90deg, #3d9dff, #5dd6a0); }
+        .bar-row .name { color: var(--muted); }
+        .bar-row .num  { text-align: right; color: var(--text); }
+    </style>
+</head>
+<body>
+<div id="navbar"></div>
+
+<main class="content">
+    <h1>Test &mdash; Validazione sperimentale live</h1>
+    <p style="color: var(--muted); margin-top: -0.4rem;">
+        Pannello unificato di osservabilità del sistema in tempo reale: stato di loop di controllo, SPI, IMU, visore VR;
+        misura latenza video MediaMTX vs MJPEG full-stack; caratterizzazione modale del manipolatore; latenza di comando WebSocket.
+    </p>
+
+    <!-- ─────────────── STATO SISTEMA LIVE ─────────────── -->
+    <section class="panel panel-elevated">
+        <h2 class="section-title">Stato sistema in tempo reale</h2>
+        <p style="color: var(--muted); font-size: 0.9rem;">
+            Telemetria continua dei principali parametri di prestazione del sistema distribuito JONNY5,
+            organizzata per dominio fisico: frequenze operative dei tre livelli (firmware, middleware, visore)
+            e latenze percepite (controllo + video, dashboard vs visore).
+        </p>
+
+        <!-- ─── GRUPPO 1: FREQUENZE OPERATIVE ─── -->
+        <h3 class="status-group-title status-group-freq">
+            <span class="status-group-dot"></span>Frequenze operative
+            <span class="status-group-hint">target di banda per ogni livello del sistema distribuito</span>
+        </h3>
+        <div class="status-grid status-grid-4">
+            <div class="status-card" id="card-loop" title="Loop di controllo deterministico STM32 (Zephyr RTOS). Misura runtime live: il firmware pubblica via SPI il periodo EWMA del thread rt_loop nei 2 byte reserved del frame TELEMETRY (rt_loop_hz_est = 1e6 / rt_loop_period_us). Soglia LED: ≥200 Hz = sopra 20× banda meccanica dominante del manipolatore (5-10 Hz), 100-200 Hz = sopra 10× regola pratica Franklin-Powell-Spong, sotto 100 Hz = sotto minimo control-theoretical.">
+                <div class="label"><span class="led err" id="led-loop"></span>STM32 control loop</div>
+                <div class="value"><span id="val-loop">&ndash;</span><span class="unit">Hz</span></div>
+                <div class="label" style="margin-top:0.3rem;">≥200 Hz (20× banda mecc.)</div>
+            </div>
+            <div class="status-card" id="card-spi" title="Rate effettivo di pacchetti SPI telemetria dal STM32 al Pi, calcolato dal delta di packet_index lato Raspberry. Misura runtime live: se scende, il flusso firmware-Pi è degradato.">
+                <div class="label"><span class="led err" id="led-spi"></span>SPI uplink</div>
+                <div class="value"><span id="val-spi">&ndash;</span><span class="unit">Hz</span></div>
+                <div class="label" style="margin-top:0.3rem;">target ~100 Hz</div>
+            </div>
+            <div class="status-card" id="card-imu" title="Rate effettivo di sample BNO085 nel firmware STM32 (sample counter SPI). Sale a ~400 Hz con polling continuo (VR teleop attivo); ~100 Hz tipici in idle.">
+                <div class="label"><span class="led err" id="led-imu"></span>IMU sample rate</div>
+                <div class="value"><span id="val-imu">&ndash;</span><span class="unit">Hz</span></div>
+                <div class="label" style="margin-top:0.3rem;">idle ~100 / VR ~400</div>
+            </div>
+            <div class="status-card" id="card-hmd" title="Refresh nativo dell'HMD Quest durante una sessione WebXR attiva, letto da XRSession.frameRate del viewer (viewer_stereo_xr.html) e pubblicato ogni 2 s via WebSocket. Valore atteso: 72 Hz su Quest 1, 90 o 120 Hz su Quest 2/3 (configurabile via XR menu). Se nessuna sessione XR è attiva mostra '—' / 'no XR' (la card si aggiorna automaticamente quando il visore inizia il teleop).">
+                <div class="label"><span class="led err" id="led-hmd"></span>HMD refresh (visore VR)</div>
+                <div class="value"><span id="val-hmd">&ndash;</span><span class="unit">Hz</span></div>
+                <div class="label" style="margin-top:0.3rem;" id="hmd-sublabel">no XR session</div>
+            </div>
+        </div>
+
+        <!-- ─── GRUPPO 2: LATENZE ─── -->
+        <h3 class="status-group-title status-group-lat">
+            <span class="status-group-dot"></span>Latenze
+            <span class="status-group-hint">controllo (round-trip WS) e video (dashboard vs visore)</span>
+        </h3>
+        <div class="status-grid status-grid-3">
+            <div class="status-card" id="card-ws" title="Latenza di controllo (WS round-trip): misura attiva con ping/pong matching by ID. Heartbeat passivo a 1 Hz mantiene la card live; il pulsante avvia un burst da 300 ping per statistica completa min/median/mean/max/std/p95.">
+                <div class="label"><span class="led err" id="led-ws"></span>Control RTT</div>
+                <div class="value"><span id="val-ws">&ndash;</span><span class="unit">ms</span></div>
+                <div class="label" style="margin-top:0.3rem;">round-trip browser ↔ Pi</div>
+            </div>
+            <div class="status-card" id="card-dash-lat" title="Latenza video stimata sulla DASHBOARD (browser PC) durante il playback continuo del flusso WHEP cam0. Misura inter-frame timing × profondità buffer WebRTC (4.5 frame) su finestra scorrevole 60 frame, aggiornata ogni 500 ms. Speculare alla card 'HMD video latency' ma dal punto di vista del browser dashboard: rappresenta il lower-bound della pipeline (no rendering stereo, no compositing XR). Con profilo Low-latency 800×450@120 atteso ~38 ms.">
+                <div class="label"><span class="led err" id="led-dash-lat"></span>Dashboard video latency</div>
+                <div class="value"><span id="val-dash-lat">&ndash;</span><span class="unit">ms</span></div>
+                <div class="label" style="margin-top:0.3rem;" id="dash-lat-sublabel">connessione…</div>
+            </div>
+            <div class="status-card" id="card-hmd-lat" title="Latenza video stimata DAL VISORE durante una sessione XR attiva. Il viewer (viewer_stereo_xr.html) misura inter-frame timing sul video WHEP cam0 via requestVideoFrameCallback (finestra scorrevole 60 frame) e pubblica ogni 2 s. Latenza = (inter-frame media) × buffer_depth WebRTC 4.5. Equivalente alla misura della pagina Test ma dal punto di vista dell'operatore in cuffia, non del browser dashboard.">
+                <div class="label"><span class="led err" id="led-hmd-lat"></span>HMD video latency</div>
+                <div class="value"><span id="val-hmd-lat">&ndash;</span><span class="unit">ms</span></div>
+                <div class="label" style="margin-top:0.3rem;" id="hmd-lat-sublabel">no XR session</div>
+            </div>
+        </div>
+
+        <div style="margin-top: 0.8rem;">
+            <button class="btn primary" id="btn-ws-ping" title="Esegue 300 ping con echo immediato dal backend (matching by id, throttle 50 Hz). Produce statistica robusta del round-trip WebSocket: min/median/mean/max/std/p95.">★ Misura latenza comando (300 ping)</button>
+            <span id="ws-ping-msg" style="color: var(--muted); font-size: 0.9rem; margin-left: 0.6rem;"></span>
+        </div>
+    </section>
+
+    <!-- ─────────────── TEST LATENZA VIDEO: MediaMTX vs MJPEG ─────────────── -->
+    <section class="panel panel-elevated" style="margin-top: 1rem;">
+        <h2 class="section-title">Test latenza video &mdash; Confronto MediaMTX vs MJPEG</h2>
+        <p style="color: var(--muted); font-size: 0.9rem;">
+            Confronto sperimentale live fra la pipeline MediaMTX (WebRTC/WHEP, adottata in produzione)
+            e la pipeline MJPEG full-stack (rpicam-vid + Python HTTPS multipart, equivalente alla pipeline di
+            produzione storica) sugli stessi parametri di risoluzione e framerate, a parità di condizioni
+            operative (consumer remoto attivo via TLS in entrambi i casi). La latenza è stimata da
+            inter-frame timing × profondità tipica di buffering del protocollo (~4.5 frame WebRTC,
+            ~9 frame MJPEG TCP).
+        </p>
+
+        <div class="latency-controls">
+            <label>Profilo (parametri identici per entrambe le pipeline):&nbsp;
+                <select id="latency-profile">
+                    <option value="lowlatency"   data-width="800"  data-height="450"  data-fps="120">Low-latency 800×450 @ 120 FPS &mdash; adottato</option>
+                    <option value="zoomfriendly" data-width="1280" data-height="720"  data-fps="60">Zoom-friendly 1280×720 @ 60 FPS</option>
+                    <option value="inspection"   data-width="1920" data-height="1080" data-fps="30">Inspection 1920×1080 @ 30 FPS</option>
+                    <option value="maxres"       data-width="3840" data-height="2160" data-fps="14">MAX-RES 3840×2160 @ 14 FPS</option>
+                    <option value="initial"      data-width="1280" data-height="720"  data-fps="30">Initial 1280×720 @ 30 FPS &mdash; configurazione storica</option>
+                </select>
+            </label>
+            <label>N frame:&nbsp;
+                <input type="number" id="latency-nframes" value="300" min="50" max="1000" step="50">
+            </label>
+        </div>
+
+        <div class="latency-controls" style="margin-top: 0.4rem;">
+            <button class="btn primary" id="btn-run-mediamtx">Test MediaMTX</button>
+            <button class="btn primary" id="btn-run-mjpeg-fullstack" title="Pipeline MJPEG completa (rpicam-vid + HTTPS Python + multipart) — confronto a parità di condizioni con MediaMTX">Test MJPEG full-stack</button>
+            <button class="btn primary" id="btn-run-comparative" title="Esegue MediaMTX poi MJPEG full-stack sullo stesso profilo">★ Confronta entrambi (sequenziale)</button>
+            <button class="btn ghost"   id="btn-run-all">Confronta tutti i profili</button>
+        </div>
+
+        <div class="progress-wrap">
+            <div class="progress-bar" id="latency-progress"></div>
+        </div>
+        <div id="latency-status" style="color: var(--muted); font-size: 0.9rem;">Pronto. Seleziona un profilo e premi &quot;Confronta entrambi&quot; per il confronto MediaMTX vs MJPEG.</div>
+
+        <h3 class="section-title" style="font-size: 1rem; margin-top: 1rem;">Risultati comparativi (latenza + carico computazionale)</h3>
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th>Profilo (W×H @ FPS)</th>
+                    <th class="num">MediaMTX media [ms]</th>
+                    <th class="num">MediaMTX (min&ndash;max)</th>
+                    <th class="num" title="CPU media (max picco e temp in tooltip)">MediaMTX CPU</th>
+                    <th class="num">MJPEG media [ms]</th>
+                    <th class="num">MJPEG (min&ndash;max)</th>
+                    <th class="num" title="CPU media (max picco e temp in tooltip)">MJPEG CPU</th>
+                    <th class="num">Rapporto MJPEG/MediaMTX</th>
+                </tr>
+            </thead>
+            <tbody id="latency-results"></tbody>
+        </table>
+        <div style="margin-top: 0.3rem; font-size: 0.82rem; color: var(--muted);">
+            Colonne CPU: <strong>media</strong> in % durante il test, con <em>(T temperatura SoC · RAM uso)</em> a fianco;
+            picchi massimi (CPU e temperatura) visibili nel tooltip della cella.
+            Campionamento backend a 1&nbsp;Hz (<code>/proc/stat</code>, <code>/proc/meminfo</code>, <code>thermal_zone0</code>).
+        </div>
+
+        <div class="bar-chart">
+            <h3 class="section-title" style="font-size: 1rem; margin-top: 0;">Confronto visivo profilo-per-profilo</h3>
+            <div id="bar-chart-rows"></div>
+        </div>
+
+        <div id="latency-synthesis" style="margin-top: 0.8rem; padding: 0.7rem 0.9rem; background: rgba(61,157,255,0.08); border-left: 3px solid #3d9dff; border-radius: 6px; font-size: 0.92rem; color: var(--text);">
+            <strong>Sintesi:</strong> <span id="synthesis-text">eseguire almeno un profilo con entrambe le pipeline per calcolare il fattore di guadagno medio MediaMTX/MJPEG.</span>
+        </div>
+
+        <div style="margin-top: 0.6rem; padding: 0.5rem 0.7rem; background: rgba(255,200,80,0.05); border-radius: 6px; font-size: 0.82rem; color: var(--muted);">
+            <strong style="color: var(--text);">Nota operativa.</strong>
+            Il test MJPEG ferma temporaneamente MediaMTX per liberare la camera (~10&ndash;20&nbsp;s a seconda di N frame e FPS).
+            Durante quella finestra la pipeline VR è indisponibile; viene ripristinata automaticamente al termine.
+        </div>
+    </section>
+
+    <!-- ─────────────── SELF-TEST MODALE ─────────────── -->
+    <section class="panel panel-elevated" style="margin-top: 1rem;">
+        <h2 class="section-title">Self-test modale &mdash; caratterizzazione meccanica</h2>
+        <p style="color: var(--muted); font-size: 0.9rem;">
+            Forced response semplificata: micro-step di eccitazione sui giunti del polso (Y/P/R), acquisizione IMU e PSD via Welch.
+            Identifica la banda meccanica caratteristica del manipolatore.
+        </p>
+        <div style="margin: 0.6rem 0;">
+            <button class="btn primary" id="btn-self-test">Esegui SELF TEST</button>
+            <span id="self-test-running-msg" style="color: var(--muted); font-size: 0.9rem; margin-left: 0.6rem;"></span>
+        </div>
+        <div class="grid grid-2" style="margin-top: 0.8rem;">
+            <div class="panel">
+                <h3 class="section-title">Self-Test Status</h3>
+                <div class="telemetry-list">
+                    <div class="t-row"><span>Status</span><span id="self-test-status">Idle</span></div>
+                    <div class="t-row"><span>Message</span><span id="self-test-message">Ready</span></div>
+                    <div class="t-row"><span>Dyn. peaks</span><span id="self-test-dynamic-motion">&ndash;</span></div>
+                    <div class="t-row"><span>Exp. peaks</span><span id="self-test-vibration">&ndash;</span></div>
+                    <div class="t-row"><span>Modal peaks</span><span id="self-test-modal-vibration">&ndash;</span></div>
+                    <div class="t-row"><span>Bands</span><span id="self-test-bands">&ndash;</span></div>
+                </div>
+            </div>
+            <div class="panel">
+                <h3 class="section-title">Self-Test Result</h3>
+                <div class="telemetry-list">
+                    <div class="t-row"><span>Global</span><span id="self-test-result">&ndash;</span></div>
+                    <div class="t-row"><span>Base</span><span id="self-test-base">&ndash;</span></div>
+                    <div class="t-row"><span>Shoulder</span><span id="self-test-shoulder">&ndash;</span></div>
+                    <div class="t-row"><span>Elbow</span><span id="self-test-elbow">&ndash;</span></div>
+                    <div class="t-row"><span>Yaw</span><span id="self-test-yaw">&ndash;</span></div>
+                    <div class="t-row"><span>Pitch</span><span id="self-test-pitch">&ndash;</span></div>
+                    <div class="t-row"><span>Roll</span><span id="self-test-roll">&ndash;</span></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─────────────── RIFERIMENTI RAPIDI ─────────────── -->
+    <section class="panel" style="margin-top: 1rem;">
+        <h2 class="section-title">Riferimenti rapidi ad altri test del sistema</h2>
+        <ul style="line-height: 1.8; padding-left: 1.2rem;">
+            <li><strong>Validazione cinematica IK</strong> (cubo, cerchio, linea, spline, random): <a href="iklive.html">pagina IK Live</a></li>
+            <li><strong>Confronto profili di moto</strong> (RTR3, RTR5, BB, BCB): <a href="pickplace.html">pagina Pick &amp; Place</a></li>
+            <li><strong>Calibrazione IMU world_bias</strong>: bottone &quot;Calibra IMU&quot; nella <a href="index.html">Home</a></li>
+            <li><strong>Profilo video runtime</strong>: pagina <a href="settings.html">Settings</a> oppure <a href="vr-live.html">VR Live</a></li>
+        </ul>
+    </section>
+
+    <hr style="margin: 1.5rem 0; border-color: rgba(61,157,255,0.08);">
+    <div id="logs" class="logs" aria-live="polite" style="font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--muted); max-height: 200px; overflow-y: auto;"></div>
+</main>
+
+<script src="../shared/js/j5_config.js"></script>
+<script type="module" src="js/pages/test.js"></script>
+<script>
+  fetch("navbar.html")
+    .then(r => r.text())
+    .then(html => {
+      document.getElementById("navbar").innerHTML = html;
+      const here = location.pathname.split("/").pop() || "index.html";
+      document.querySelectorAll("#navbar a").forEach(a => {
+        if ((a.getAttribute("href") || "") === here) a.classList.add("active");
+      });
+      document.dispatchEvent(new CustomEvent("navbar-loaded"));
+    });
+</script>
+</body>
+</html>

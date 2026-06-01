@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <title>JONNY5 – FK / IK</title>
+    <link rel="stylesheet" href="../shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+    <style>
+        /* FK / IK — scheda unificata (palette dashboard) */
+        .ik-page .ik-section {
+            margin-bottom: 1.25rem;
+        }
+
+        .ik-page .ik-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            padding: 0.65rem 0 0.75rem 0;
+            border-bottom: 1px solid rgba(61, 157, 255, 0.2);
+            margin-bottom: 0;
+        }
+
+        .ik-page .ik-section-header h2 {
+            font-size: 1.02rem;
+            font-weight: 700;
+            color: var(--text, #f6f8fb);
+            margin: 0;
+            letter-spacing: 0.02em;
+        }
+
+        .ik-page .ik-section-header .chevron {
+            font-size: 0.85rem;
+            color: var(--muted, #9db1cc);
+            transition: transform 0.2s;
+        }
+
+        .ik-page .ik-section-header.collapsed .chevron {
+            transform: rotate(-90deg);
+        }
+
+        .ik-page .ik-section-body {
+            overflow: hidden;
+            padding: 1rem 0.15rem 0.25rem 0.15rem;
+        }
+
+        .ik-page .ik-card-title {
+            font-size: 0.88rem;
+            font-weight: 700;
+            color: var(--primary, #3d9dff);
+            margin: 0 0 0.5rem 0;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+        }
+
+        .ik-page .ik-card-title--tight {
+            margin-top: 0;
+        }
+
+        .ik-page .ik-lead {
+            font-size: 0.82rem;
+            color: var(--muted, #9db1cc);
+            line-height: 1.55;
+            margin: 0 0 1rem 0;
+        }
+
+        .ik-page .ik-info-banner {
+            display: flex;
+            gap: 0.6rem;
+            align-items: flex-start;
+            background: rgba(61, 157, 255, 0.07);
+            border: 1px solid rgba(61, 157, 255, 0.22);
+            border-radius: 8px;
+            padding: 0.65rem 0.9rem;
+            margin-bottom: 1rem;
+            font-size: 0.8rem;
+            color: var(--muted, #9db1cc);
+            line-height: 1.5;
+        }
+
+        .ik-page .ik-limits-foot {
+            font-size: 0.74rem;
+            color: var(--muted, #9db1cc);
+            margin: 0 0 0.85rem 0;
+            line-height: 1.45;
+            opacity: 0.92;
+        }
+
+        .ik-page .ik-flow-hint {
+            font-size: 0.8rem;
+            color: var(--muted, #9db1cc);
+            text-align: center;
+            padding: 0.7rem 1rem;
+            margin: 0.35rem 0 1.2rem 0;
+            border: 1px dashed rgba(61, 157, 255, 0.35);
+            border-radius: 8px;
+            background: rgba(61, 157, 255, 0.06);
+            line-height: 1.45;
+        }
+
+        /* Griglie numeriche condivise: FK in, FK out, IK in, IK out */
+        .ik-page .ik-num-grid {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 0.65rem;
+            margin-bottom: 1rem;
+        }
+
+        @media (max-width: 720px) {
+            .ik-page .ik-num-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+
+        .ik-page .ik-num-cell {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.35rem;
+            min-width: 0;
+        }
+
+        .ik-page .ik-num-cell label {
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            text-align: center;
+            line-height: 1.2;
+        }
+
+        .ik-page .ik-num-cell label .joint-short {
+            display: block;
+            font-size: 0.65rem;
+            font-weight: 600;
+            color: var(--muted, #9db1cc);
+            text-transform: none;
+            letter-spacing: 0.02em;
+        }
+
+        .ik-page .ik-num-cell label.lab-pos { color: #3d9dff; }
+        .ik-page .ik-num-cell label.lab-rot { color: #b07fd9; }
+
+        .ik-page .ik-num-input {
+            width: 100%;
+            box-sizing: border-box;
+            min-height: 2.35rem;
+            padding: 0.45rem 0.35rem;
+            background: #0a1120;
+            border: 1px solid rgba(61, 157, 255, 0.24);
+            border-radius: 8px;
+            color: var(--text, #f6f8fb);
+            font-size: 0.9rem;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .ik-page .ik-num-input:focus {
+            outline: none;
+            border-color: var(--primary, #3d9dff);
+            box-shadow: 0 0 0 1px rgba(61, 157, 255, 0.25);
+        }
+
+        .ik-page .ik-value-cell {
+            background: #0a1120;
+            border: 1px solid rgba(61, 157, 255, 0.18);
+            border-radius: 8px;
+            padding: 0.55rem 0.4rem;
+            text-align: center;
+            min-height: 2.35rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            box-sizing: border-box;
+        }
+
+        .ik-page .ik-value-cell .cell-label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--muted, #9db1cc);
+            margin-bottom: 0.25rem;
+            line-height: 1.2;
+        }
+
+        .ik-page .ik-value-cell .cell-label .short {
+            font-size: 0.62rem;
+            font-weight: 600;
+            opacity: 0.88;
+        }
+
+        .ik-page .ik-value-cell .cell-value {
+            font-size: 1.02rem;
+            font-weight: 700;
+            color: var(--primary, #3d9dff);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .ik-page .ik-value-cell.out-pose .cell-value {
+            color: var(--text, #f6f8fb);
+        }
+
+        .ik-page .ik-result-cell.reachable  { border-color: rgba(46, 204, 113, 0.38); }
+        .ik-page .ik-result-cell.unreachable { border-color: rgba(231, 76, 60, 0.35); }
+        .ik-page .ik-result-cell .cell-value.unreachable { color: #e74c3c; }
+
+        .ik-page .ik-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.82rem;
+            font-weight: 600;
+            padding: 0.35rem 0.8rem;
+            border-radius: 20px;
+            margin-bottom: 0.85rem;
+        }
+
+        .ik-page .ik-status.idle      { background: rgba(61,157,255,0.1);  color: var(--muted); }
+        .ik-page .ik-status.ok        { background: rgba(46,204,113,0.15); color: #2ecc71; }
+        .ik-page .ik-status.error     { background: rgba(231,76,60,0.15);  color: #e74c3c; }
+        .ik-page .ik-status.computing { background: rgba(243,156,18,0.15); color: #f39c12; }
+
+        .ik-page .ik-meta-row {
+            font-size: 0.82rem;
+            color: var(--muted, #9db1cc);
+            margin-bottom: 0.85rem;
+        }
+
+        .ik-page .ik-quat {
+            font-size: 0.78rem;
+            color: var(--muted, #9db1cc);
+            margin-top: 0.65rem;
+            padding: 0.5rem 0.65rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            word-break: break-all;
+            border: 1px solid rgba(61, 157, 255, 0.1);
+        }
+
+        .ik-page .ik-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            margin-bottom: 0.25rem;
+        }
+
+        .ik-page .save-feedback {
+            font-size: 0.82rem;
+            margin-left: 0.5rem;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .ik-page .save-feedback.visible { opacity: 1; }
+        .ik-page .save-feedback.ok      { color: #2ecc71; }
+        .ik-page .save-feedback.err     { color: #e74c3c; }
+
+        .ik-page .btn.sm {
+            padding: 7px 16px;
+            font-size: 0.82rem;
+            border-radius: 8px;
+        }
+
+        .ik-page .ik-solver-params {
+            margin-top: 1.25rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(61, 157, 255, 0.18);
+        }
+
+        .ik-page .ik-solver-params > .ik-solver-params-title {
+            font-size: 0.78rem;
+            color: var(--muted, #9db1cc);
+            margin: 0 0 0.65rem 0;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .ik-page .ik-solver-params .ik-tol-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        .ik-page .ik-solver-params .ik-tol-row input[type="number"] {
+            width: 92px;
+            min-height: 2.1rem;
+            padding: 0.35rem 0.4rem;
+            background: #0a1120;
+            border: 1px solid rgba(61, 157, 255, 0.24);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 0.88rem;
+            text-align: center;
+        }
+
+        .ik-page .ik-solver-params .ik-solver-note {
+            font-size: 0.78rem;
+            color: var(--muted, #9db1cc);
+            margin: 0.65rem 0 0 0;
+            font-weight: 400;
+            line-height: 1.45;
+        }
+
+        .ik-page .ik-check-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            margin-bottom: 0.85rem;
+            font-size: 0.82rem;
+            color: var(--muted, #9db1cc);
+        }
+
+        .ik-page #fk-status {
+            font-size: 0.82rem;
+            color: var(--muted, #9db1cc);
+            margin-bottom: 0.55rem;
+        }
+
+        .ik-page .ik-compare-statusbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            margin-bottom: 0.9rem;
+        }
+
+        .ik-page .ik-compare-meta {
+            font-size: 0.8rem;
+            color: var(--muted, #9db1cc);
+            line-height: 1.45;
+        }
+
+        /* ===== Compare layout (thesis-ready, video friendly) =====
+           Row 1: [Target | Reale]   grid 1x2
+           Row 2: [Errore]           full width
+           Numeri grandi, colori cromatici per sorgente, soglie su Δ.     */
+        .ik-page .ik-compare-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 0.9rem;
+        }
+
+        .ik-page .ik-compare-row-top {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.9rem;
+        }
+
+        @media (max-width: 980px) {
+            .ik-page .ik-compare-row-top { grid-template-columns: 1fr; }
+        }
+
+        .ik-page .ik-compare-card {
+            background: rgba(10, 17, 32, 0.52);
+            border: 1px solid rgba(61, 157, 255, 0.15);
+            border-radius: 12px;
+            padding: 1.0rem 1.0rem 0.9rem 1.0rem;
+        }
+
+        /* Sorgenti colorate: target = blu, reale = verde, errore = arancio.
+           Il titolo ha un accento laterale della stessa famiglia. */
+        .ik-page .ik-compare-card.target {
+            border-color: rgba(61, 157, 255, 0.45);
+            box-shadow: inset 4px 0 0 0 rgba(61, 157, 255, 0.7);
+        }
+        .ik-page .ik-compare-card.real {
+            border-color: rgba(46, 204, 113, 0.45);
+            box-shadow: inset 4px 0 0 0 rgba(46, 204, 113, 0.7);
+        }
+        .ik-page .ik-compare-card.error {
+            border-color: rgba(243, 156, 18, 0.45);
+            box-shadow: inset 4px 0 0 0 rgba(243, 156, 18, 0.8);
+        }
+
+        .ik-page .ik-compare-card-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 0.75rem;
+            margin: 0 0 0.85rem 0;
+        }
+
+        .ik-page .ik-compare-card-title h3 {
+            margin: 0;
+            font-size: 1.05rem;
+            color: var(--text, #f6f8fb);
+            font-weight: 800;
+            letter-spacing: 0.01em;
+        }
+        .ik-page .ik-compare-card.target  .ik-compare-card-title h3 { color: #8fcaff; }
+        .ik-page .ik-compare-card.real    .ik-compare-card-title h3 { color: #7fe0a0; }
+        .ik-page .ik-compare-card.error   .ik-compare-card-title h3 { color: #ffc870; }
+
+        .ik-page .ik-compare-card-title span {
+            font-size: 0.78rem;
+            color: var(--muted, #9db1cc);
+            line-height: 1.3;
+            text-align: right;
+        }
+
+        .ik-page .ik-compare-card .ik-num-grid {
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.55rem;
+            margin-bottom: 0;
+        }
+
+        .ik-page .ik-compare-card .ik-value-cell {
+            min-height: 4.0rem;
+            padding: 0.7rem 0.45rem;
+            background: rgba(6, 12, 24, 0.55);
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .ik-page .ik-compare-card .cell-label {
+            margin-bottom: 0.25rem;
+            font-size: 0.75rem;
+            letter-spacing: 0.02em;
+        }
+
+        /* Numeri grandi — leggibili in registrazione video a distanza. */
+        .ik-page .ik-compare-card .cell-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.01em;
+        }
+        .ik-page .ik-compare-card.target .cell-value { color: #cfe6ff; }
+        .ik-page .ik-compare-card.real   .cell-value { color: #d6f6e0; }
+
+        /* Errore: colore del NUMERO in base alla soglia (applicato da ik.js
+           via classi error-green / error-yellow / error-red sul <div>). */
+        .ik-page .ik-compare-card.error .cell-value { color: #e7ecf4; }
+        .ik-page .cell-value.error-green  { color: #5be39a; }
+        .ik-page .cell-value.error-yellow { color: #ffc96a; }
+        .ik-page .cell-value.error-red    { color: #ff6b6b; }
+        .ik-page .cell-value.error-idle   { color: #6d7a8f; }
+
+        .ik-page .ik-error-summary {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.75rem 1.4rem;
+            margin-top: 0.9rem;
+            padding: 0.7rem 0.8rem;
+            background: rgba(6, 12, 24, 0.6);
+            border-radius: 8px;
+            font-size: 1.0rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: #d8dde6;
+        }
+        .ik-page .ik-error-dot {
+            font-size: 1.35rem;
+            line-height: 1;
+        }
+        .ik-page .error-dot-green   { color: #3ecf82; }
+        .ik-page .error-dot-yellow  { color: #ffc857; }
+        .ik-page .error-dot-red     { color: #ff5b5b; }
+        .ik-page .error-dot-idle    { color: #586174; }
+
+        .ik-page .ik-compare-note {
+            font-size: 0.78rem;
+            color: var(--muted, #9db1cc);
+            margin-top: 0.75rem;
+            line-height: 1.45;
+        }
+
+        /* ==========================================================
+           THESIS-READY LAYOUT — 4 sezioni principali
+           ========================================================== */
+        .ik-page .tesis-section {
+            margin-bottom: 1.1rem;
+            padding: 1.1rem 1.3rem 1.2rem 1.3rem;
+            border-radius: 14px;
+        }
+        .ik-page .tesis-section.target-section {
+            border-left: 5px solid #3d9dff;
+            background: linear-gradient(180deg, rgba(61,157,255,0.08), rgba(10,17,32,0.6));
+        }
+        .ik-page .tesis-section.real-section {
+            border-left: 5px solid #2ecc71;
+            background: linear-gradient(180deg, rgba(46,204,113,0.08), rgba(10,17,32,0.6));
+        }
+        .ik-page .tesis-section.state-section {
+            border-left: 5px solid #9db1cc;
+            background: rgba(10, 17, 32, 0.55);
+        }
+        .ik-page .tesis-section.error-section {
+            border-left: 5px solid #f39c12;
+            background: linear-gradient(180deg, rgba(243,156,18,0.08), rgba(10,17,32,0.65));
+            /* La sezione errore è quella dominante: più padding e bordo marcato. */
+            padding: 1.2rem 1.4rem 1.4rem 1.4rem;
+            box-shadow: 0 0 0 1px rgba(243,156,18,0.22);
+        }
+        .ik-page .tesis-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 0.9rem;
+            margin-bottom: 0.95rem;
+        }
+        .ik-page .tesis-section-header h2 {
+            margin: 0;
+            font-size: 1.2rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+        }
+        .ik-page .target-section .tesis-section-header h2 { color: #8fcaff; }
+        .ik-page .real-section   .tesis-section-header h2 { color: #7fe0a0; }
+        .ik-page .state-section  .tesis-section-header h2 { color: #e7ecf4; }
+        .ik-page .error-section  .tesis-section-header h2 { color: #ffc870; font-size: 1.3rem; }
+        .ik-page .tesis-caption {
+            font-size: 0.82rem;
+            color: var(--muted, #9db1cc);
+        }
+
+        /* Grid a 6 celle (3 cols x 2 rows) per target / real / error.
+           Stessa geometria → allineamento visivo perfetto tra sezioni. */
+        .ik-page .tesis-pose-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.7rem;
+        }
+        @media (max-width: 720px) {
+            .ik-page .tesis-pose-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        .ik-page .pose-cell {
+            background: rgba(6, 12, 24, 0.55);
+            border-radius: 10px;
+            padding: 0.8rem 0.6rem 0.85rem 0.6rem;
+            text-align: center;
+            min-height: 4.8rem;
+        }
+        .ik-page .pose-label {
+            font-size: 0.78rem;
+            color: var(--muted, #9db1cc);
+            letter-spacing: 0.04em;
+            margin-bottom: 0.3rem;
+            text-transform: uppercase;
+        }
+        .ik-page .pose-label .unit {
+            color: #6d7a8f;
+            font-weight: 500;
+        }
+        .ik-page .pose-value {
+            font-size: 1.85rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.01em;
+            line-height: 1.1;
+        }
+        .ik-page .target-section .pose-value { color: #cfe6ff; }
+        .ik-page .real-section   .pose-value { color: #d6f6e0; }
+        .ik-page .error-section  .pose-value { color: #e7ecf4; }
+
+        /* Input cells nella sezione Target: grossi, allineati con pose-value.
+           L'input nasconde spinner/accessori così il video resta pulito. */
+        .ik-page .pose-input {
+            width: 100%;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #cfe6ff;
+            font-size: 1.85rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.01em;
+            text-align: center;
+            line-height: 1.1;
+        }
+        .ik-page .pose-input:focus { color: #ffffff; }
+        .ik-page .pose-input::-webkit-outer-spin-button,
+        .ik-page .pose-input::-webkit-inner-spin-button {
+            -webkit-appearance: none; margin: 0;
+        }
+        .ik-page .pose-input[type=number] { -moz-appearance: textfield; }
+
+        /* Colore del NUMERO errore per cella (gestito via JS: error-green/yellow/red/idle) */
+        .ik-page .error-section .pose-value.error-green  { color: #5be39a; }
+        .ik-page .error-section .pose-value.error-yellow { color: #ffc96a; }
+        .ik-page .error-section .pose-value.error-red    { color: #ff6b6b; }
+        .ik-page .error-section .pose-value.error-idle   { color: #6d7a8f; }
+
+        /* Row primario sotto i campi target: pulsante big + Home compatto */
+        .ik-page .tesis-actions-row {
+            display: flex;
+            gap: 0.8rem;
+            margin-top: 1.0rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .ik-page .tesis-btn-primary {
+            font-size: 1.05rem;
+            font-weight: 700;
+            padding: 0.85rem 1.5rem;
+            border-radius: 10px;
+            background: linear-gradient(180deg, #3d9dff, #1f7bd9);
+            color: #0a1120;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(61,157,255,0.25);
+            letter-spacing: 0.02em;
+        }
+        .ik-page .tesis-btn-primary:hover { filter: brightness(1.08); }
+        .ik-page .tesis-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+        .ik-page .tesis-btn-secondary {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.15);
+            color: #d8dde6;
+            padding: 0.7rem 1.05rem;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+        .ik-page .tesis-btn-secondary:hover { background: rgba(255,255,255,0.08); }
+        .ik-page .tesis-status-line {
+            margin-top: 0.65rem;
+            font-size: 0.85rem;
+            color: var(--muted, #9db1cc);
+            min-height: 1.1rem;
+        }
+
+        /* Stato robot — 4 pills affiancate con color-coding per livello. */
+        .ik-page .state-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.7rem;
+        }
+        @media (max-width: 720px) {
+            .ik-page .state-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        .ik-page .state-pill {
+            background: rgba(6, 12, 24, 0.55);
+            border-radius: 10px;
+            padding: 0.75rem 0.9rem;
+            border: 1px solid rgba(255,255,255,0.07);
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .ik-page .state-label {
+            font-size: 0.72rem;
+            color: var(--muted, #9db1cc);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            margin-bottom: 0.35rem;
+        }
+        .ik-page .state-value {
+            font-size: 1.15rem;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            font-variant-numeric: tabular-nums;
+            color: #e7ecf4;
+        }
+        .ik-page .state-level-ok      { border-color: rgba(46,204,113,0.4);  background: rgba(46,204,113,0.10); }
+        .ik-page .state-level-ok      .state-value { color: #7fe0a0; }
+        .ik-page .state-level-wait    { border-color: rgba(255,200,103,0.4); background: rgba(255,200,103,0.08); }
+        .ik-page .state-level-wait    .state-value { color: #ffc857; }
+        .ik-page .state-level-bad     { border-color: rgba(255,91,91,0.45);  background: rgba(255,91,91,0.10); }
+        .ik-page .state-level-bad     .state-value { color: #ff6b6b; }
+        .ik-page .state-level-moving  { border-color: rgba(61,157,255,0.45); background: rgba(61,157,255,0.10); }
+        .ik-page .state-level-moving  .state-value { color: #8fcaff; }
+        .ik-page .state-level-idle    { border-color: rgba(157,177,204,0.2); }
+        .ik-page .state-level-idle    .state-value { color: #9db1cc; }
+
+        .ik-page .state-dot {
+            font-size: 1.0rem;
+            vertical-align: -2px;
+            margin-right: 0.2rem;
+        }
+        .ik-page .state-dot-on  { color: #3ecf82; }
+        .ik-page .state-dot-off { color: #586174; }
+
+        /* Riepilogo nel card errore: pallino + norma pos + norma rot */
+        .ik-page .error-summary-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.75rem 1.8rem;
+            margin-top: 1.0rem;
+            padding: 0.85rem 1.0rem;
+            background: rgba(6, 12, 24, 0.65);
+            border-radius: 10px;
+            font-size: 1.05rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: #d8dde6;
+        }
+        .ik-page .error-norm { white-space: nowrap; }
+
+        /* Verdetto finale — linea riassuntiva alta visibilità */
+        .ik-page .error-verdict {
+            margin-top: 0.85rem;
+            padding: 0.95rem 1.1rem;
+            border-radius: 10px;
+            display: flex;
+            align-items: baseline;
+            gap: 0.7rem;
+            font-size: 1.0rem;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            transition: background 0.2s, color 0.2s;
+        }
+        .ik-page .error-verdict .verdict-label {
+            color: var(--muted, #9db1cc);
+            font-weight: 600;
+        }
+        .ik-page .error-verdict .verdict-value {
+            font-size: 1.35rem;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+        }
+        .ik-page .error-verdict.verdict-green  {
+            background: rgba(62,207,130,0.15);
+            border: 1px solid rgba(62,207,130,0.45);
+        }
+        .ik-page .error-verdict.verdict-green  .verdict-value { color: #5be39a; }
+        .ik-page .error-verdict.verdict-yellow {
+            background: rgba(255,200,103,0.15);
+            border: 1px solid rgba(255,200,103,0.45);
+        }
+        .ik-page .error-verdict.verdict-yellow .verdict-value { color: #ffc857; }
+        .ik-page .error-verdict.verdict-red    {
+            background: rgba(255,91,91,0.15);
+            border: 1px solid rgba(255,91,91,0.45);
+        }
+        .ik-page .error-verdict.verdict-red    .verdict-value { color: #ff6b6b; }
+        .ik-page .error-verdict.verdict-idle   {
+            background: rgba(88,97,116,0.12);
+            border: 1px solid rgba(88,97,116,0.3);
+        }
+        .ik-page .error-verdict.verdict-idle   .verdict-value { color: #9db1cc; }
+
+        /* Blocco utilità in fondo pagina: collapsed di default, de-enfatizzato.
+           Mantiene FK manuale, IK angoli-risultato, Save target. */
+        .ik-page .utilities-section {
+            margin-top: 1.6rem;
+            background: rgba(10, 17, 32, 0.45);
+            border: 1px dashed rgba(157,177,204,0.22);
+            border-radius: 10px;
+            padding: 0;
+        }
+        .ik-page .utilities-section > summary {
+            list-style: none;
+            padding: 0.75rem 1.1rem;
+            cursor: pointer;
+            font-size: 0.88rem;
+            color: var(--muted, #9db1cc);
+            letter-spacing: 0.02em;
+            outline: none;
+        }
+        .ik-page .utilities-section > summary::-webkit-details-marker { display: none; }
+        .ik-page .utilities-section > summary::before {
+            content: "▸";
+            display: inline-block;
+            margin-right: 0.4rem;
+            transition: transform 0.2s;
+        }
+        .ik-page .utilities-section[open] > summary::before { transform: rotate(90deg); }
+        .ik-page .utilities-body {
+            padding: 0 1.1rem 1.1rem 1.1rem;
+        }
+
+        /* ==========================================================
+           PIPELINE NARRATIVE — 4 sezioni engineering-flow
+           1) Joints → 2) FK pose → 3) IK recovered joints → 4) Real robot
+           ========================================================== */
+        .ik-page .pipeline-flow-hint {
+            margin: 0.1rem 0 0.9rem 0;
+            padding: 0.7rem 1rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-align: center;
+            color: #c9d3e0;
+            border: 1px dashed rgba(61,157,255,0.28);
+            border-radius: 10px;
+            background: linear-gradient(90deg,
+                rgba(147,120,220,0.06), rgba(61,157,255,0.06),
+                rgba(46,204,113,0.06), rgba(243,156,18,0.08));
+        }
+
+        /* Accenti colorati per sezione (pipeline chain). */
+        .ik-page .tesis-section.joints-section {
+            border-left: 5px solid #9378dc;
+            background: linear-gradient(180deg, rgba(147,120,220,0.08), rgba(10,17,32,0.6));
+        }
+        .ik-page .joints-section .tesis-section-header h2 { color: #c7b6f5; }
+        .ik-page .joints-section .pose-value,
+        .ik-page .joints-section .pose-input { color: #d6cdfb; }
+
+        .ik-page .tesis-section.fk-section {
+            border-left: 5px solid #3d9dff;
+            background: linear-gradient(180deg, rgba(61,157,255,0.08), rgba(10,17,32,0.6));
+        }
+        .ik-page .fk-section .tesis-section-header h2 { color: #8fcaff; }
+        .ik-page .fk-section .pose-value { color: #cfe6ff; }
+
+        .ik-page .tesis-section.ik-round-section {
+            border-left: 5px solid #c678dd;
+            background: linear-gradient(180deg, rgba(198,120,221,0.09), rgba(10,17,32,0.6));
+        }
+        .ik-page .ik-round-section .tesis-section-header h2 { color: #e6bcf6; }
+        .ik-page .ik-round-section .pose-value { color: #efd5fb; }
+
+        .ik-page .tesis-section.compare-section {
+            border-left: 5px solid #f39c12;
+            background: linear-gradient(180deg, rgba(243,156,18,0.08), rgba(10,17,32,0.6));
+            padding: 1.2rem 1.4rem 1.4rem 1.4rem;
+            box-shadow: 0 0 0 1px rgba(243,156,18,0.22);
+        }
+        .ik-page .compare-section .tesis-section-header h2 { color: #ffc870; font-size: 1.3rem; }
+
+        /* Grid per i 6 angoli giunto (Sez 1 + Sez 3): stessa geometria
+           della pose-grid così Sez 1 e Sez 3 sono confrontabili a colpo d'occhio. */
+        .ik-page .tesis-joint-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.7rem;
+        }
+        @media (max-width: 720px) {
+            .ik-page .tesis-joint-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        /* Riepilogo round-trip (Sez 3): pallino + max scostamento + solver meta */
+        .ik-page .round-trip-summary {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.75rem 1.8rem;
+            margin-top: 0.9rem;
+            padding: 0.8rem 1.0rem;
+            background: rgba(6, 12, 24, 0.65);
+            border-radius: 10px;
+            font-size: 1.0rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: #d8dde6;
+        }
+
+        /* State strip compatta — 4 pill in riga tra Sez 3 e Sez 4 */
+        .ik-page .state-strip {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.7rem;
+            margin: 0.4rem 0 1.0rem 0;
+        }
+        @media (max-width: 720px) {
+            .ik-page .state-strip { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        /* Compare section layout: Target|Real affiancate, poi Error full-width */
+        .ik-page .compare-dual-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.9rem;
+            margin-bottom: 1.0rem;
+        }
+        @media (max-width: 980px) {
+            .ik-page .compare-dual-grid { grid-template-columns: 1fr; }
+        }
+        .ik-page .compare-subcard {
+            background: rgba(10, 17, 32, 0.55);
+            border-radius: 10px;
+            padding: 0.95rem 1.0rem 1.0rem 1.0rem;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .ik-page .compare-subcard.target-sub {
+            border-color: rgba(61,157,255,0.35);
+            box-shadow: inset 3px 0 0 0 rgba(61,157,255,0.6);
+        }
+        .ik-page .compare-subcard.real-sub {
+            border-color: rgba(46,204,113,0.35);
+            box-shadow: inset 3px 0 0 0 rgba(46,204,113,0.6);
+        }
+        .ik-page .compare-subcard.error-sub {
+            border-color: rgba(243,156,18,0.4);
+            box-shadow: inset 3px 0 0 0 rgba(243,156,18,0.7);
+        }
+        .ik-page .compare-subcard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 0.7rem;
+            margin-bottom: 0.7rem;
+        }
+        .ik-page .compare-subcard-header strong {
+            font-size: 1.0rem;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+        .ik-page .compare-subcard.target-sub .compare-subcard-header strong { color: #8fcaff; }
+        .ik-page .compare-subcard.real-sub   .compare-subcard-header strong { color: #7fe0a0; }
+        .ik-page .compare-subcard.error-sub  .compare-subcard-header strong { color: #ffc870; }
+        .ik-page .compare-subcard.target-sub .pose-input,
+        .ik-page .compare-subcard.target-sub .pose-value { color: #cfe6ff; }
+        .ik-page .compare-subcard.real-sub   .pose-value { color: #d6f6e0; }
+        .ik-page .compare-subcard.error-sub  .pose-value { color: #e7ecf4; }
+
+        /* Zero-at-HOME control bar — piccola, sotto la tesis-actions-row di Sez 3 */
+        .ik-page .zero-home-bar {
+            display: flex; flex-wrap: wrap; align-items: center;
+            gap: 0.7rem; margin-top: 0.7rem;
+            padding: 0.55rem 0.75rem;
+            background: rgba(6, 12, 24, 0.4);
+            border: 1px dashed rgba(157,177,204,0.25);
+            border-radius: 8px;
+        }
+        .ik-page .zero-home-bar .zero-home-btn {
+            background: rgba(243,156,18,0.18);
+            border: 1px solid rgba(243,156,18,0.45);
+            color: #ffc870;
+        }
+        .ik-page .zero-home-bar .zero-home-btn:hover { background: rgba(243,156,18,0.28); }
+        .ik-page .zero-home-bar .zero-home-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .ik-page .zero-home-bar .zero-home-reset {
+            font-size: 0.82rem;
+            padding: 0.5rem 0.8rem;
+        }
+        .ik-page .zero-home-bar .zero-home-status {
+            font-size: 0.85rem;
+            color: var(--muted, #9db1cc);
+            margin-left: auto;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Button style per step (pipeline buttons) */
+        .ik-page .tesis-actions-row .btn-step-fk {
+            background: linear-gradient(180deg, #3d9dff, #1f7bd9);
+            box-shadow: 0 4px 12px rgba(61,157,255,0.25);
+        }
+        .ik-page .tesis-actions-row .btn-step-ik {
+            background: linear-gradient(180deg, #c678dd, #8b4db5);
+            box-shadow: 0 4px 12px rgba(198,120,221,0.28);
+            color: #1a0e24;
+        }
+        .ik-page .tesis-actions-row .btn-step-send {
+            background: linear-gradient(180deg, #2ecc71, #1f8d4e);
+            box-shadow: 0 4px 12px rgba(46,204,113,0.28);
+            color: #062014;
+        }
+    </style>
+</head>
+<body class="ik-page">
+<div id="navbar"></div>
+
+<div class="content">
+
+    <section class="hero panel-elevated">
+        <h1 class="hero-title">Pipeline cinematica IK — teorico vs reale</h1>
+        <p class="hero-subtitle">Target (IK) → esecuzione → stima IMU in base frame → errore di posa</p>
+        <div class="diagnostic-row">
+            <div class="diag-box">
+                <div class="diag-label">WebSocket</div>
+                <div id="diag-ws" class="diag-value state-pill state-off">OFFLINE</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">Ultimo IK</div>
+                <div id="diag-solver" class="diag-value state-pill state-warn">N/D</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============================================================
+         Pipeline narrative: SEZIONE 1 → 2 → 3 → 4
+         Flusso ingegneristico completo:
+           1) Angoli giunto scelti →
+           2) FK: posa cartesiana POE →
+           3) IK: giunti ricostruiti (verifica round-trip) →
+           4) Applica al robot: target vs posa reale IMU + errore
+         ============================================================ -->
+
+    <div class="pipeline-flow-hint">
+        🧩 giunti  →  📐 FK  →  🔁 IK  →  🤖 robot  →  ⚠️ errore
+    </div>
+
+    <!-- ============================================================
+         SECTION 1 — 🧩 Angoli giunto in ingresso
+         Starting point: i 6 angoli che l'utente impone
+         ============================================================ -->
+    <section class="panel panel-elevated tesis-section joints-section" id="sec-joints-in">
+        <div class="tesis-section-header">
+            <h2>🧩 1 · Angoli giunto in ingresso</h2>
+            <span class="tesis-caption">Punto di partenza della pipeline: angoli virtuali (home = 90°)</span>
+        </div>
+        <div class="tesis-joint-grid">
+            <div class="pose-cell"><div class="pose-label">Base <span class="unit">°</span></div><input class="pose-input" type="number" id="fk-base" value="90" step="0.1" /></div>
+            <div class="pose-cell"><div class="pose-label">Spalla <span class="unit">°</span></div><input class="pose-input" type="number" id="fk-spalla" value="90" step="0.1" /></div>
+            <div class="pose-cell"><div class="pose-label">Gomito <span class="unit">°</span></div><input class="pose-input" type="number" id="fk-gomito" value="90" step="0.1" /></div>
+            <div class="pose-cell"><div class="pose-label">Yaw <span class="unit">°</span></div><input class="pose-input" type="number" id="fk-yaw" value="90" step="0.1" /></div>
+            <div class="pose-cell"><div class="pose-label">Pitch <span class="unit">°</span></div><input class="pose-input" type="number" id="fk-pitch" value="90" step="0.1" /></div>
+            <div class="pose-cell"><div class="pose-label">Roll <span class="unit">°</span></div><input class="pose-input" type="number" id="fk-roll" value="90" step="0.1" /></div>
+        </div>
+        <p class="ik-limits-foot" id="ik-limits-summary-fk">Limiti giunto: caricamento…</p>
+        <div class="tesis-actions-row">
+            <button class="tesis-btn-primary btn-step-fk" id="btn-calc-fk">▶ Calcola FK</button>
+            <span class="tesis-status-line" id="fk-status">In attesa</span>
+        </div>
+    </section>
+
+    <!-- ============================================================
+         SECTION 2 — 📐 FK: posa cartesiana risultante
+         Output del mapping diretto giunti → posa
+         ============================================================ -->
+    <section class="panel panel-elevated tesis-section fk-section" id="sec-fk-out">
+        <div class="tesis-section-header">
+            <h2>📐 2 · FK: posa cartesiana risultante</h2>
+            <span class="tesis-caption">Modello POE (<code>j5_poe_params.json</code>) sui giunti scelti sopra</span>
+        </div>
+        <div class="tesis-pose-grid">
+            <div class="pose-cell"><div class="pose-label">X <span class="unit">mm</span></div><div class="pose-value" id="fk-out-x">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Y <span class="unit">mm</span></div><div class="pose-value" id="fk-out-y">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Z <span class="unit">mm</span></div><div class="pose-value" id="fk-out-z">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Yaw <span class="unit">°</span></div><div class="pose-value" id="fk-out-yaw">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Pitch <span class="unit">°</span></div><div class="pose-value" id="fk-out-pitch">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Roll <span class="unit">°</span></div><div class="pose-value" id="fk-out-roll">—</div></div>
+        </div>
+        <div class="ik-quat" id="fk-out-quat" style="margin-top:0.7rem;">Quaternione (xyzw): —</div>
+        <div class="tesis-actions-row">
+            <button class="tesis-btn-primary btn-step-ik" id="btn-calc-ik">▶ Calcola IK (usa questa posa come target)</button>
+            <span class="tesis-status-line">
+                Target IK (copia FK): X = <span id="ik-target-mirror-x">—</span> · Y = <span id="ik-target-mirror-y">—</span> · Z = <span id="ik-target-mirror-z">—</span>
+            </span>
+        </div>
+    </section>
+
+    <!-- ============================================================
+         SECTION 3 — 🔁 IK: giunti ricostruiti (round-trip check)
+         Deve coincidere (entro tolleranza) con la Sez 1
+         ============================================================ -->
+    <section class="panel panel-elevated tesis-section ik-round-section" id="sec-ik-round">
+        <div class="tesis-section-header">
+            <h2>🔁 3 · IK: giunti ricostruiti dalla posa FK</h2>
+            <span class="tesis-caption" id="ik-round-caption">Verifica round-trip FK → IK · devono coincidere con Sez 1</span>
+        </div>
+        <div class="tesis-joint-grid ik-round-grid">
+            <div class="pose-cell"><div class="pose-label">Base <span class="unit">°</span></div><div class="pose-value" id="ik-rec-base">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Spalla <span class="unit">°</span></div><div class="pose-value" id="ik-rec-spalla">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Gomito <span class="unit">°</span></div><div class="pose-value" id="ik-rec-gomito">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Yaw <span class="unit">°</span></div><div class="pose-value" id="ik-rec-yaw">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Pitch <span class="unit">°</span></div><div class="pose-value" id="ik-rec-pitch">—</div></div>
+            <div class="pose-cell"><div class="pose-label">Roll <span class="unit">°</span></div><div class="pose-value" id="ik-rec-roll">—</div></div>
+        </div>
+        <div class="round-trip-summary">
+            <span class="ik-error-dot error-dot-idle" id="ik-round-dot">●</span>
+            <span class="error-norm" id="ik-round-max">Max scostamento: —</span>
+            <span class="error-norm" id="ik-round-meta">Solver: — · Iter: — · <span id="ik-elapsed-ms">-</span> ms</span>
+        </div>
+        <div class="error-verdict verdict-idle" id="ik-round-verdict">
+            <span class="verdict-label">Round-trip:</span>
+            <span class="verdict-value" id="ik-round-verdict-value">—</span>
+        </div>
+        <div class="tesis-actions-row">
+            <button class="tesis-btn-primary btn-step-send" id="btn-send-ik" disabled>▶ Invia posa al robot (SETPOSE)</button>
+            <button class="tesis-btn-secondary" id="btn-home-ik">⌂ Home</button>
+            <span class="tesis-status-line" id="ik-round-status">Premi «Calcola IK» dopo aver calcolato la FK.</span>
+        </div>
+        <!-- Zero-at-HOME control: osservabilità-layer, corregge yaw drift BNO085 -->
+        <div class="zero-home-bar">
+            <button class="tesis-btn-secondary zero-home-btn" id="btn-zero-at-home">🎯 Azzera IMU @ HOME</button>
+            <button class="tesis-btn-secondary zero-home-reset" id="btn-reset-zero-home">✕ Reset zero</button>
+            <span class="zero-home-status" id="zero-home-status">
+                <span class="state-dot state-dot-off">●</span> Zero-at-HOME non impostato (pipeline nuda)
+            </span>
+        </div>
+    </section>
+
+    <!-- State strip: pillole IMU / rate / tracking, compatte -->
+    <div class="state-strip">
+        <div class="state-pill state-level-idle" id="state-pill-motion">
+            <div class="state-label">Stato</div>
+            <div class="state-value" id="state-value-motion">IDLE</div>
+        </div>
+        <div class="state-pill state-level-wait" id="state-pill-imu">
+            <div class="state-label">IMU</div>
+            <div class="state-value" id="state-value-imu">WAIT</div>
+        </div>
+        <div class="state-pill state-level-idle" id="state-pill-rate">
+            <div class="state-label">Sample rate</div>
+            <div class="state-value" id="state-value-rate">— Hz</div>
+        </div>
+        <div class="state-pill state-level-idle" id="state-pill-track">
+            <div class="state-label">Tracking IMU</div>
+            <div class="state-value" id="state-value-track"><span class="state-dot state-dot-off">●</span> inattivo</div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         SECTION 4 — 🤖 Applica posa · target vs reale IMU
+         ============================================================ -->
+    <section class="panel panel-elevated tesis-section compare-section" id="sec-compare">
+        <div class="tesis-section-header">
+            <h2>🎯🤖 4 · Posa applicata: target (FK) vs reale (IMU)</h2>
+            <span class="tesis-caption">Confronto realtime del robot in esecuzione</span>
+        </div>
+
+        <!-- Azioni rapide: HOME+zero IMU e invio target diretto -->
+        <div class="tesis-actions-row" style="margin-bottom:0.85rem;display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
+            <button class="tesis-btn-secondary" id="btn-cmp-home-zero"
+                    title="1) Robot va in HOME · 2) Azzera quaternion IMU usando questa posa come riferimento (elimina yaw drift BNO085)">
+                ⌂ HOME + 🎯 Azzera IMU
+            </button>
+            <button class="tesis-btn-primary" id="btn-cmp-send-pose"
+                    title="Invia gli X/Y/Z/RPY del Target teorico al robot via IK + SETPOSE">
+                ▶ Invia posa al robot
+            </button>
+            <span class="tesis-status-line" id="cmp-action-status" style="margin-left:0.4rem;flex:1;color:var(--muted);font-size:0.85rem;">Pronto.</span>
+        </div>
+
+        <div class="compare-dual-grid">
+            <!-- Target (= FK output, ciò che il robot dovrebbe raggiungere) -->
+            <div class="compare-subcard target-sub">
+                <div class="compare-subcard-header">
+                    <strong>🎯 Target teorico</strong>
+                    <span class="tesis-caption" id="cmp-meta-target">Copia della posa FK</span>
+                </div>
+                <div class="tesis-pose-grid">
+                    <div class="pose-cell"><div class="pose-label">X <span class="unit">mm</span></div><input class="pose-input" type="number" id="ik-x" value="80" step="0.1" min="-500" max="500" /></div>
+                    <div class="pose-cell"><div class="pose-label">Y <span class="unit">mm</span></div><input class="pose-input" type="number" id="ik-y" value="59.55" step="0.1" min="-500" max="500" /></div>
+                    <div class="pose-cell"><div class="pose-label">Z <span class="unit">mm</span></div><input class="pose-input" type="number" id="ik-z" value="-62.75" step="0.1" min="-500" max="500" /></div>
+                    <div class="pose-cell"><div class="pose-label">Yaw <span class="unit">°</span></div><input class="pose-input" type="number" id="ik-yaw" value="0" step="0.1" min="-180" max="180" /></div>
+                    <div class="pose-cell"><div class="pose-label">Pitch <span class="unit">°</span></div><input class="pose-input" type="number" id="ik-pitch" value="0" step="0.1" min="-180" max="180" /></div>
+                    <div class="pose-cell"><div class="pose-label">Roll <span class="unit">°</span></div><input class="pose-input" type="number" id="ik-roll" value="-90" step="0.1" min="-180" max="180" /></div>
+                </div>
+            </div>
+
+            <!-- Real: stima IMU in base frame, posizione ancorata a FK wc -->
+            <div class="compare-subcard real-sub">
+                <div class="compare-subcard-header">
+                    <strong>🤖 Posa reale (IMU)</strong>
+                    <span class="tesis-caption" id="cmp-meta-real">In attesa di prime IMU…</span>
+                </div>
+                <div class="tesis-pose-grid">
+                    <div class="pose-cell"><div class="pose-label">X <span class="unit">mm</span></div><div class="pose-value" id="cmp-real-x">—</div></div>
+                    <div class="pose-cell"><div class="pose-label">Y <span class="unit">mm</span></div><div class="pose-value" id="cmp-real-y">—</div></div>
+                    <div class="pose-cell"><div class="pose-label">Z <span class="unit">mm</span></div><div class="pose-value" id="cmp-real-z">—</div></div>
+                    <div class="pose-cell"><div class="pose-label">Yaw <span class="unit">°</span></div><div class="pose-value" id="cmp-real-yaw">—</div></div>
+                    <div class="pose-cell"><div class="pose-label">Pitch <span class="unit">°</span></div><div class="pose-value" id="cmp-real-pitch">—</div></div>
+                    <div class="pose-cell"><div class="pose-label">Roll <span class="unit">°</span></div><div class="pose-value" id="cmp-real-roll">—</div></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error sub-block (dominante) -->
+        <div class="compare-subcard error-sub">
+            <div class="compare-subcard-header">
+                <strong>⚠️ Errore di posa</strong>
+                <span class="tesis-caption" id="cmp-meta-error">Δ = reale − target · soglie: verde &lt; 5 mm / 2°, giallo &lt; 20 mm / 8°, rosso oltre</span>
+            </div>
+            <div class="tesis-pose-grid">
+                <div class="pose-cell"><div class="pose-label">ΔX <span class="unit">mm</span></div><div class="pose-value" id="cmp-error-x">—</div></div>
+                <div class="pose-cell"><div class="pose-label">ΔY <span class="unit">mm</span></div><div class="pose-value" id="cmp-error-y">—</div></div>
+                <div class="pose-cell"><div class="pose-label">ΔZ <span class="unit">mm</span></div><div class="pose-value" id="cmp-error-z">—</div></div>
+                <div class="pose-cell"><div class="pose-label">ΔYaw <span class="unit">°</span></div><div class="pose-value" id="cmp-error-yaw">—</div></div>
+                <div class="pose-cell"><div class="pose-label">ΔPitch <span class="unit">°</span></div><div class="pose-value" id="cmp-error-pitch">—</div></div>
+                <div class="pose-cell"><div class="pose-label">ΔRoll <span class="unit">°</span></div><div class="pose-value" id="cmp-error-roll">—</div></div>
+            </div>
+            <div class="error-summary-row">
+                <span class="ik-error-dot error-dot-idle" id="cmp-error-dot">●</span>
+                <span class="error-norm" id="cmp-error-norm-pos">Errore posizione: —</span>
+                <span class="error-norm" id="cmp-error-norm-rot">Errore orientazione: —</span>
+            </div>
+            <div class="error-verdict verdict-idle" id="ik-error-verdict">
+                <span class="verdict-label">Stato finale:</span>
+                <span class="verdict-value" id="ik-error-verdict-value">—</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============================================================
+         UTILITÀ avanzate: params POE tolleranze, save target, debug compare
+         ============================================================ -->
+    <details class="utilities-section" id="sec-utilities">
+        <summary>🔧 Utilità avanzate · solver tolerances · save target · debug compare</summary>
+        <div class="utilities-body">
+            <div class="ik-check-row" style="margin-bottom:0.6rem;">
+                <label style="display:inline-flex; gap:0.45rem; align-items:center; cursor:pointer;">
+                    <input type="checkbox" id="ik-reset-solver" checked />
+                    Reinizializza solver IK a ogni calcolo
+                </label>
+            </div>
+            <div class="ik-actions" style="margin-bottom:0.8rem;">
+                <button class="btn ghost sm" id="btn-save-target">Salva target cartesiano</button>
+                <span class="save-feedback" id="fb-target"></span>
+            </div>
+
+            <!-- IK status badge completo (usato da setIKStatus) -->
+            <div id="ik-status-badge" class="ik-status idle">
+                <span id="ik-status-dot">○</span>
+                <span id="ik-status-text">In attesa del calcolo</span>
+            </div>
+            <div class="ik-meta-row" style="margin:0.5rem 0;">
+                Solver: <strong id="ik-solver-used" style="color:var(--text)">N/D</strong>
+            </div>
+
+            <!-- Griglia angoli ridondante usata internamente da btn-send-ik (fallback manuale) -->
+            <div class="ik-num-grid ik-result-grid" id="ik-result-grid"></div>
+
+            <div class="ik-solver-params" style="margin-top:0.8rem;">
+                <p class="ik-solver-params-title">Tolleranze — solver numerico POE</p>
+                <div class="ik-tol-row">
+                    <label for="ik-max-pos-error" style="font-size:0.82rem; color:var(--muted);">Errore max posizione (mm)</label>
+                    <input type="number" id="ik-max-pos-error" value="10" step="0.1" min="0.1" />
+                    <label for="ik-max-ori-error" style="font-size:0.82rem; color:var(--muted);">Errore max orientamento (°)</label>
+                    <input type="number" id="ik-max-ori-error" value="10" step="0.1" min="0.1" />
+                </div>
+            </div>
+
+            <details style="margin-top:0.7rem; font-size:0.78rem; color:var(--muted);">
+                <summary style="cursor:pointer;">Diagnostica compare window</summary>
+                <div class="ik-compare-meta" id="ik-compare-meta" style="margin-top:0.4rem;">
+                    Target attivo: nessuno · IMU: in attesa · Sample: -
+                </div>
+                <div id="ik-compare-status" class="ik-status idle" style="margin-top:0.4rem;">
+                    <span>○</span>
+                    <span>Invia una posa IK per armare il confronto</span>
+                </div>
+            </details>
+        </div>
+    </details>
+
+</div>
+
+<script src="../shared/js/j5_config.js"></script>
+<script type="module" src="js/pages/ik.js?v=zero-at-home-v5"></script>
+
+<script>
+  fetch("navbar.html")
+    .then(r => r.text())
+    .then(html => {
+      document.getElementById("navbar").innerHTML = html;
+      document.dispatchEvent(new CustomEvent("navbar-loaded"));
+      const page = window.location.pathname.split("/").pop() || "index.html";
+      document.querySelectorAll(".navbar a").forEach(a => {
+        a.classList.toggle("active", (a.getAttribute("href") || "") === page);
+      });
+    });
+</script>
+</body>
+</html>

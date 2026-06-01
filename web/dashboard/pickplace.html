@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <title>JONNY5 – Pick &amp; Place Test Bench</title>
+    <link rel="stylesheet" href="../shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+    <style>
+        :root {
+            --pp-accent: #ffb84d;
+            --pp-target: #ff5dbb;
+            --pp-tcp: #5dffa8;
+            --pp-traj: #5db8ff;
+        }
+
+        /* Hero specifica pick&place */
+        .pp-hero {
+            background: linear-gradient(135deg, rgba(61,157,255,0.10), rgba(18,194,178,0.06));
+            border-left: 3px solid var(--secondary, #12c2b2);
+        }
+        .pp-hero .hero-title {
+            background: linear-gradient(90deg, #5dffa8, #5db8ff);
+            -webkit-background-clip: text; background-clip: text;
+            -webkit-text-fill-color: transparent; color: transparent;
+        }
+
+        /* Status strip estesa */
+        .pp-status-strip {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-top: 0.85rem;
+        }
+        .pp-status-strip .diag-box { min-width: 130px; }
+
+        /* Container 3D */
+        #scene-3d-wrap {
+            position: relative;
+            width: 100%;
+            height: 480px;
+            background: radial-gradient(ellipse at center, rgba(61,157,255,0.07), #05070c 80%);
+            border: 1px solid rgba(61,157,255,0.18);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        #scene-3d-canvas { display: block; width: 100%; height: 100%; }
+        .scene-overlay {
+            position: absolute;
+            top: 12px; left: 12px;
+            display: flex; gap: 0.4rem;
+            background: rgba(5,7,12,0.62);
+            backdrop-filter: blur(6px);
+            padding: 0.45rem 0.6rem;
+            border-radius: 8px;
+            border: 1px solid rgba(61,157,255,0.22);
+            z-index: 5;
+        }
+        .scene-overlay .btn { padding: 0.32rem 0.65rem; font-size: 0.78rem; }
+        .scene-legend {
+            position: absolute;
+            bottom: 12px; right: 12px;
+            background: rgba(5,7,12,0.72);
+            backdrop-filter: blur(6px);
+            border: 1px solid rgba(61,157,255,0.22);
+            padding: 0.5rem 0.7rem;
+            border-radius: 8px;
+            font-size: 0.72rem;
+            color: var(--muted);
+            line-height: 1.6;
+            z-index: 5;
+        }
+        .scene-legend .lg-dot { display:inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+        .scene-tcp-readout {
+            position: absolute;
+            top: 12px; right: 12px;
+            background: rgba(5,7,12,0.72);
+            backdrop-filter: blur(6px);
+            border: 1px solid rgba(61,157,255,0.22);
+            padding: 0.45rem 0.7rem;
+            border-radius: 8px;
+            font-size: 0.78rem;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+            z-index: 5;
+            min-width: 160px;
+        }
+        .scene-tcp-readout .row { display:flex; justify-content:space-between; gap:0.6rem; }
+        .scene-tcp-readout .row span:first-child { color: var(--muted); }
+
+        /* Numeric grid (riusa pattern ik-num) */
+        .pp-grid-6 {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 0.55rem;
+            margin-bottom: 0.85rem;
+        }
+        @media (max-width: 720px) { .pp-grid-6 { grid-template-columns: repeat(3, 1fr); } }
+        .pp-cell { display:flex; flex-direction:column; gap:0.25rem; }
+        .pp-cell label {
+            font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.05em; text-align: center; color: var(--primary);
+        }
+        .pp-cell label.lab-rot { color: #b07fd9; }
+        .pp-cell input {
+            width: 100%; box-sizing: border-box;
+            min-height: 2.2rem; padding: 0.35rem;
+            background: #0a1120;
+            border: 1px solid rgba(61,157,255,0.25);
+            border-radius: 7px;
+            color: var(--text);
+            font-size: 0.92rem; text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+        .pp-cell input:focus { outline:none; border-color: var(--primary); box-shadow: 0 0 0 1px rgba(61,157,255,0.3); }
+        .pp-readonly {
+            background: rgba(255,255,255,0.04) !important;
+            color: var(--pp-tcp) !important;
+            font-weight: 700;
+        }
+
+        /* Profilo selector */
+        .pp-profile-row {
+            display: flex; align-items: center; gap: 0.7rem;
+            margin: 0.5rem 0 0.85rem 0; flex-wrap: wrap;
+        }
+        .pp-profile-tabs { display:flex; gap: 0.35rem; }
+        .pp-profile-tab {
+            padding: 0.35rem 0.85rem; border-radius: 7px;
+            background: #0a1120;
+            border: 1px solid rgba(61,157,255,0.24);
+            color: var(--muted);
+            cursor: pointer; font-size: 0.83rem; font-weight: 700;
+            transition: all 0.15s;
+        }
+        .pp-profile-tab:hover { color: var(--text); border-color: rgba(61,157,255,0.5); }
+        .pp-profile-tab.active {
+            background: rgba(61,157,255,0.18);
+            color: var(--primary); border-color: var(--primary);
+            box-shadow: 0 0 0 1px rgba(61,157,255,0.3);
+        }
+        .pp-profile-tab[data-warn="1"]::after {
+            content: " ⚠";
+            font-size: 0.75em;
+            color: var(--pp-accent);
+        }
+
+        /* Vel slider compact */
+        .pp-vel-row {
+            display:flex; align-items:center; gap: 0.6rem; flex: 1; min-width: 250px;
+        }
+        .pp-vel-row input[type=range] { flex:1; accent-color: var(--primary); }
+        .pp-vel-row span { min-width: 64px; font-variant-numeric: tabular-nums; color: var(--text); }
+
+        /* IK result strip */
+        .ik-result-strip {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+            padding: 0.7rem;
+            background: rgba(61,157,255,0.05);
+            border: 1px solid rgba(61,157,255,0.18);
+            border-radius: 8px;
+            margin: 0.5rem 0 0.75rem 0;
+        }
+        @media (max-width: 720px) { .ik-result-strip { grid-template-columns: repeat(2, 1fr); } }
+        .ik-result-strip .r-cell { text-align:center; }
+        .ik-result-strip .r-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; }
+        .ik-result-strip .r-value { font-size: 1.1rem; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+        .ik-result-strip .r-value.ok { color: var(--success); }
+        .ik-result-strip .r-value.warn { color: var(--pp-accent); }
+        .ik-result-strip .r-value.err { color: var(--danger); }
+
+        /* Profile chart */
+        #profile-chart-wrap {
+            position: relative;
+            width: 100%; height: 280px;
+            background: #07101e;
+            border: 1px solid rgba(61,157,255,0.18);
+            border-radius: 8px;
+            padding: 0.5rem;
+            box-sizing: border-box;
+        }
+        #profile-chart { width: 100%; height: 100%; display: block; }
+        .profile-toggles {
+            display:flex; gap:0.5rem; margin-top: 0.5rem; flex-wrap: wrap;
+        }
+        .profile-toggle {
+            display:inline-flex; align-items:center; gap:0.35rem;
+            padding: 0.25rem 0.55rem; border-radius: 5px;
+            background: #0a1120; border: 1px solid rgba(61,157,255,0.18);
+            font-size: 0.75rem; color: var(--muted); cursor: pointer;
+        }
+        .profile-toggle.on { color: var(--text); border-color: rgba(61,157,255,0.45); }
+        .profile-toggle .swatch { width: 14px; height: 3px; border-radius: 2px; }
+
+        /* Attuatori PP1/PP2 */
+        .pp-actuator-row {
+            display: grid;
+            grid-template-columns: 220px 1fr 110px auto;
+            align-items: center;
+            gap: 0.8rem;
+            padding: 0.8rem 0.6rem;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .pp-actuator-row:last-of-type { border-bottom: none; }
+        @media (max-width: 720px) { .pp-actuator-row { grid-template-columns: 1fr; } }
+        .pp-act-label {
+            font-weight: 700;
+            font-size: 0.92rem;
+            color: var(--text);
+        }
+        .pp-act-label small { display:block; color: var(--muted); font-weight: 500; font-size: 0.72rem; margin-top:2px; }
+        .pp-act-led {
+            display:inline-block; width: 14px; height: 14px;
+            border-radius: 50%; background: #2a3548;
+            margin-right: 0.5rem; vertical-align: middle;
+            box-shadow: inset 0 0 4px rgba(0,0,0,0.4);
+            transition: all 0.2s;
+        }
+        .pp-act-led.on { background: var(--pp-tcp); box-shadow: 0 0 12px var(--pp-tcp), inset 0 0 4px rgba(255,255,255,0.4); }
+        .pp-act-slider-wrap { display:flex; align-items:center; gap: 0.6rem; }
+        .pp-act-slider-wrap input[type=range] { flex:1; accent-color: var(--secondary); }
+        .pp-act-slider-wrap .duty-text {
+            min-width: 50px; text-align:right;
+            color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums;
+        }
+        .pp-act-buttons { display:flex; gap: 0.35rem; }
+
+        /* Sequenza */
+        .seq-points-grid {
+            display: grid; grid-template-columns: 80px repeat(6, 1fr); gap: 0.5rem;
+            align-items: center; margin-bottom: 0.5rem;
+        }
+        .seq-points-grid .seq-label {
+            font-weight: 700; color: var(--primary); text-transform: uppercase;
+            font-size: 0.78rem;
+        }
+        .seq-points-grid .seq-col-hdr {
+            font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+            text-align: center; color: var(--muted); letter-spacing: 0.04em;
+        }
+        .seq-points-grid .seq-col-hdr.rot { color: #b07fd9; }
+        .seq-points-grid input {
+            padding: 0.35rem; background: #0a1120;
+            border: 1px solid rgba(61,157,255,0.25); border-radius: 6px;
+            color: var(--text); font-size: 0.85rem; text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+        .seq-points-grid input.seq-rot-input {
+            border-color: rgba(176,127,217,0.35);
+            color: #d4aaff;
+        }
+        .seq-step-strip {
+            display:flex; gap: 0.5rem; align-items:center;
+            padding: 0.6rem 0.75rem;
+            background: rgba(61,157,255,0.05);
+            border: 1px solid rgba(61,157,255,0.18);
+            border-radius: 8px;
+            margin-top: 0.6rem;
+            min-height: 2.5rem;
+            font-size: 0.85rem;
+        }
+        .seq-step-dot {
+            display:inline-block; width:10px; height:10px; border-radius:50%;
+            background: var(--muted);
+        }
+        .seq-step-dot.active { background: var(--pp-tcp); animation: pulse 1.2s infinite; }
+        .seq-step-dot.done   { background: var(--success); }
+        .seq-step-dot.fail   { background: var(--danger); }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%      { opacity: 0.5; transform: scale(1.4); }
+        }
+
+        /* Telemetria footer */
+        .pp-telem-grid {
+            display:grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 0.45rem;
+        }
+        @media (max-width: 720px) { .pp-telem-grid { grid-template-columns: repeat(3, 1fr); } }
+        .pp-telem-cell {
+            background: #0a1120;
+            border: 1px solid rgba(61,157,255,0.15);
+            border-radius: 7px;
+            padding: 0.45rem;
+            text-align: center;
+        }
+        .pp-telem-cell .lab { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing:0.05em; }
+        .pp-telem-cell .val { font-size: 0.95rem; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+
+        /* Sezioni collassabili */
+        .pp-section { margin-bottom: 1.2rem; }
+        .pp-section-header {
+            display:flex; align-items:center; justify-content:space-between;
+            cursor:pointer; user-select:none;
+            padding: 0.6rem 0; border-bottom: 1px solid rgba(61,157,255,0.18);
+            margin-bottom: 1rem;
+        }
+        .pp-section-header h2 { font-size: 1rem; margin: 0; color: var(--text); }
+        .pp-section-header .chevron {
+            font-size: 0.85rem; color: var(--muted); transition: transform 0.2s;
+        }
+        .pp-section-header.collapsed .chevron { transform: rotate(-90deg); }
+        .pp-section-body { overflow: hidden; }
+
+        .pp-warn-banner {
+            margin-top: 0.5rem;
+            padding: 0.5rem 0.7rem;
+            background: rgba(255,184,77,0.08);
+            border: 1px solid rgba(255,184,77,0.3);
+            border-radius: 6px;
+            font-size: 0.78rem;
+            color: var(--pp-accent);
+            display: none;
+        }
+        .pp-warn-banner.show { display: block; }
+    </style>
+</head>
+<body>
+<div id="navbar"></div>
+
+<div class="content">
+
+    <!-- HERO -->
+    <section class="hero panel-elevated pp-hero">
+        <h1 class="hero-title">Pick &amp; Place — Test Bench</h1>
+        <p class="hero-subtitle">Cinematica diretta · Cinematica inversa · Pianificazione traiettoria · Vacuum + Elettrovalvola</p>
+        <div class="pp-status-strip">
+            <div class="diag-box">
+                <div class="diag-label">WebSocket</div>
+                <div id="diag-ws" class="diag-value state-pill state-off">OFFLINE</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">STM32</div>
+                <div id="pill-stm32" class="diag-value state-pill state-unknown">–</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">Stato Robot</div>
+                <div id="pill-robot" class="diag-value state-pill state-unknown">–</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">PP1 valvola</div>
+                <div id="pill-pp1" class="diag-value state-pill state-off">0%</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">PP2 motori</div>
+                <div id="pill-pp2" class="diag-value state-pill state-off">0%</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">TCP Live</div>
+                <div id="pill-tcp" class="diag-value state-pill state-unknown">– mm</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- SEQUENZA AUTOMATICA -->
+    <section class="panel panel-elevated pp-section" id="sec-sequence">
+        <div class="pp-section-header" data-target="body-sequence">
+            <h2>Sequenza Pick → Place automatica</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="pp-section-body" id="body-sequence">
+            <p style="font-size:0.82rem;color:var(--muted);margin:0 0 0.85rem;">
+                Esegue una catena coordinata: <em>approach pick → discesa → vuoto ON → risalita →
+                approach place → discesa → vuoto OFF → risalita → home</em>.
+                Ogni step usa SETPOSE_T attendendo l'ack di completamento.
+            </p>
+            <div class="seq-points-grid">
+                <span></span>
+                <span class="seq-col-hdr">X mm</span>
+                <span class="seq-col-hdr">Y mm</span>
+                <span class="seq-col-hdr">Z mm</span>
+                <span class="seq-col-hdr rot">Roll °</span>
+                <span class="seq-col-hdr rot">Pitch °</span>
+                <span class="seq-col-hdr rot">Yaw °</span>
+                <span class="seq-label">PICK</span>
+                <input type="number" id="seq-pick-x"     value="120" placeholder="X">
+                <input type="number" id="seq-pick-y"     value="80"  placeholder="Y">
+                <input type="number" id="seq-pick-z"     value="40"  placeholder="Z">
+                <input type="number" id="seq-pick-roll"  value="0"   placeholder="R" class="seq-rot-input">
+                <input type="number" id="seq-pick-pitch" value="0"   placeholder="P" class="seq-rot-input">
+                <input type="number" id="seq-pick-yaw"   value="0"   placeholder="Y" class="seq-rot-input">
+                <span class="seq-label">PLACE</span>
+                <input type="number" id="seq-place-x"     value="120" placeholder="X">
+                <input type="number" id="seq-place-y"     value="-80" placeholder="Y">
+                <input type="number" id="seq-place-z"     value="40"  placeholder="Z">
+                <input type="number" id="seq-place-roll"  value="0"   placeholder="R" class="seq-rot-input">
+                <input type="number" id="seq-place-pitch" value="0"   placeholder="P" class="seq-rot-input">
+                <input type="number" id="seq-place-yaw"   value="0"   placeholder="Y" class="seq-rot-input">
+            </div>
+            <div class="seq-points-grid" style="grid-template-columns: 110px 100px 110px 100px 110px 1fr;">
+                <span class="seq-label">Approach H</span>
+                <input type="number" id="seq-app-h" value="80" placeholder="mm">
+                <span class="seq-label">Time/step</span>
+                <input type="number" id="seq-step-ms" value="1500" placeholder="ms">
+                <span class="seq-label">Vuoto dwell</span>
+                <input type="number" id="seq-dwell-ms" value="700" placeholder="ms">
+            </div>
+            <div style="display:flex;gap:1rem;align-items:center;margin:0.5rem 0 0;flex-wrap:wrap;font-size:0.82rem;color:var(--muted);">
+                <span style="font-weight:700;text-transform:uppercase;color:var(--primary);">Durata step:</span>
+                <label style="display:flex;align-items:center;gap:0.35rem;cursor:pointer;">
+                    <input type="radio" name="seq-dur-mode" value="fixed" checked>
+                    <span><strong style="color:var(--text)">T fisso</strong> — usa <em>Time/step</em></span>
+                </label>
+                <label style="display:flex;align-items:center;gap:0.35rem;cursor:pointer;">
+                    <input type="radio" name="seq-dur-mode" value="velocity">
+                    <span><strong style="color:var(--text)">Velocità adattiva</strong> — usa <em>slider vel</em> in alto, T calcolato per step</span>
+                </label>
+            </div>
+            <p style="font-size:0.74rem;color:var(--pp-accent);margin:0.4rem 0 0;line-height:1.5;">
+                ℹ <strong>Tutti i parametri</strong> (profilo, vel, T, DWELL, PICK/PLACE) sono letti
+                <strong>per ogni step</strong>: puoi modificarli mentre la sequenza è in esecuzione.
+                Il prossimo step userà i valori aggiornati.
+            </p>
+            <div style="display:flex;gap:0.5rem;margin-top:0.85rem;flex-wrap:wrap;align-items:center;">
+                <button class="btn primary sm" id="btn-seq-run">▶ PICK → PLACE</button>
+                <button class="btn primary sm" id="btn-seq-reverse" title="Riprende il pezzo da PLACE e lo riporta in PICK">↩ PLACE → PICK</button>
+                <button class="btn ghost sm"   id="btn-seq-loop" title="Alterna PICK→PLACE e PLACE→PICK fino a Interrompi">🔁 LOOP avanti/indietro</button>
+                <button class="btn primary sm" id="btn-seq-demo" title="Ciclo demo completo: PICK→PLACE poi PLACE→PICK poi HOME (ideale per video/presentazioni)">🎬 DEMO tesi</button>
+                <span style="flex:1"></span>
+                <button class="btn ghost sm"   id="btn-seq-save"   title="Salva tutti i parametri sequenza (PICK, PLACE, H, T, DWELL, modo durata) nel browser — caricati automaticamente al prossimo avvio">💾 Salva sequenza</button>
+                <button class="btn ghost sm"   id="btn-seq-reset"  title="Ripristina valori di default della sequenza">↺ Default</button>
+                <span style="width:1px;background:rgba(61,157,255,0.2);align-self:stretch;margin:0 0.2rem;"></span>
+                <button class="btn ghost sm"   id="btn-seq-abort">Interrompi</button>
+                <button class="btn primary sm" id="btn-seq-recover" title="SAFE → ENABLE → AUTO_HOME (riabilita il robot dopo STOP)">↻ Ripristina</button>
+            </div>
+            <div id="seq-saved-info" style="font-size:0.74rem;color:var(--muted);margin:0.35rem 0 0;display:none;">
+                <em></em>
+            </div>
+            <p style="font-size:0.75rem;color:var(--muted);margin:0.45rem 0 0;">
+                <strong>↩ PLACE → PICK</strong>: riprende il pezzo dove era stato lasciato e lo
+                riporta nella posizione di prelievo originale (utile per demo / test ripetibilità).
+                <strong>🔁 LOOP</strong>: cicla in continuo finché non premi Interrompi
+                (ogni ciclo = un trasferimento andata + ritorno; non torna a HOME tra i cicli per non perdere tempo).
+                <strong>🎬 DEMO tesi</strong>: ciclo singolo completo — PICK→PLACE, poi PLACE→PICK, poi HOME.
+            </p>
+            <div class="seq-step-strip" id="seq-step-strip">
+                <span class="seq-step-dot" id="seq-step-dot"></span>
+                <span id="seq-step-text">Pronto.</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- VISUALIZZAZIONE 3D + GRAFICO LIVE accoppiati -->
+    <section class="panel panel-elevated pp-section" id="sec-3d">
+        <div class="pp-section-header" data-target="body-3d">
+            <h2>Vista 3D + esecuzione live · braccio · profilo · v(t) · a(t)</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="pp-section-body" id="body-3d">
+            <div id="scene-3d-wrap">
+                <canvas id="scene-3d-canvas"></canvas>
+                <div class="scene-overlay">
+                    <button class="btn ghost sm" data-view="iso">Iso</button>
+                    <button class="btn ghost sm" data-view="top">Top</button>
+                    <button class="btn ghost sm" data-view="front">Front</button>
+                    <button class="btn ghost sm" data-view="side">Side</button>
+                    <button class="btn ghost sm" id="btn-3d-clear-trail">Pulisci trail</button>
+                </div>
+                <div class="scene-tcp-readout">
+                    <div class="row"><span>TCP X</span><span id="tcp-live-x">–</span></div>
+                    <div class="row"><span>TCP Y</span><span id="tcp-live-y">–</span></div>
+                    <div class="row"><span>TCP Z</span><span id="tcp-live-z">–</span></div>
+                    <div class="row"><span>Target Δ</span><span id="tcp-target-delta">–</span></div>
+                </div>
+                <div class="scene-legend">
+                    <div><span class="lg-dot" style="background:var(--pp-tcp)"></span> TCP live (FK)</div>
+                    <div><span class="lg-dot" style="background:var(--pp-target)"></span> Target IK</div>
+                    <div><span class="lg-dot" style="background:var(--pp-traj)"></span> Trail FK</div>
+                </div>
+            </div>
+
+            <!-- Pannello live integrato sotto la 3D -->
+            <div style="margin-top:0.85rem;">
+                <div style="display:flex;align-items:baseline;justify-content:space-between;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+                    <h3 style="font-size:0.92rem;color:var(--primary);margin:0;text-transform:uppercase;letter-spacing:0.04em;">
+                        Profilo <span id="live-prof-name" style="color:var(--text);">RTR5</span> &middot; v(t) &amp; a(t) live
+                    </h3>
+                    <div style="font-size:0.74rem;color:var(--muted);">
+                        Linea continua = misurato (FK live) · Linea tratteggiata = profilo teorico scalato sull'ultimo SETPOSE
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr auto;gap:0.85rem;align-items:start;">
+                    <div id="live-chart-wrap" style="position:relative;height:260px;background:#07101e;border:1px solid rgba(61,157,255,0.18);border-radius:8px;padding:0.5rem;box-sizing:border-box;">
+                        <canvas id="live-chart" style="display:block;width:100%;height:100%;"></canvas>
+                        <div id="live-status-overlay" style="position:absolute;top:10px;right:12px;background:rgba(5,7,12,0.72);backdrop-filter:blur(6px);border:1px solid rgba(61,157,255,0.22);padding:0.35rem 0.55rem;border-radius:7px;font-size:0.7rem;color:var(--muted);z-index:5;">
+                            <span class="lg-dot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#5dffa8;margin-right:5px;"></span>v reale
+                            &nbsp;
+                            <span class="lg-dot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#ffb84d;margin-right:5px;"></span>a reale
+                            &nbsp;
+                            <span style="display:inline-block;width:14px;height:0;border-top:2px dashed #ffffff80;margin-right:4px;vertical-align:middle;"></span>teorico
+                        </div>
+                        <div id="live-hud" style="position:absolute;bottom:10px;left:12px;background:rgba(5,7,12,0.78);backdrop-filter:blur(6px);border:1px solid rgba(93,255,168,0.3);padding:0.4rem 0.65rem;border-radius:7px;font-size:0.74rem;color:var(--text);z-index:5;font-variant-numeric:tabular-nums;display:none;">
+                            <strong style="color:var(--pp-tcp);">STEP ATTIVO</strong> ·
+                            prof: <span id="hud-prof" style="font-weight:700;">–</span> ·
+                            T: <span id="hud-t" style="font-weight:700;">–</span> ms ·
+                            d: <span id="hud-d" style="font-weight:700;">–</span> mm
+                        </div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:0.4rem;min-width:150px;">
+                        <div class="pp-telem-cell"><div class="lab">v ora</div><div class="val" id="live-v-now">–</div></div>
+                        <div class="pp-telem-cell"><div class="lab">v picco 10s</div><div class="val" id="live-v-peak" style="color:var(--pp-tcp);">–</div></div>
+                        <div class="pp-telem-cell"><div class="lab">a ora</div><div class="val" id="live-a-now">–</div></div>
+                        <div class="pp-telem-cell"><div class="lab">|a| picco 10s</div><div class="val" id="live-a-peak" style="color:var(--pp-accent);">–</div></div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:0.4rem;margin-top:0.5rem;flex-wrap:wrap;align-items:center;">
+                    <button class="btn ghost sm" id="btn-live-pause">⏸ Pausa</button>
+                    <button class="btn ghost sm" id="btn-live-clear">🗑 Pulisci</button>
+                    <button class="btn ghost sm" id="btn-live-csv">⬇ Export CSV</button>
+                    <span style="flex:1"></span>
+                    <span style="font-size:0.72rem;color:var(--muted);">campioni: <span id="live-n-samples">0</span></span>
+                    <span style="font-size:0.72rem;color:var(--muted);" id="live-rate-text">– Hz</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- TARGET CARTESIANO + IK + ESEGUI -->
+    <section class="panel panel-elevated pp-section" id="sec-ik">
+        <div class="pp-section-header" data-target="body-ik">
+            <h2>Target cartesiano · IK · Esegui SETPOSE</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="pp-section-body" id="body-ik">
+            <p class="muted" style="font-size:0.82rem;color:var(--muted);margin:0 0 0.85rem;">
+                Imposta il target cartesiano (X/Y/Z in mm dalla base, RPY in gradi). Il backend POE risolve
+                la cinematica inversa e valida la raggiungibilità. <strong>Esegui SETPOSE</strong> invia
+                gli angoli al firmware con il profilo selezionato.
+            </p>
+
+            <div class="pp-grid-6">
+                <div class="pp-cell"><label>X (mm)</label><input type="number" id="ik-in-x" value="60"  step="1"></div>
+                <div class="pp-cell"><label>Y (mm)</label><input type="number" id="ik-in-y" value="0"   step="1"></div>
+                <div class="pp-cell"><label>Z (mm)</label><input type="number" id="ik-in-z" value="321" step="1"></div>
+                <div class="pp-cell"><label class="lab-rot">Roll (°)</label><input type="number" id="ik-in-roll"  value="0" step="1"></div>
+                <div class="pp-cell"><label class="lab-rot">Pitch (°)</label><input type="number" id="ik-in-pitch" value="0" step="1"></div>
+                <div class="pp-cell"><label class="lab-rot">Yaw (°)</label><input type="number" id="ik-in-yaw"   value="0" step="1"></div>
+            </div>
+
+            <div class="pp-profile-row">
+                <span style="font-size:0.82rem;color:var(--muted);font-weight:700;text-transform:uppercase;">Profilo:</span>
+                <div class="pp-profile-tabs" id="profile-tabs">
+                    <button class="pp-profile-tab" data-prof="RTR3">RTR3</button>
+                    <button class="pp-profile-tab active" data-prof="RTR5">RTR5</button>
+                    <button class="pp-profile-tab" data-prof="BCB">BCB</button>
+                    <button class="pp-profile-tab" data-prof="BB">BB</button>
+                </div>
+                <div class="pp-vel-row">
+                    <span style="font-size:0.78rem;color:var(--muted);text-transform:uppercase;font-weight:700;">Vel:</span>
+                    <input type="range" id="vel-slider" min="1" max="120" step="1" value="40">
+                    <span id="vel-text">40 °/s</span>
+                </div>
+            </div>
+            <div class="pp-warn-banner" id="bb-warn-banner">
+                ⚠ <strong>BB (Bang-Bang)</strong> ha jerk infinito alle commutazioni
+                (τ=0, 0.5, 1) → click udibili, possibili overshoot e vibrazioni meccaniche.
+                Profilo time-optimal usato come baseline di confronto. Per uso operativo
+                preferire RTR5 (minimum-jerk).
+            </div>
+
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.85rem;align-items:center;">
+                <button class="btn primary sm" id="btn-ik-solve">Calcola IK</button>
+                <button class="btn primary sm" id="btn-execute-setpose">Esegui SETPOSE</button>
+                <button class="btn ghost sm" id="btn-stop-motion">STOP</button>
+                <button class="btn ghost sm" id="btn-pull-from-live">Usa TCP corrente</button>
+                <button class="btn ghost sm" id="btn-go-home">HOME</button>
+                <span style="flex:1"></span>
+                <button class="btn ghost sm" id="btn-target-save"   title="Salva i 6 valori X/Y/Z/RPY nel browser (caricati automaticamente al prossimo avvio)">💾 Salva target</button>
+                <button class="btn ghost sm" id="btn-target-reset"  title="Ripristina valori default (60, 0, 321, 0, 0, 0)">↺ Default</button>
+                <span class="save-feedback" id="fb-ik"></span>
+            </div>
+            <div id="target-saved-info" style="font-size:0.74rem;color:var(--muted);margin:-0.2rem 0 0.6rem;display:none;">
+                <em></em>
+            </div>
+
+            <div class="ik-result-strip">
+                <div class="r-cell"><div class="r-label">Reachable</div><div class="r-value" id="ik-r-reachable">–</div></div>
+                <div class="r-cell"><div class="r-label">Iterazioni</div><div class="r-value" id="ik-r-iter">–</div></div>
+                <div class="r-cell"><div class="r-label">Errore pos (mm)</div><div class="r-value" id="ik-r-epos">–</div></div>
+                <div class="r-cell"><div class="r-label">Errore ori (°)</div><div class="r-value" id="ik-r-eori">–</div></div>
+            </div>
+
+            <div class="pp-grid-6">
+                <div class="pp-cell"><label>BASE</label><input type="text" id="ik-out-b" class="pp-readonly" readonly value="–"></div>
+                <div class="pp-cell"><label>SPALLA</label><input type="text" id="ik-out-s" class="pp-readonly" readonly value="–"></div>
+                <div class="pp-cell"><label>GOMITO</label><input type="text" id="ik-out-g" class="pp-readonly" readonly value="–"></div>
+                <div class="pp-cell"><label>YAW</label><input type="text" id="ik-out-y" class="pp-readonly" readonly value="–"></div>
+                <div class="pp-cell"><label>PITCH</label><input type="text" id="ik-out-p" class="pp-readonly" readonly value="–"></div>
+                <div class="pp-cell"><label>ROLL</label><input type="text" id="ik-out-r" class="pp-readonly" readonly value="–"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ATTUATORI -->
+    <section class="panel panel-elevated pp-section" id="sec-actuators">
+        <div class="pp-section-header" data-target="body-actuators">
+            <h2>Attuatori Pick &amp; Place (PA0 / PA1 → IRFZ44N)</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="pp-section-body" id="body-actuators">
+            <div class="pp-actuator-row">
+                <div class="pp-act-label"><span class="pp-act-led" id="led-pp1"></span>PP1 Elettrovalvola<small>PA0 · TIM2_CH1</small></div>
+                <div class="pp-act-slider-wrap">
+                    <input type="range" id="pp1-slider" min="0" max="100" step="1" value="0">
+                    <span class="duty-text" id="pp1-duty-text">0 %</span>
+                </div>
+                <div class="pp-act-buttons">
+                    <button class="btn ghost sm" id="btn-pp1-on">ON</button>
+                    <button class="btn ghost sm" id="btn-pp1-off">OFF</button>
+                </div>
+                <div></div>
+            </div>
+            <div class="pp-actuator-row">
+                <div class="pp-act-label"><span class="pp-act-led" id="led-pp2"></span>PP2 Motori vuoto<small>PA1 · TIM2_CH2</small></div>
+                <div class="pp-act-slider-wrap">
+                    <input type="range" id="pp2-slider" min="0" max="100" step="1" value="0">
+                    <span class="duty-text" id="pp2-duty-text">0 %</span>
+                </div>
+                <div class="pp-act-buttons">
+                    <button class="btn ghost sm" id="btn-pp2-on">ON</button>
+                    <button class="btn ghost sm" id="btn-pp2-off">OFF</button>
+                </div>
+                <div></div>
+            </div>
+            <div style="display:flex;gap:0.5rem;margin-top:0.85rem;flex-wrap:wrap;">
+                <button class="btn primary sm" id="btn-pp-stop-all">STOP entrambi</button>
+                <button class="btn ghost sm"   id="btn-pp-status">Aggiorna stato (PP?)</button>
+                <span class="save-feedback" id="fb-actuators"></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- TELEMETRIA LIVE -->
+    <section class="panel panel-elevated pp-section" id="sec-telem">
+        <div class="pp-section-header" data-target="body-telem">
+            <h2>Telemetria live</h2>
+            <span class="chevron">&#9660;</span>
+        </div>
+        <div class="pp-section-body" id="body-telem">
+            <h3 style="font-size:0.82rem;color:var(--primary);margin:0 0 0.4rem;text-transform:uppercase;">Angoli giunti (°)</h3>
+            <div class="pp-telem-grid">
+                <div class="pp-telem-cell"><div class="lab">B</div><div class="val" id="t-deg-b">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">S</div><div class="val" id="t-deg-s">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">G</div><div class="val" id="t-deg-g">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">Y</div><div class="val" id="t-deg-y">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">P</div><div class="val" id="t-deg-p">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">R</div><div class="val" id="t-deg-r">–</div></div>
+            </div>
+            <h3 style="font-size:0.82rem;color:var(--primary);margin:0.8rem 0 0.4rem;text-transform:uppercase;">FK live (mm / °)</h3>
+            <div class="pp-telem-grid">
+                <div class="pp-telem-cell"><div class="lab">TCP X</div><div class="val" id="t-fk-x">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">TCP Y</div><div class="val" id="t-fk-y">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">TCP Z</div><div class="val" id="t-fk-z">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">Roll</div><div class="val" id="t-fk-roll">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">Pitch</div><div class="val" id="t-fk-pitch">–</div></div>
+                <div class="pp-telem-cell"><div class="lab">Yaw</div><div class="val" id="t-fk-yaw">–</div></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- EVENT LOG -->
+    <section class="panel panel-elevated">
+        <h3 class="section-title" style="font-size:0.92rem;">Event Log</h3>
+        <div id="event-log" class="event-log" style="max-height:160px;overflow:auto;"></div>
+    </section>
+
+</div>
+
+<!-- Three.js UMD r149 vendored (window.THREE) -->
+<script src="../shared/js/vendor/three.min.js"></script>
+<script src="../shared/js/j5_config.js"></script>
+<script type="module" src="js/pages/pickplace.js"></script>
+<script>
+  fetch("navbar.html")
+    .then(r => r.text())
+    .then(html => {
+      document.getElementById("navbar").innerHTML = html;
+      document.dispatchEvent(new CustomEvent("navbar-loaded"));
+    });
+</script>
+</body>
+</html>

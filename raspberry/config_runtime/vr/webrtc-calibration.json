@@ -1,0 +1,16 @@
+{
+  "focusOffset01": 0.0,
+  "notes": {
+    "meaning": "In modalità link: focus1 = focus0 - focusOffset01 (lens-position è distanza reciproca; 0=infinito).",
+    "measured_example_50cm": {
+      "focus0": 4.5,
+      "focus1": 4.25
+    },
+    "measured_example_1m": {
+      "focus0": 1.0,
+      "focus1": 1.0,
+      "note": "fuochi equiparati, offset azzerato"
+    }
+  }
+}
+

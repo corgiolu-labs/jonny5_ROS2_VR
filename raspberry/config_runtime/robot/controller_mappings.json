@@ -1,0 +1,37 @@
+{
+  "_schema": "controller_mappings_v1",
+  "version": 1,
+  "_doc": "Map (mode, event) -> action. Mode keys: STEREO, POSE, MANUAL, HEAD, HYBRID, ASSIST. Event format: '<hand>.<button>.<edge>[|<modifier>]'. Hands: left, right. Buttons: A, B, X, Y, trigger, grip, thumb. Edges: press (rising edge), release (falling edge), held (every frame while pressed), click (alias for press on thumb). Modifiers: bothGrips, noGrips, leftGrip, rightGrip. Action names must be in the viewer whitelist (see web/shared/js/controller_remap.js).",
+  "modes": {
+    "STEREO": {
+      "right.A.press":     "setAutofocusBoth",
+      "right.B.press":     "setManualFocusMode",
+      "left.X.press":      "toggleLinkMode",
+      "left.Y.press":      "toggleHudVisible",
+      "right.thumb.click": "setAutofocusBoth"
+    },
+    "POSE": {},
+    "MANUAL": {
+      "left.Y.press":      "toggleCrosshair",
+      "right.thumb.click": "refocusCamerasHw"
+    },
+    "HEAD": {
+      "left.Y.press":            "toggleCrosshair",
+      "right.thumb.click":       "refocusCamerasHw",
+      "right.A.held|bothGrips":  "zoom_in_continuous",
+      "right.B.held|bothGrips":  "zoom_out_continuous"
+    },
+    "HYBRID": {
+      "left.Y.press":            "toggleCrosshair",
+      "right.thumb.click":       "refocusCamerasHw",
+      "right.A.held|bothGrips":  "zoom_in_continuous",
+      "right.B.held|bothGrips":  "zoom_out_continuous"
+    },
+    "ASSIST": {
+      "left.Y.press":            "toggleCrosshair",
+      "right.thumb.click":       "refocusCamerasHw",
+      "right.A.held|bothGrips":  "zoom_in_continuous",
+      "right.B.held|bothGrips":  "zoom_out_continuous"
+    }
+  }
+}

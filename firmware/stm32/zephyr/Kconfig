@@ -1,0 +1,50 @@
+# JONNY5-3.0: root Kconfig che include Zephyr e abilita HAL STM32 per SPI custom
+mainmenu "Zephyr Kernel Configuration"
+
+source "$(srctree)/Kconfig.zephyr"
+
+# Abilita moduli HAL STM32 per pipeline SPI custom (senza driver SPI Zephyr)
+config JONNY5_CUSTOM_SPI_HAL
+	bool
+	default y
+	depends on SOC_FAMILY_STM32
+	select USE_STM32_HAL_SPI
+	select USE_STM32_HAL_SPI_EX
+	select USE_STM32_HAL_DMA
+	select USE_STM32_HAL_DMA_EX
+	select USE_STM32_HAL_GPIO
+
+# REV2 protocol: cmd channel (payload 40-43), TELEOPPOSE one-shot, ack 52-53
+config J5_PROTOCOL_REV2_EXTENSIONS
+	bool "J5 protocol REV2 extensions (cmd channel, TELEOPPOSE)"
+	default n
+	help
+	  Enable parsing of REV2 command channel (payload offsets 40-43)
+	  and execution of one-shot TELEOPPOSE. Optional ACK in TX payload 52-53.
+	  REV1 frames without these bytes are unchanged.
+
+# ASSIST v2 RAW: 128-byte SPI frame, CONTROL 0x06 validate-only + TELEMETRY 0x07 (no actuation).
+config ASSIST_V2_RAW_MODE
+	bool "ASSIST v2 RAW validation on SPI (128-byte frames)"
+	default n
+	help
+	  When enabled: SPI DMA uses 128-byte frames; frame types 0x06/0x07 use WIRE REGISTER v1.
+	  Requires matching Raspberry Pi J5_ASSIST_V2_RAW and 128-byte transfers.
+	  Does not actuate servos from v2 CONTROL (validation + telemetry echo only).
+
+config J5_CANONICAL_PADDED_128_MODE
+	bool "Canonical padded 128-byte SPI transport"
+	default n
+	help
+	  Uses 128-byte SPI transfers while keeping the canonical 64-byte J5 semantic
+	  contract active in bytes 0..63. Bytes 64..127 are reserved and ignored.
+	  Does not enable ASSIST v2 RAW, alternate frame semantics, or new telemetry.
+
+# Certificazione: stesso STM32 flashato (ST-Link) e su bus SPI Raspberry (lettura grezza IDMK).
+config TARGET_SPI_IDENTITY_MARKER
+	bool "Marker IDMK in telemetria ASSIST v2 (byte assist 84-87, solo build cert)"
+	depends on ASSIST_V2_RAW_MODE
+	default n
+	help
+	  Scrive i 4 byte 'I''D''M''K' nel tail della regione assist della TELEMETRY 0x07.
+	  Rimuovere (default n) dopo TARGET CONFIRMED. Non cambia header J5 nè layout wire validato.

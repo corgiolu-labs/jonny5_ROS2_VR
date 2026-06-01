@@ -1,0 +1,26 @@
+[Unit]
+Description=JONNY5 captive portal HTTP server (port 80)
+Wants=network-online.target
+After=network-online.target NetworkManager.service jonny5-https.service jonny5-https-443-proxy.service
+
+[Service]
+WorkingDirectory=/home/jonny5/raspberry5/controller/web_services
+RuntimeDirectory=jonny5-captive-portal
+ExecStartPre=/usr/bin/rm -f /run/jonny5-captive-portal/authenticated_clients.json
+ExecStart=/home/jonny5/raspberry5/.venv/bin/python3 -u captive_portal_server.py
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/jonny5/raspberry5
+Environment=CAPTIVE_PORTAL_BIND=0.0.0.0
+Environment=CAPTIVE_PORTAL_PORT=80
+Environment=CAPTIVE_PORTAL_AUTH_FILE=/run/jonny5-captive-portal/authenticated_clients.json
+Environment=CAPTIVE_PORTAL_LAUNCH_URL=http://10.42.0.1/captive-portal/launch
+Environment=CAPTIVE_PORTAL_TARGET_HTTPS=https://10.42.0.1/captive-portal/open
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+Restart=always
+RestartSec=1
+User=jonny5
+
+[Install]
+WantedBy=multi-user.target

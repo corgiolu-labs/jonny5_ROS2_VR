@@ -1,0 +1,10 @@
+/ {
+};
+
+/* I2C1: sensori / IMU (PB8/SCL, PB9/SDA) */
+&i2c1 {
+	status = "okay";
+	clock-frequency = <100000>; /* 100 kHz standard */
+	pinctrl-0 = <&i2c1_scl_pb8 &i2c1_sda_pb9>;
+	pinctrl-names = "default";
+};

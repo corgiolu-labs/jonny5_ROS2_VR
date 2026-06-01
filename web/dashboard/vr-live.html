@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <title>JONNY5 – VR Live</title>
+    <link rel="stylesheet" href="../shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+    <style>
+        /* VR Live page-specific layout */
+        .vr-live-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        @media (max-width: 1100px) { .vr-live-grid { grid-template-columns: 1fr; } }
+
+        .video-panel {
+            background: #000;
+            border: 1px solid rgba(61, 157, 255, 0.25);
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+            aspect-ratio: 16 / 9;
+        }
+        .video-panel video {
+            width: 100%; height: 100%;
+            object-fit: cover; background: #000;
+            display: block;
+            /* Replica dello zoom VR (cam0): variabile aggiornata da telemetry. */
+            transform: scale(var(--vr-zoom, 1));
+            transform-origin: center center;
+            transition: transform 80ms ease-out;
+        }
+        .video-overlay {
+            position: absolute;
+            top: 0.6rem; left: 0.6rem;
+            background: rgba(0,0,0,0.55);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 6px;
+            padding: 0.3rem 0.6rem;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 0.85rem;
+            color: #cfe7ff;
+            line-height: 1.4;
+            pointer-events: none;
+        }
+        .video-overlay .ok { color: var(--success); font-weight: 700; }
+        .video-overlay .warn { color: var(--warning); font-weight: 700; }
+        .video-overlay .err { color: var(--danger); font-weight: 700; }
+
+        .video-overlay-tr {
+            position: absolute;
+            top: 0.6rem; right: 0.6rem;
+            background: rgba(0,0,0,0.55);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 6px;
+            padding: 0.3rem 0.6rem;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace;
+            font-size: 0.85rem;
+            color: #cfe7ff;
+            line-height: 1.5;
+            text-align: right;
+            pointer-events: none;
+        }
+        .video-overlay-tr .lbl { color: var(--muted); }
+        .video-overlay-tr .val { color: var(--text); font-weight: 600; }
+
+        .video-error {
+            position: absolute; inset: 0;
+            display: none;
+            align-items: center; justify-content: center;
+            color: var(--danger); padding: 1rem; text-align: center;
+            font-family: monospace; font-size: 0.9rem;
+            background: rgba(0,0,0,0.7);
+        }
+        .video-error.show { display: flex; }
+
+        /* 3D EE tracker (overlay bottom-right del video, non scala col zoom) */
+        .ee-tracker {
+            position: absolute;
+            right: 0.6rem;
+            bottom: 0.6rem;
+            width: 160px; height: 160px;
+            background: rgba(0,0,0,0.55);
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 8px;
+            z-index: 6;
+            pointer-events: none;
+            overflow: hidden;
+        }
+        .ee-tracker canvas {
+            display: block;
+            width: 100%; height: 100%;
+        }
+        .ee-tracker .lbl {
+            position: absolute;
+            top: 4px; left: 6px;
+            font-family: ui-monospace, monospace;
+            font-size: 0.65rem;
+            color: var(--muted);
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            opacity: 0.85;
+        }
+
+        /* Pulse animato per badge "Modalita" quando l'operatore sta inviando intent attivo */
+        @keyframes pulseDot {
+            0%, 100% { box-shadow: 0 0 4px var(--success), 0 0 0 0 rgba(76,175,80,0.6); }
+            50%      { box-shadow: 0 0 10px var(--success), 0 0 0 5px rgba(76,175,80,0); }
+        }
+        .badge.pulse .dot {
+            animation: pulseDot 1.2s ease-in-out infinite;
+        }
+
+        /* Mirino centrale (overlay sopra il video, non scala con lo zoom) */
+        .crosshair {
+            position: absolute; inset: 0;
+            pointer-events: none;
+            z-index: 5;
+        }
+        .crosshair .h,
+        .crosshair .v {
+            position: absolute;
+            top: 50%; left: 50%;
+            background: rgba(255,255,255,0.85);
+            mix-blend-mode: difference;
+            transform: translate(-50%, -50%);
+        }
+        .crosshair .h { width: 28px; height: 1px; }
+        .crosshair .v { width: 1px;  height: 28px; }
+        .crosshair .dot {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 6px; height: 6px;
+            border: 1px solid rgba(255,255,255,0.9);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            background: transparent;
+            mix-blend-mode: difference;
+            box-shadow: 0 0 4px rgba(0,0,0,0.7);
+        }
+
+        .info-panel {
+            display: flex; flex-direction: column; gap: 1rem;
+        }
+
+        .kv-table {
+            width: 100%;
+            font-family: ui-monospace, monospace;
+            font-size: 0.85rem;
+        }
+        .kv-table tr { border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .kv-table tr:last-child { border-bottom: none; }
+        .kv-table td {
+            padding: 0.35rem 0.5rem;
+        }
+        .kv-table td.k { color: var(--muted); }
+        .kv-table td.v { color: var(--text); text-align: right; font-weight: 600; }
+
+        .joint-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.4rem;
+        }
+        .joint-cell {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px;
+            padding: 0.4rem 0.5rem;
+            font-family: ui-monospace, monospace;
+            font-size: 0.78rem;
+            display: flex; flex-direction: column;
+            min-width: 0;
+        }
+        .joint-cell .lbl { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.05em; }
+        .joint-cell .val { color: var(--text); font-weight: 700; font-size: 1rem; }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+        }
+        @media (max-width: 1100px) { .charts-grid { grid-template-columns: 1fr; } }
+
+        .chart-panel {
+            background: var(--panel);
+            border: 1px solid rgba(61, 157, 255, 0.15);
+            border-radius: 10px;
+            padding: 0.75rem 1rem 1rem;
+            min-height: 240px;
+        }
+        .chart-panel h3 {
+            font-size: 0.95rem;
+            margin: 0 0 0.5rem;
+            color: var(--text);
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .chart-panel h3 .sub {
+            font-size: 0.75rem; color: var(--muted); font-weight: 400;
+        }
+        .chart-canvas-wrap {
+            position: relative;
+            height: 200px;
+        }
+
+        .badge-row {
+            display: flex; gap: 0.5rem; flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+        .badge {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 999px;
+            padding: 0.35rem 0.85rem;
+            font-size: 0.8rem;
+            font-family: ui-monospace, monospace;
+            display: flex; align-items: center; gap: 0.4rem;
+        }
+        .badge .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--muted);
+        }
+        .badge.ok .dot { background: var(--success); box-shadow: 0 0 6px var(--success); }
+        .badge.warn .dot { background: var(--warning); }
+        .badge.err .dot { background: var(--danger); }
+        .badge .lbl { color: var(--muted); }
+        .badge .val { color: var(--text); font-weight: 600; }
+
+        .event-log {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            font-family: ui-monospace, monospace;
+            font-size: 0.75rem;
+            color: var(--muted);
+            max-height: 130px;
+            overflow-y: auto;
+            line-height: 1.5;
+        }
+        .event-log .ev-time { color: var(--secondary); margin-right: 0.5rem; }
+    </style>
+</head>
+
+<body>
+<div id="navbar"></div>
+
+<div class="content">
+
+    <section class="hero panel-elevated" style="padding: 1.25rem 1.5rem; margin-bottom: 1rem;">
+        <h1 class="hero-title" style="margin:0 0 0.4rem; font-size:1.5rem;">VR Live — Sessione Teleoperazione</h1>
+        <p class="hero-subtitle" style="margin:0 0 0.85rem; color: var(--muted); font-size:0.9rem;">
+            Telemetria live + video cam0 + trend latenza/traiettoria/smoothing quintico
+        </p>
+        <div class="badge-row">
+            <div class="badge" id="bd-ws"><span class="dot"></span><span class="lbl">WS</span><span class="val" id="bd-ws-v">--</span></div>
+            <div class="badge" id="bd-vr"><span class="dot"></span><span class="lbl">VR</span><span class="val" id="bd-vr-v">--</span></div>
+            <div class="badge" id="bd-mode"><span class="dot"></span><span class="lbl">Modalità</span><span class="val" id="bd-mode-v">--</span></div>
+            <div class="badge" id="bd-state"><span class="dot"></span><span class="lbl">Stato</span><span class="val" id="bd-state-v">--</span></div>
+            <div class="badge" id="bd-lat"><span class="dot"></span><span class="lbl">Latenza video</span><span class="val" id="bd-lat-v">-- ms</span></div>
+            <div class="badge" id="bd-fps"><span class="dot"></span><span class="lbl">FPS</span><span class="val" id="bd-fps-v">--</span></div>
+            <div class="badge" id="bd-zoom"><span class="dot"></span><span class="lbl">Zoom VR</span><span class="val" id="bd-zoom-v">1.00×</span></div>
+        </div>
+        <div id="zoom-common-bar" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-top:0.75rem; padding-top:0.6rem; border-top:1px dashed rgba(255,255,255,0.18);">
+            <span style="color:var(--muted); font-size:0.9em;">Zoom comune:</span>
+            <button type="button" id="btn-zoom-minus" class="btn">−</button>
+            <span id="zoom-common-val" style="min-width:4.5em; text-align:center; font-family:ui-monospace,monospace;">1.00×</span>
+            <button type="button" id="btn-zoom-plus" class="btn">+</button>
+            <button type="button" id="btn-zoom-reset" class="btn">Reset</button>
+            <label style="margin-left:auto; font-size:0.9em; display:flex; gap:0.3rem; align-items:center;">
+                Step
+                <input type="number" id="zoom-common-step" min="0.05" max="2.0" step="0.05" value="0.2" style="width:5em;" />
+            </label>
+        </div>
+        <div id="video-profile-bar" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-top:0.6rem; padding-top:0.5rem; border-top:1px dashed rgba(255,255,255,0.18);">
+            <span style="color:var(--muted); font-size:0.9em;">Profilo video:</span>
+            <select id="video-profile-select" style="padding:0.25rem 0.4rem;">
+                <option value="lowlatency">Low-latency  (800×450 @ 120 FPS, ~37 ms)</option>
+                <option value="zoomfriendly">Zoom-friendly  (1280×720 @ 60 FPS)</option>
+                <option value="inspection">Inspection  (1920×1080 @ 30 FPS)</option>
+                <option value="maxres">MAX-RES  (3840×2160 4K @ 14 FPS — no VR teleop)</option>
+            </select>
+            <button type="button" id="btn-video-profile-apply" class="btn">Applica</button>
+            <span id="video-profile-status" style="font-size:0.85em; color:var(--muted);"></span>
+        </div>
+    </section>
+
+    <section class="vr-live-grid">
+
+        <div class="panel" style="padding: 0.5rem;">
+            <div class="video-panel">
+                <video id="cam-video" playsinline muted autoplay></video>
+                <div class="video-overlay">
+                    <div>CAM0 <span class="ok" id="cam-status">connecting...</span></div>
+                    <div><span style="color: var(--muted);">res</span> <span id="cam-res">--</span></div>
+                    <div><span style="color: var(--muted);">zoom</span> <span id="cam-zoom" style="color:var(--text);font-weight:700;">1.00×</span></div>
+                </div>
+                <div class="video-overlay-tr">
+                    <div><span class="lbl">latenza video:</span> <span class="val" id="ovr-e2e">-- ms</span></div>
+                    <div><span class="lbl">RTT:</span> <span class="val" id="ovr-rtt">-- ms</span></div>
+                    <div><span class="lbl">jitter buf:</span> <span class="val" id="ovr-jitter">-- ms</span></div>
+                </div>
+                <div class="crosshair">
+                    <div class="h"></div>
+                    <div class="v"></div>
+                    <div class="dot"></div>
+                </div>
+                <div class="ee-tracker">
+                    <span class="lbl">EE 3D trail</span>
+                    <canvas id="ee-tracker-canvas" width="320" height="320"></canvas>
+                </div>
+                <div class="video-error" id="cam-error"></div>
+            </div>
+        </div>
+
+        <div class="info-panel">
+            <div class="panel">
+                <h2 style="font-size:1rem; margin-bottom:0.6rem;">End-Effector (FK live)</h2>
+                <table class="kv-table">
+                    <tr><td class="k">X</td><td class="v"><span id="fk-x">--</span> mm</td></tr>
+                    <tr><td class="k">Y</td><td class="v"><span id="fk-y">--</span> mm</td></tr>
+                    <tr><td class="k">Z</td><td class="v"><span id="fk-z">--</span> mm</td></tr>
+                    <tr><td class="k">Roll</td><td class="v"><span id="fk-roll">--</span>°</td></tr>
+                    <tr><td class="k">Pitch</td><td class="v"><span id="fk-pitch">--</span>°</td></tr>
+                    <tr><td class="k">Yaw</td><td class="v"><span id="fk-yaw">--</span>°</td></tr>
+                </table>
+            </div>
+
+            <div class="panel">
+                <h2 style="font-size:1rem; margin-bottom:0.6rem;">Joint State</h2>
+                <div class="joint-grid">
+                    <div class="joint-cell"><span class="lbl">BASE</span><span class="val"><span id="j-B">--</span>°</span></div>
+                    <div class="joint-cell"><span class="lbl">SHOULDER</span><span class="val"><span id="j-S">--</span>°</span></div>
+                    <div class="joint-cell"><span class="lbl">ELBOW</span><span class="val"><span id="j-G">--</span>°</span></div>
+                    <div class="joint-cell"><span class="lbl">YAW</span><span class="val"><span id="j-Y">--</span>°</span></div>
+                    <div class="joint-cell"><span class="lbl">PITCH</span><span class="val"><span id="j-P">--</span>°</span></div>
+                    <div class="joint-cell"><span class="lbl">ROLL</span><span class="val"><span id="j-R">--</span>°</span></div>
+                </div>
+            </div>
+        </div>
+
+    </section>
+
+    <section class="charts-grid">
+
+        <div class="chart-panel">
+            <h3>Latenza video <span class="sub">e2e / RTT / jitter / decode (ms)</span></h3>
+            <div class="chart-canvas-wrap"><canvas id="ch-latency"></canvas></div>
+        </div>
+
+        <div class="chart-panel">
+            <h3>Traiettoria EE <span class="sub">X / Y / Z (mm)</span></h3>
+            <div class="chart-canvas-wrap"><canvas id="ch-trajectory"></canvas></div>
+        </div>
+
+        <div class="chart-panel">
+            <h3>Smoothing quintico <span class="sub">fk Z grezzo vs fit polin. 5° grado</span></h3>
+            <div class="chart-canvas-wrap"><canvas id="ch-quintic"></canvas></div>
+        </div>
+
+    </section>
+
+    <section class="panel" style="margin-top:1rem;">
+        <h2 style="font-size:1rem; margin-bottom:0.5rem;">Log eventi</h2>
+        <div id="event-log" class="event-log"></div>
+    </section>
+
+</div>
+
+<script src="../shared/js/j5_config.js"></script>
+<script src="../shared/js/vendor/chart.umd.min.js"></script>
+<script type="module" src="js/vr-live.js"></script>
+<script>
+  fetch("navbar.html")
+    .then(r => r.text())
+    .then(html => {
+      document.getElementById("navbar").innerHTML = html;
+      // Marca link attivo
+      try {
+        const here = (location.pathname.split("/").pop() || "index.html");
+        document.querySelectorAll("#navbar a").forEach(a => {
+          if (a.getAttribute("href") === here) a.classList.add("active");
+        });
+      } catch (_) {}
+      document.dispatchEvent(new CustomEvent("navbar-loaded"));
+    });
+</script>
+</body>
+</html>

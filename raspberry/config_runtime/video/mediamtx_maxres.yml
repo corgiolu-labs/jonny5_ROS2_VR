@@ -1,0 +1,49 @@
+# MediaMTX - profilo MAXRES (4K UHD, NO teleop VR)
+# Dual camera 3840x2160 @ 14 FPS, bitrate 25 Mbps.
+# NOTA: il sensore IMX708 e' 4608x2592 nativo, ma l'encoder H.264 software
+# OpenH264 (Pi 5 NON ha encoder H.264 hardware) ha limite 9437184 pixel
+# (= 4096x2304). 4608x2592 = 11.943.936 pixel -> rifiutato.
+# 3840x2160 (4K UHD) = 8.294.400 pixel -> sicuro e standard.
+# Comunque ~8.3 megapixel, 4x rispetto al profilo Inspection (1080p).
+# Latenza stimata >150 ms; il VR non e' utilizzabile (FPS troppo basso).
+# Profilo dedicato a ispezione fotografica statica sul mirror desktop vr-live.
+
+logLevel: info
+writeQueueSize: 128
+readTimeout: 8s
+writeTimeout: 8s
+
+rtsp: true
+rtspAddress: :8554
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcLocalTCPAddress: ":8189"
+webrtcHandshakeTimeout: 8s
+webrtcTrackGatherTimeout: 3s
+
+paths:
+  cam0:
+    source: rpiCamera
+    rpiCameraCamID: 0
+    rpiCameraWidth: 3840
+    rpiCameraHeight: 2160
+    rpiCameraFPS: 14
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 14
+    rpiCameraBitrate: 25000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal
+  cam1:
+    source: rpiCamera
+    rpiCameraCamID: 1
+    rpiCameraWidth: 3840
+    rpiCameraHeight: 2160
+    rpiCameraFPS: 14
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 14
+    rpiCameraBitrate: 25000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal

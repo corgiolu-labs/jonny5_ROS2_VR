@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JONNY5 Dashboard - Settings VR</title>
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../shared/css/base.css">
+  <link rel="stylesheet" href="css/dashboard.css">
+  <style>
+    /* Patch bay — specifico di questa pagina */
+    .patchbay-wrap { margin-top: 1rem; overflow-x: auto; }
+    .patchbay {
+      border-collapse: separate;
+      border-spacing: 6px;
+      width: 100%;
+      font-size: 0.88rem;
+    }
+    .patchbay th.pb-corner { width: 200px; }
+    .patchbay th.pb-col {
+      text-align: center;
+      padding: 0.55rem 0.4rem;
+      background: rgba(61,157,255,0.10);
+      border: 1px solid rgba(61,157,255,0.2);
+      border-radius: 8px;
+    }
+    .pb-col-main { font-size: 0.95rem; font-weight: 700; color: var(--primary, #3d9dff); }
+    .pb-col-sub  { font-size: 0.74rem; color: var(--muted, #9db1cc); }
+    .patchbay td.pb-row-label {
+      padding: 0.5rem 0.65rem;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .pb-row-main { font-weight: 700; }
+    .pb-row-sub  { width: 100%; padding-left: 48px; font-size: 0.73rem; color: var(--muted, #9db1cc); }
+    .pb-row-live { margin-left: auto; font-size: 0.84rem; font-family: monospace; color: var(--primary, #3d9dff); }
+    .pb-cell     { text-align: center; vertical-align: middle; padding: 0.35rem; }
+    .pb-btn {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      width: 100px;
+      min-height: 54px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 2px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.04);
+      color: var(--muted, #9db1cc);
+      transition: all 0.15s ease;
+      user-select: none;
+      font-family: inherit;
+    }
+    .pb-btn:hover            { border-color: rgba(61,157,255,0.5); color: var(--text, #f6f8fb); }
+    .pb-btn.pb-active        { background: rgba(46,204,113,0.15); border-color: rgba(46,204,113,0.7); color: var(--text, #f6f8fb); }
+    .pb-btn.pb-active.pb-inv { background: rgba(239,68,68,0.15);  border-color: rgba(239,68,68,0.7); }
+    .pb-btn.pb-disabled      { opacity: 0.35; pointer-events: none; }
+    .pb-btn .pb-icon  { font-size: 1.1rem; line-height: 1; }
+    .pb-btn .pb-label { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; }
+    .pb-btn .pb-sign  { font-size: 0.68rem; opacity: 0.85; }
+  </style>
+<script src="../shared/js/j5_config.js"></script>
+  <script type="module" src="js/imu_vr.js"></script>
+  <script type="module" src="js/dashboard.js"></script>
+</head>
+<body>
+  <div id="navbar"></div>
+
+  <div class="content">
+    <h1>Settings VR</h1>
+    <p class="page-lead">
+      Pagina dedicata al setup XR operativo: mapping visore -> polso robot, mapping controller -> traslazione IK
+      del wrist-center e velocita usate nelle modalita assistite che ci servono davvero nel flusso attuale.
+    </p>
+
+    <div class="panel section">
+      <h2>Mapping visore -> polso robot</h2>
+      <p class="section-copy">
+        Routing operativo del polso: scegli quale asse del visore guida yaw, pitch e roll del robot,
+        con inversione rapida del verso quando serve.
+      </p>
+
+      <div class="patchbay-wrap">
+        <table class="patchbay" id="patchbay-table">
+          <thead>
+            <tr>
+              <th class="pb-corner">
+                <span class="pb-col-sub">ON/OFF · Asse robot · Angolo live IMU polso</span>
+              </th>
+              <th class="pb-col">
+                <div class="pb-col-main">YAW visore</div>
+                <div class="pb-col-sub">rotazione sinistra / destra</div>
+                <div class="pb-col-sub" id="live-vr-yaw">-</div>
+              </th>
+              <th class="pb-col">
+                <div class="pb-col-main">PITCH visore</div>
+                <div class="pb-col-sub">rotazione avanti / indietro</div>
+                <div class="pb-col-sub" id="live-vr-pitch">-</div>
+              </th>
+              <th class="pb-col">
+                <div class="pb-col-main">ROLL visore</div>
+                <div class="pb-col-sub">inclinazione laterale</div>
+                <div class="pb-col-sub" id="live-vr-roll">-</div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="pb-row-label">
+                <label class="toggle-en" title="Abilita o disabilita il servo ROLL">
+                  <input type="checkbox" id="rt-en-roll" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+                <span class="pb-row-main" style="color:#2ecc71;">ROLL robot</span>
+                <span class="pb-row-sub">Inclinazione laterale del polso</span>
+                <span class="pb-row-live" id="rt-live-roll">-</span>
+              </td>
+              <td class="pb-cell"><button class="pb-btn" data-servo="roll" data-src="0" id="pb-roll-0"></button></td>
+              <td class="pb-cell"><button class="pb-btn" data-servo="roll" data-src="1" id="pb-roll-1"></button></td>
+              <td class="pb-cell"><button class="pb-btn" data-servo="roll" data-src="2" id="pb-roll-2"></button></td>
+            </tr>
+            <tr>
+              <td class="pb-row-label">
+                <label class="toggle-en" title="Abilita o disabilita il servo PITCH">
+                  <input type="checkbox" id="rt-en-pitch" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+                <span class="pb-row-main" style="color:#9b59b6;">PITCH robot</span>
+                <span class="pb-row-sub">Inclinazione avanti / indietro del polso</span>
+                <span class="pb-row-live" id="rt-live-pitch">-</span>
+              </td>
+              <td class="pb-cell"><button class="pb-btn" data-servo="pitch" data-src="0" id="pb-pitch-0"></button></td>
+              <td class="pb-cell"><button class="pb-btn" data-servo="pitch" data-src="1" id="pb-pitch-1"></button></td>
+              <td class="pb-cell"><button class="pb-btn" data-servo="pitch" data-src="2" id="pb-pitch-2"></button></td>
+            </tr>
+            <tr>
+              <td class="pb-row-label">
+                <label class="toggle-en" title="Abilita o disabilita il servo YAW">
+                  <input type="checkbox" id="rt-en-yaw" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+                <span class="pb-row-main" style="color:#3d9dff;">YAW robot</span>
+                <span class="pb-row-sub">Rotazione sinistra / destra del polso</span>
+                <span class="pb-row-live" id="rt-live-yaw">-</span>
+              </td>
+              <td class="pb-cell"><button class="pb-btn" data-servo="yaw" data-src="0" id="pb-yaw-0"></button></td>
+              <td class="pb-cell"><button class="pb-btn" data-servo="yaw" data-src="1" id="pb-yaw-1"></button></td>
+              <td class="pb-cell"><button class="pb-btn" data-servo="yaw" data-src="2" id="pb-yaw-2"></button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <input type="hidden" id="rt-src-roll" value="2">
+      <input type="hidden" id="rt-src-pitch" value="1">
+      <input type="hidden" id="rt-src-yaw" value="0">
+
+      <div class="send-row" style="margin-top:1rem;">
+        <button class="btn-send-rpy" id="btn-reset-routing" style="background:transparent;border:1px solid var(--muted,#9db1cc);color:var(--muted,#9db1cc);">Reset default</button>
+        <button type="button" class="btn-send-rpy save-config-btn" data-status-id="routing-status" data-success-label="Mapping visore" style="background:rgba(52,152,219,0.85);">Salva configurazione</button>
+        <span class="send-status" id="routing-status">Pronto da salvare.</span>
+      </div>
+
+    </div>
+
+    <div class="panel section" id="head-assist-panel">
+      <h2>HEAD ASSIST (mode 5)</h2>
+      <p class="section-copy">
+        Polso da visore (come HEAD). Braccio si muove solo se yaw/pitch del polso si avvicinano
+        ai limiti fisici. Deadman: grip + grilletto destro.
+      </p>
+
+      <div class="tune-grid" style="grid-template-columns:repeat(2, minmax(0, 1fr));">
+        <div class="tune-group">
+          <h3>Abilitazione</h3>
+          <div class="tune-row">
+            <label class="toggle-en" title="Abilita HEAD ASSIST lato server">
+              <input type="checkbox" id="ha-enabled" checked>
+              <span class="toggle-slider"></span>
+            </label>
+            <span>HEAD ASSIST attivo</span>
+          </div>
+          <h3 style="margin-top:1rem;">Assi abilitati</h3>
+          <div class="tune-row">
+            <label class="toggle-en"><input type="checkbox" id="ha-en-yaw" checked><span class="toggle-slider"></span></label>
+            <span>Yaw → base</span>
+          </div>
+          <div class="tune-row">
+            <label class="toggle-en"><input type="checkbox" id="ha-en-pitch" checked><span class="toggle-slider"></span></label>
+            <span>Pitch → spalla / gomito</span>
+          </div>
+        </div>
+        <div class="tune-group">
+          <h3>Soglia warning (° dal limite)</h3>
+          <div class="tune-note">Distanza dal finecorsa oltre cui il braccio inizia a cedere.</div>
+          <div class="tune-row"><label for="ha-yaw-warn">Yaw</label><input type="range" id="ha-yaw-warn" min="3" max="35" step="0.5" value="22"><span class="tune-val" id="tv-ha-yaw-warn">22</span></div>
+          <div class="tune-row"><label for="ha-pitch-warn">Pitch</label><input type="range" id="ha-pitch-warn" min="3" max="35" step="0.5" value="20"><span class="tune-val" id="tv-ha-pitch-warn">20</span></div>
+        </div>
+      </div>
+
+      <div class="tune-grid" style="margin-top:1rem;grid-template-columns:repeat(2, minmax(0, 1fr));">
+        <div class="tune-group">
+          <h3>Gain assist (° per tick)</h3>
+          <div class="tune-row"><label for="ha-gain-base">Base</label><input type="range" id="ha-gain-base" min="0" max="1.2" step="0.01" value="0.48"><span class="tune-val" id="tv-ha-gain-base">0.48</span></div>
+          <div class="tune-row"><label for="ha-gain-spalla">Spalla</label><input type="range" id="ha-gain-spalla" min="0" max="1.2" step="0.01" value="0.36"><span class="tune-val" id="tv-ha-gain-spalla">0.36</span></div>
+          <div class="tune-row"><label for="ha-gain-gomito">Gomito</label><input type="range" id="ha-gain-gomito" min="0" max="1.2" step="0.01" value="0.30"><span class="tune-val" id="tv-ha-gain-gomito">0.30</span></div>
+        </div>
+        <div class="tune-group">
+          <h3>Calibrazione e smoothing</h3>
+          <div class="tune-row"><label for="ha-sign-yaw">Segno yaw</label>
+            <select id="ha-sign-yaw" style="min-width:5rem;padding:0.35rem;border-radius:8px;"><option value="1">+1</option><option value="-1">-1</option></select></div>
+          <div class="tune-row"><label for="ha-sign-pitch">Segno pitch</label>
+            <select id="ha-sign-pitch" style="min-width:5rem;padding:0.35rem;border-radius:8px;"><option value="1">+1</option><option value="-1">-1</option></select></div>
+          <div class="tune-row"><label for="ha-assist-alpha">Smoothing EMA</label><input type="range" id="ha-assist-alpha" min="0.05" max="0.92" step="0.01" value="0.72"><span class="tune-val" id="tv-ha-assist-alpha">0.72</span></div>
+          <div class="tune-row"><label for="ha-max-step">Max step per tick (°)</label><input type="range" id="ha-max-step" min="0.2" max="6" step="0.05" value="4.0"><span class="tune-val" id="tv-ha-max-step">4.0</span></div>
+        </div>
+      </div>
+
+      <div class="tune-grid" style="margin-top:1rem;grid-template-columns:repeat(2, minmax(0, 1fr));">
+        <div class="tune-group">
+          <h3>Modalita' ASSIST</h3>
+          <div class="tune-note">
+            <b>rate</b> = integratore di velocita' sul quaternione testa (storico, lag ~T/4).
+            <b>dls</b> = controllo di posizione via Damped Least Squares + null-space verso HOME
+            (reattivo, nessun lag di fase).
+          </div>
+          <div class="tune-row">
+            <label for="ha-mode">Mode</label>
+            <select id="ha-mode" style="min-width:7rem;padding:0.35rem;border-radius:8px;">
+              <option value="rate">rate (storico)</option>
+              <option value="dls">dls (sperimentale)</option>
+            </select>
+          </div>
+          <div class="tune-note" style="margin-top:0.5rem;">
+            <b>Reattivita' braccio (gainM)</b>: moltiplica la deviazione del vettore direzione testa rispetto al forward a HOME.
+            Per piccoli angoli si comporta circa come <code>m/rad</code>; satura a <code>2 &middot; gainM</code> per rotazione 180&deg;.
+            Baseline validata (2026-04-21): <code>0.15</code>. Per primo test su robot diverso partire da <code>0.08 &ndash; 0.10</code> e salire gradualmente.
+          </div>
+          <div class="tune-row"><label for="hdls-gain-m">Reattivita' braccio (m)</label><input type="range" id="hdls-gain-m" min="0.05" max="0.40" step="0.01" value="0.15"><span class="tune-val" id="tv-hdls-gain-m">0.15</span></div>
+          <div class="tune-row"><label for="hdls-null-gain">Null-space gain</label><input type="range" id="hdls-null-gain" min="0" max="0.5" step="0.01" value="0.20"><span class="tune-val" id="tv-hdls-null-gain">0.20</span></div>
+        </div>
+        <div class="tune-group">
+          <h3>DLS tuning avanzato</h3>
+          <div class="tune-note">
+            Damping alla Nakamura/Hanafusa. Alza <code>lambdaMax</code> per piu' stabilita' vicino alle singolarita' (sacrificando precisione).
+            <b>Non abbassare <code>manipThresh</code> sotto <code>10</code> (cioe' 1e-3)</b>: riduce il damping vicino a HOME e reintroduce l'escursione non-lineare su pitch_down osservata nel tuning 2026-04-21.
+          </div>
+          <div class="tune-row"><label for="hdls-lambda-max">lambdaMax</label><input type="range" id="hdls-lambda-max" min="0.01" max="0.30" step="0.005" value="0.12"><span class="tune-val" id="tv-hdls-lambda-max">0.12</span></div>
+          <div class="tune-row"><label for="hdls-manip-thresh">manipThresh (1e-4)</label><input type="range" id="hdls-manip-thresh" min="1" max="30" step="1" value="10"><span class="tune-val" id="tv-hdls-manip-thresh">10</span></div>
+          <div class="tune-row"><label for="hdls-max-dq">Max dq (°/tick)</label><input type="range" id="hdls-max-dq" min="0.5" max="8" step="0.1" value="2.0"><span class="tune-val" id="tv-hdls-max-dq">2.0</span></div>
+          <div class="tune-row"><label for="hdls-max-dx">Max dx (mm/tick)</label><input type="range" id="hdls-max-dx" min="5" max="80" step="1" value="15"><span class="tune-val" id="tv-hdls-max-dx">15</span></div>
+        </div>
+      </div>
+
+      <div class="send-row" style="margin-top:1rem;">
+        <button class="btn-send-rpy" id="btn-reset-head-assist" style="background:transparent;border:1px solid var(--muted,#9db1cc);color:var(--muted,#9db1cc);">Reset default</button>
+        <button type="button" class="btn-send-rpy save-config-btn" data-status-id="head-assist-status" data-success-label="HEAD ASSIST" style="background:rgba(52,152,219,0.85);">Salva configurazione</button>
+        <span class="send-status" id="head-assist-status">Pronto da salvare.</span>
+      </div>
+    </div>
+
+    <div class="panel section">
+      <h2>Velocita operative</h2>
+      <p class="section-copy">
+        Restano esposte le velocita davvero utili per il setup corrente. I vecchi parametri di feedback
+        diretto visore <-> IMU non piu centrali restano ai default backend e non sono mostrati qui.
+      </p>
+
+      <div class="tune-grid" style="grid-template-columns:repeat(2, minmax(0, 1fr));">
+        <div class="tune-group">
+          <h3>Manual</h3>
+          <div class="tune-note">Velocita del robot in teleoperazione manuale. Include braccio e polso comandati in modo diretto.</div>
+          <div class="tune-row"><label for="tg-vel-base">Base</label><input type="range" id="tg-vel-base" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-base">0</span></div>
+          <div class="tune-row"><label for="tg-vel-spalla">Spalla</label><input type="range" id="tg-vel-spalla" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-spalla">0</span></div>
+          <div class="tune-row"><label for="tg-vel-gomito">Gomito</label><input type="range" id="tg-vel-gomito" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-gomito">0</span></div>
+          <div class="tune-row"><label for="tg-vel-yaw">Yaw</label><input type="range" id="tg-vel-yaw" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-yaw">0</span></div>
+          <div class="tune-row"><label for="tg-vel-pitch">Pitch</label><input type="range" id="tg-vel-pitch" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-pitch">0</span></div>
+          <div class="tune-row"><label for="tg-vel-roll">Roll</label><input type="range" id="tg-vel-roll" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-roll">0</span></div>
+        </div>
+
+        <div class="tune-group">
+          <h3>Auto</h3>
+          <div class="tune-note">Velocita del robot in teleoperazione assistita da quaternioni visore e joystick VR.</div>
+          <div class="tune-row"><label for="tg-vel-base-head">Base</label><input type="range" id="tg-vel-base-head" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-base-head">0</span></div>
+          <div class="tune-row"><label for="tg-vel-spalla-head">Spalla</label><input type="range" id="tg-vel-spalla-head" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-spalla-head">0</span></div>
+          <div class="tune-row"><label for="tg-vel-gomito-head">Gomito</label><input type="range" id="tg-vel-gomito-head" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-gomito-head">0</span></div>
+          <div class="tune-row"><label for="tg-vel-yaw-head">Yaw</label><input type="range" id="tg-vel-yaw-head" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-yaw-head">0</span></div>
+          <div class="tune-row"><label for="tg-vel-pitch-head">Pitch</label><input type="range" id="tg-vel-pitch-head" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-pitch-head">0</span></div>
+          <div class="tune-row"><label for="tg-vel-roll-head">Roll</label><input type="range" id="tg-vel-roll-head" min="0" max="600" step="1" value="0"><span class="tune-val" id="tv-vel-roll-head">0</span></div>
+        </div>
+      </div>
+
+      <div class="note-box">
+        I vecchi gain del head loop restano nascosti, ma l’autolevel IMU per yaw / pitch / roll e
+        ancora configurabile dalla card dedicata qui sopra. Questa sezione salva soprattutto mapping
+        e velocita operative usate nel flusso attuale.
+      </div>
+
+      <div class="send-row" style="margin-top:1rem;">
+        <button class="btn-send-rpy" id="btn-reset-params" style="background:transparent;border:1px solid var(--muted,#9db1cc);color:var(--muted,#9db1cc);">Reset default</button>
+        <button type="button" class="btn-send-rpy save-config-btn" data-status-id="params-status" data-success-label="Velocita operative" style="background:rgba(52,152,219,0.85);">Salva configurazione</button>
+        <button type="button" class="btn-send-rpy apply-all-params">Applica tutti i parametri</button>
+        <span class="send-status" id="params-status">Salva persiste sul Raspberry. Applica invia al firmware.</span>
+      </div>
+
+      <div class="status-bar" id="global-status" style="margin-top:1rem;">Pronto.</div>
+    </div>
+  </div>
+
+  <script>
+    fetch("navbar.html")
+      .then((r) => r.text())
+      .then((html) => {
+        document.getElementById("navbar").innerHTML = html;
+        document.dispatchEvent(new CustomEvent("navbar-loaded"));
+      });
+  </script>
+</body>
+</html>

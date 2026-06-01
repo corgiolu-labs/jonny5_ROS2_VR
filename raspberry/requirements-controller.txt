@@ -1,0 +1,17 @@
+# Raspberry controller runtime dependencies
+# Install into the target venv with:
+#   python3 -m pip install -r requirements-controller.txt
+
+# Web control plane
+websockets>=12
+
+# Hardware bridges
+pyserial>=3.5
+spidev>=3.6
+
+# Kinematics, validation, and self-test analytics
+numpy>=1.24
+scipy>=1.11
+
+# Optional: self-test report plot generation (install manually if needed)
+# matplotlib>=3.7

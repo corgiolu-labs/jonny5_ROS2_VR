@@ -1,0 +1,127 @@
+/ {
+	/* Struttura pwm-leds come progetto jonny5 funzionante */
+	pwm_servos: pwm-servos {
+		compatible = "pwm-leds";
+		status = "okay";
+
+		/* TIM8 @ 50 Hz → 20 ms = 20000000 ns (coerente con servo_get_period_hz TIM8) */
+		servo0: servo0 {
+			pwms = <&pwm8 1 20000000 PWM_POLARITY_NORMAL>; /* BASE = PC6 TIM8_CH1 */
+		};
+
+		servo1: servo1 {
+			pwms = <&pwm8 2 20000000 PWM_POLARITY_NORMAL>; /* SPALLA = PC7 TIM8_CH2 */
+		};
+
+		servo2: servo2 {
+			pwms = <&pwm8 3 20000000 PWM_POLARITY_NORMAL>; /* GOMITO = PC8 TIM8_CH3 */
+		};
+
+		servo3: servo3 {
+			pwms = <&pwm8 4 20000000 PWM_POLARITY_NORMAL>; /* YAW = PC9 TIM8_CH4 */
+		};
+
+		/* TIM1 @ 50 Hz → 20 ms = 20000000 ns (HPS-0127 PITCH/ROLL; coerente con SERVO_PWM_HZ_TIM1) */
+		servo4: servo4 {
+			pwms = <&pwm1 1 20000000 PWM_POLARITY_NORMAL>; /* PITCH = PA8 TIM1_CH1 */
+		};
+
+		servo5: servo5 {
+			pwms = <&pwm1 4 20000000 PWM_POLARITY_NORMAL>; /* ROLL = PA11 TIM1_CH4 */
+		};
+	};
+
+	/* Pick & Place: 2 canali PWM per pilotare 2 IRFZ44N MOSFET (gate).
+	 * PP1 (PA0, TIM2_CH1) → elettrovalvola.
+	 * PP2 (PA1, TIM2_CH2) → coppia di vacuum motors.
+	 * Frequenza 20 kHz (periodo 50000 ns) → sopra soglia udibile, comune ai 2 canali. */
+	pwm_pickplace: pwm-pickplace {
+		compatible = "pwm-leds";
+		status = "okay";
+
+		pp1: pp1 {
+			pwms = <&pwm2 1 50000 PWM_POLARITY_NORMAL>; /* PA0 TIM2_CH1 */
+		};
+
+		pp2: pp2 {
+			pwms = <&pwm2 2 50000 PWM_POLARITY_NORMAL>; /* PA1 TIM2_CH2 */
+		};
+	};
+
+	aliases {
+		pwm-servo0 = &servo0;
+		pwm-servo1 = &servo1;
+		pwm-servo2 = &servo2;
+		pwm-servo3 = &servo3;
+		pwm-servo4 = &servo4;
+		pwm-servo5 = &servo5;
+		pwm-pp1 = &pp1;
+		pwm-pp2 = &pp2;
+	};
+};
+
+/* Definizione manuale pinctrl per TIM8, TIM1 e TIM2 */
+&pinctrl {
+	tim8_ch1_pc6: tim8_ch1_pc6 { pinmux = <STM32_PINMUX('C', 6, AF3)>; };
+	tim8_ch2_pc7: tim8_ch2_pc7 { pinmux = <STM32_PINMUX('C', 7, AF3)>; };
+	tim8_ch3_pc8: tim8_ch3_pc8 { pinmux = <STM32_PINMUX('C', 8, AF3)>; };
+	tim8_ch4_pc9: tim8_ch4_pc9 { pinmux = <STM32_PINMUX('C', 9, AF3)>; };
+
+	/* PITCH su PA8 (TIM1_CH1, AF1) — advanced-control timer, boot predicibile.
+	 * ROLL su PA11 (TIM1_CH4, AF1). */
+	tim1_ch1_pa8: tim1_ch1_pa8 { pinmux = <STM32_PINMUX('A', 8, AF1)>; };
+	tim1_ch4_pa11: tim1_ch4_pa11 { pinmux = <STM32_PINMUX('A', 11, AF1)>; };
+
+	/* TIM2: PP1 (PA0, TIM2_CH1, AF1) e PP2 (PA1, TIM2_CH2, AF1) */
+	tim2_ch1_pa0: tim2_ch1_pa0 { pinmux = <STM32_PINMUX('A', 0, AF1)>; };
+	tim2_ch2_pa1: tim2_ch2_pa1 { pinmux = <STM32_PINMUX('A', 1, AF1)>; };
+};
+
+/* TIM8: BASE, SPALLA, GOMITO, YAW — PC6..PC9 (CH1..CH4). ROLL è su TIM1 (PA11). */
+/* TIM8 non è nel DTS base STM32F4 per tutte le varianti: nodo sotto /soc/ */
+&{/soc} {
+	timers8: timers@40010400 {
+		compatible = "st,stm32-timers";
+		reg = <0x40010400 0x400>;
+		clocks = <&rcc STM32_CLOCK(APB2, 1U)>;
+		resets = <&rctl STM32_RESET(APB2, 1U)>;
+		interrupts = <43 0>, <44 0>, <45 0>, <46 0>;
+		interrupt-names = "brk", "up", "trgcom", "cc";
+		st,prescaler = <83>;
+		status = "okay";
+
+		pwm8: pwm {
+			compatible = "st,stm32-pwm";
+			status = "okay";
+			pinctrl-0 = <&tim8_ch1_pc6 &tim8_ch2_pc7 &tim8_ch3_pc8 &tim8_ch4_pc9>;
+			pinctrl-names = "default";
+			#pwm-cells = <3>;
+		};
+	};
+};
+
+/* TIM1: PITCH (PA8, TIM1_CH1) e ROLL (PA11, TIM1_CH4) — advanced-control timer */
+&timers1 {
+	status = "okay";
+	st,prescaler = <83>;
+	pwm1: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim1_ch1_pa8 &tim1_ch4_pa11>;
+		pinctrl-names = "default";
+		#pwm-cells = <3>;
+	};
+};
+
+/* TIM2: PP1 (PA0) e PP2 (PA1) per pick&place IRFZ44N gate drive.
+ * Prescaler 0 → contatore alla freq. APB1 timer clock (84 MHz su F446RE).
+ * Periodo 50000 ns = 20 kHz: 4200 cycles → fits 16-bit counter ampiamente. */
+&timers2 {
+	status = "okay";
+	st,prescaler = <0>;
+	pwm2: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim2_ch1_pa0 &tim2_ch2_pa1>;
+		pinctrl-names = "default";
+		#pwm-cells = <3>;
+	};
+};

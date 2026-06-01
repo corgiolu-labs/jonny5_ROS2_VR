@@ -1,0 +1,21 @@
+{
+  "description": "Fixed IMU mounting rotation relative to EE/tool frame.",
+  "quat_wxyz": [
+    0.9978145291471898,
+    0.0553353613787577,
+    0.002751663137535594,
+    0.03600821508811257
+  ],
+  "rpy_deg": [
+    6.351469014700646,
+    0.08630144110213325,
+    4.138269674565975
+  ],
+  "calibrated_at": "2026-04-01T13:57:06",
+  "samples": 25,
+  "duration_s": 3.0,
+  "rate_hz_target": 8.0,
+  "samples_total": 25,
+  "samples_inlier": 25,
+  "outlier_threshold_deg": 15.0
+}

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <title>JONNY5 – Control Room</title>
+    <link rel="stylesheet" href="../shared/css/base.css" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+</head>
+
+<body>
+<div id="navbar"></div>
+
+<div class="content">
+
+    <!-- HERO -->
+    <section class="hero panel-elevated">
+        <h1 class="hero-title">JONNY5 – Control Room</h1>
+        <p class="hero-subtitle">Stato sistema / diagnostica / connessioni</p>
+
+        <div class="diagnostic-row">
+
+            <div class="diag-box">
+                <div class="diag-label">WebSocket</div>
+                <div id="diag-ws" class="diag-value state-pill state-off">OFFLINE</div>
+            </div>
+
+            <div class="diag-box">
+                <div class="diag-label">SPI Bridge</div>
+                <div id="pill_spi" class="diag-value state-pill state-unknown">–</div>
+            </div>
+
+            <div class="diag-box">
+                <div class="diag-label">UART Bridge</div>
+                <div id="pill_uart" class="diag-value state-pill state-unknown">–</div>
+            </div>
+
+            <div class="diag-box">
+                <div class="diag-label">STM32</div>
+                <div id="pill_stm32" class="diag-value state-pill state-unknown">–</div>
+            </div>
+
+            <div class="diag-box">
+                <div class="diag-label">IMU</div>
+                <div id="pill_imu" class="diag-value state-pill state-unknown">–</div>
+            </div>
+
+            <div class="diag-box">
+                <div class="diag-label">VR</div>
+                <div id="pill_vr" class="diag-value state-pill state-unknown">–</div>
+            </div>
+            <div class="diag-box">
+                <div class="diag-label">Mode VR</div>
+                <div id="pill_hybrid" class="diag-value state-pill state-unknown">–</div>
+            </div>
+
+            <div class="diag-box">
+                <div class="diag-label">Temp IMU</div>
+                <div id="imu-temp" class="diag-value state-pill state-unknown">– °C</div>
+            </div>
+
+            <div class="diag-box">
+                <div class="diag-label">Stato Robot</div>
+                <div id="pill_robot_state" class="diag-value state-pill state-unknown">–</div>
+            </div>
+
+            <div class="diag-box">
+                <div class="diag-label">Display Ref</div>
+                <div id="imu-display-ref" class="diag-value state-pill state-unknown">–</div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- CONTROL BUTTONS -->
+    <section class="panel panel-elevated">
+        <h2 class="section-title">Comandi principali</h2>
+        <div class="row" style="flex-wrap: nowrap; overflow-x: auto; gap: 0.5rem;">
+            <button class="btn primary" id="btn-enable">ENABLE</button>
+            <button class="btn danger" id="btn-stop">STOP</button>
+            <button class="btn ghost" id="btn-imu-toggle">IMU</button>
+            <button class="btn ghost" id="btn-vrpose">VR Pose</button>
+            <button class="btn ghost" id="btn-home">HOME</button>
+            <button class="btn ghost" id="btn-park">PARK</button>
+            <button class="btn ghost" id="btn-demo">Avvia Demo</button>
+            <button class="btn ghost" id="btn-imu-calib" title="Calibra il riferimento yaw dell'IMU BNO085 con il robot in HOME">Calibra IMU</button>
+        </div>
+    </section>
+
+    <!-- TELEMETRIA -->
+    <section class="grid grid-4">
+        <div class="panel">
+            <h3 class="section-title">Servo</h3>
+            <div class="telemetry-list">
+                <div class="t-row"><span>Base</span><span id="s-base">–</span></div>
+                <div class="t-row"><span>Spalla</span><span id="s-spalla">–</span></div>
+                <div class="t-row"><span>Gomito</span><span id="s-gomito">–</span></div>
+                <div class="t-row"><span>Roll</span><span id="s-roll">–</span></div>
+                <div class="t-row"><span>Pitch</span><span id="s-pitch">–</span></div>
+                <div class="t-row"><span>Yaw</span><span id="s-yaw">–</span></div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3 class="section-title">IMU</h3>
+            <div class="telemetry-list">
+                <div class="t-row"><span>Roll</span><span id="imu-roll">–</span></div>
+                <div class="t-row"><span>Pitch</span><span id="imu-pitch">–</span></div>
+                <div class="t-row"><span>Yaw</span><span id="imu-yaw">–</span></div>
+                <div class="t-row t-row-muted"><span>W</span><span id="imu-qw">–</span></div>
+                <div class="t-row t-row-muted"><span>X</span><span id="imu-qx">–</span></div>
+                <div class="t-row t-row-muted"><span>Y</span><span id="imu-qy">–</span></div>
+                <div class="t-row t-row-muted"><span>Z</span><span id="imu-qz">–</span></div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-head">
+                <div class="section-title">VR Headset</div>
+            </div>
+            <div class="telemetry-list">
+                <div class="t-row"><span>Roll</span><span id="vr-roll">–</span></div>
+                <div class="t-row"><span>Pitch</span><span id="vr-pitch">–</span></div>
+                <div class="t-row"><span>Yaw</span><span id="vr-yaw">–</span></div>
+                <div class="t-row t-row-muted"><span>W</span><span id="vr-qw">–</span></div>
+                <div class="t-row t-row-muted"><span>X</span><span id="vr-qx">–</span></div>
+                <div class="t-row t-row-muted"><span>Y</span><span id="vr-qy">–</span></div>
+                <div class="t-row t-row-muted"><span>Z</span><span id="vr-qz">–</span></div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3 class="section-title">System</h3>
+            <div class="telemetry-list">
+                <div class="t-row"><span>SPI Hz</span><span id="sys-spi-hz">–</span></div>
+                <div class="t-row"><span>SPI Packet #</span><span id="sys-pkt">–</span></div>
+                <div class="t-row"><span>VR Mode</span><span id="sys-vr-mode">–</span></div>
+                <div class="t-row"><span>VR HB</span><span id="sys-hb">–</span></div>
+                <div class="t-row"><span>Intent Age</span><span id="sys-intent-age">–</span></div>
+                <div class="t-row"><span>Teleop Mode</span><span id="diag_teleop_mode">-</span></div>
+                <div class="t-row"><span>Intensity</span><span id="diag_intensity">-</span></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- EVENT LOG -->
+    <section class="panel panel-elevated">
+        <h3 class="section-title">Event Log</h3>
+        <div id="event-log" class="event-log"></div>
+    </section>
+
+</div>
+
+<script src="../shared/js/j5_config.js"></script>
+<script type="module" src="js/dashboard.js"></script>
+<script type="module" src="js/ws_dashboard.js"></script>
+<script>
+  fetch("navbar.html")
+    .then(r => r.text())
+    .then(html => {
+      document.getElementById("navbar").innerHTML = html;
+      document.dispatchEvent(new CustomEvent("navbar-loaded"));
+    });
+</script>
+</body>
+</html>

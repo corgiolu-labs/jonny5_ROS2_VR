@@ -1,0 +1,54 @@
+# MediaMTX - profilo INITIAL (configurazione storica del Capitolo 10)
+# Riproduce la configurazione MediaMTX iniziale citata in tab. 10.1 della tesi:
+# 1280x720 @ 30 FPS con buffer di default (NON ottimizzati per low-latency).
+# Latenza video storica misurata: ~150 ms (vs ~37 ms del profilo lowlatency).
+#
+# Differenze rispetto al profilo lowlatency:
+# - writeQueueSize maggiore (512 default vs 64 ottimizzato) -> piu' buffering
+# - timeout di default piu' permissivi (10s vs 5s)
+# - IDR period su 1 secondo (30 frame @ 30 FPS) -> intervalli di keyframe piu' lunghi
+# - risoluzione 720p e framerate 30 FPS senza ottimizzazioni di pacing
+#
+# Profilo dedicato esclusivamente alla riproducibilita' sperimentale del
+# benchmark storico (pagina Test della dashboard, Capitolo 10 sez. 10.2).
+# NON usare in produzione per la teleoperazione VR.
+
+logLevel: info
+writeQueueSize: 512
+readTimeout: 10s
+writeTimeout: 10s
+
+rtsp: true
+rtspAddress: :8554
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcLocalTCPAddress: ":8189"
+webrtcHandshakeTimeout: 10s
+webrtcTrackGatherTimeout: 5s
+
+paths:
+  cam0:
+    source: rpiCamera
+    rpiCameraCamID: 0
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 30
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 30
+    rpiCameraBitrate: 6000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal
+  cam1:
+    source: rpiCamera
+    rpiCameraCamID: 1
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 30
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 30
+    rpiCameraBitrate: 6000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal

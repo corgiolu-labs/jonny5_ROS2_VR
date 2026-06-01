@@ -1,0 +1,43 @@
+# MediaMTX — profilo ZOOMFRIENDLY (compromesso latenza/dettaglio)
+# Dual camera 1280x720 @ 60 FPS, bitrate 6 Mbps.
+# Latenza video stimata ~45-55 ms; zoom utile fino a ~2.5x senza pixelation.
+
+logLevel: info
+writeQueueSize: 64
+readTimeout: 5s
+writeTimeout: 5s
+
+rtsp: true
+rtspAddress: :8554
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcLocalTCPAddress: ":8189"
+webrtcHandshakeTimeout: 5s
+webrtcTrackGatherTimeout: 2s
+
+paths:
+  cam0:
+    source: rpiCamera
+    rpiCameraCamID: 0
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 60
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 30
+    rpiCameraBitrate: 6000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal
+  cam1:
+    source: rpiCamera
+    rpiCameraCamID: 1
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 60
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 30
+    rpiCameraBitrate: 6000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal

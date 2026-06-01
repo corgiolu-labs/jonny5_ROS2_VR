@@ -1,0 +1,20 @@
+# JONNY5 — MediaMTX low-latency (WebRTC/WHEP). Avviato da jonny5-video-init dopo select_video_pipeline.sh.
+# Unico path video operativo nel repo: webrtc + config_runtime/video/mediamtx.yml.
+
+[Unit]
+Description=JONNY5 MediaMTX low-latency video (WebRTC/WHEP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/jonny5
+ExecStart=/bin/bash /home/jonny5/raspberry5/scripts/start_mediamtx.sh
+User=jonny5
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# Nessun WantedBy: l'avvio è orchestrato da jonny5-video-init (stesso modello precedente).

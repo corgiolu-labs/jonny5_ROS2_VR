@@ -1,0 +1,3194 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>JONNY5 Stereo XR (cam0=L, cam1=R)</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      color: #fff;
+    }
+    #ui {
+      position: fixed;
+      inset: 0 auto auto 0;
+      padding: 12px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      z-index: 10;
+      background: linear-gradient(180deg, rgba(0,0,0,.75), rgba(0,0,0,0));
+      width: 100%;
+      box-sizing: border-box;
+    }
+    button {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,.25);
+      background: rgba(255,255,255,.12);
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.active, .btn.ghost.active {
+      background: rgba(46, 204, 113, 0.25);
+      color: #6ee7b7;
+      border-color: rgba(46, 204, 113, 0.7);
+    }
+    #status {
+      opacity: .85;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #ui {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+    }
+    #ui::-webkit-scrollbar { display: none; }
+    #canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    /* Fallback 2D preview */
+    #preview {
+      position: fixed;
+      inset: 0;
+      display: none;
+      padding-top: 56px;
+      box-sizing: border-box;
+    }
+    #previewInner {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+    }
+    #previewInner video {
+      width: 50%;
+      background: #222;
+    }
+
+    /* --- HEAD MODE badge + overlay stop --- */
+    #headModeBadge {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 11;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .3px;
+      background: rgba(155, 89, 182, 0.85);
+      border: 1px solid rgba(200,160,255,.5);
+      color: #fff;
+      display: none;
+      user-select: none;
+      pointer-events: none;
+      animation: headPulse 1.8s ease-in-out infinite;
+    }
+    @keyframes headPulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.6; }
+    }
+    #btnStopHead {
+      position: fixed;
+      bottom: 18px;
+      right: 18px;
+      z-index: 12;
+      padding: 12px 22px;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 700;
+      background: rgba(231,76,60,0.9);
+      border: 1.5px solid rgba(255,120,100,.6);
+      color: #fff;
+      cursor: pointer;
+      display: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,.5);
+    }
+    #btnStopHead:hover { background: rgba(192,57,43,0.95); }
+
+    /* --- FEEDBACK TELEOPPOSE (ACK) --- */
+    #teleopPoseBadge {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 11;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .2px;
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.35);
+      color: rgba(255,255,255,.85);
+      display: none;
+      user-select: none;
+      pointer-events: none;
+    }
+    #teleopPoseToast {
+      position: fixed;
+      top: 52px;
+      right: 12px;
+      z-index: 11;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 700;
+      background: rgba(16, 185, 129, .18); /* emerald */
+      border: 1px solid rgba(16, 185, 129, .55);
+      color: rgba(236, 253, 245, 1);
+      opacity: 0;
+      transform: translateY(-6px);
+      transition: opacity 150ms ease, transform 150ms ease;
+      pointer-events: none;
+      display: none;
+    }
+    #teleopPoseToast.show {
+      display: block;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+  </style>
+</head>
+<body>
+  <!-- J5 VR viewer build 2026-03-08-debug -->
+  <div id="debugOverlay" style="
+   position: fixed; top: 0; left: 0; width: 100%;
+   color: #00ff00; background: rgba(0,0,0,0.6); padding: 10px; font-size: 20px;
+   z-index: 999999; display: none;
+  "></div>
+  <div id="videoDebugPanel" style="
+   position: fixed; bottom: 8px; left: 8px;
+   width: min(560px, calc(100vw - 16px)); box-sizing: border-box;
+   color: #7dffaf; background: rgba(0,0,0,0.82); padding: 7px 9px; font-size: 11px; line-height: 1.35; font-family: monospace;
+   z-index: 999998; max-height: 132px; overflow: auto; white-space: normal; word-break: break-word;
+   border: 1px solid rgba(90,255,150,.42); border-radius: 10px;
+   display: block;
+  "></div>
+  <div id="ui"></div>
+
+  <div id="teleopPoseBadge">Pose VR: OK</div>
+  <div id="teleopPoseToast">Teleop Pose applicata correttamente</div>
+
+  <canvas id="canvas"></canvas>
+  <!-- IMU/QUEST/Servo debug boxes removed — use dashboard for diagnostics -->
+
+  <!-- Anteprima 2D: texture provengono dagli elementi WebRTC (WHEP); nessun MJPEG. -->
+  <div id="preview">
+    <div id="previewInner"></div>
+  </div>
+  <!-- Debug hard layer: preview visibile dei 2 HTMLVideoElement reali (pre-WebGL). -->
+  <div id="videoPreviewDebug" style="
+    position: fixed; right: 8px; bottom: 8px; z-index: 999997;
+    display: flex; gap: 6px; background: rgba(0,0,0,0.75); padding: 6px; border: 1px solid #888;
+  ">
+    <video id="webrtcVidL" style="width:160px;height:120px;background:#111;object-fit:contain" playsinline autoplay muted></video>
+    <video id="webrtcVidR" style="width:160px;height:120px;background:#111;object-fit:contain" playsinline autoplay muted></video>
+  </div>
+
+  <script src="../shared/js/j5_config.js"></script>
+  <script src="../shared/js/vr_controls.js"></script>
+  <script src="../shared/js/controller_remap.js"></script>
+  <script>
+    // Fallback se j5_config.js non carica (es. preview file:// senza server).
+    // Garantisce che J5_CONFIG sia sempre definito prima del resto dello script.
+    if (typeof J5_CONFIG === "undefined") {
+      window.J5_CONFIG = {
+        WS_PORT: 8557,
+        HTTPS_PORT: 8443,
+        WS_RECONNECT_BASE_MS: 400,
+        WS_RECONNECT_MAX_MS: 3000,
+        WS_RECONNECT_FACTOR: 1.5,
+        EVENT_LOG_MAX_ENTRIES: 50,
+        SLIDER_DEBOUNCE_MS: 50,
+        FK_THROTTLE_HZ: 10,
+        MOTION_PROFILES: ["RTR3", "RTR5", "BB", "BCB"],
+        JOINT_NAMES: ["base", "spalla", "gomito", "yaw", "pitch", "roll"],
+        JOINT_LABELS: ["Base", "Spalla", "Gomito", "Yaw", "Pitch", "Roll"],
+      };
+    }
+
+    // =========================================================================
+    // SECTION 1: NETWORK — Captive portal keepalive
+    // =========================================================================
+    // Captive portal keepalive — exported for XR session control
+    function cpStartTouch() {}
+    function cpStopTouch() {}
+
+    // =========================================================================
+    // SECTION 2: CONFIG — Host, URLs, constants
+    // =========================================================================
+    // Host dinamico: usa l'IP/hostname con cui la pagina Ã¨ stata caricata.
+    // Funziona su qualsiasi rete (hotspot 10.42.0.1, LAN ICS 192.168.137.x, router, ecc.).
+    const J5_HOST = window.location.hostname;
+    // Use same origin (host:port) as the HTTPS page so the browser reuses the already-trusted
+    // TLS certificate. The HTTPS server proxies /ws → local WS server on port 8557.
+    const TELEOP_WS_URL = `wss://${window.location.host}/ws`;
+    const HTTPS_ROOT = `https://${J5_HOST}:${J5_CONFIG.HTTPS_PORT}/`;
+    const PORT_TELEOP = J5_CONFIG.WS_PORT;
+    const DEBUG_IMU_UI = false;
+    window.TELEOP_DEBUG_VERBOSE = false;
+    const uiRoot = document.getElementById("ui");
+    if (typeof window.createVRControls === "function") {
+      window.createVRControls(uiRoot);
+    }
+    /* Fallback se lo script esterno non carica: stessi pulsanti del viewer (path assoluto + insert). */
+    if (uiRoot && !uiRoot.querySelector("#btnStart")) {
+      const wrap = document.createElement("div");
+      wrap.className = "vr-controls-inline";
+      wrap.innerHTML =
+        '<button class="btn primary" id="btnStart">Start</button>' +
+        '<button class="btn ghost" id="btnVR" disabled>Cam</button>' +
+        '<button class="btn ghost" id="btnTeleopPose" disabled>Pose</button>' +
+        '<button class="btn ghost" id="btnTeleop" disabled>Manual</button>' +
+        '<button class="btn ghost" id="btnTeleopHead" disabled>Head</button>' +
+        '<button class="btn ghost" id="btnTeleopHybrid" disabled>Hybrid</button>' +
+        '<button class="btn ghost" id="btnTeleopIk" disabled>Assist</button>' +
+        '<span id="vr-robot-state-badge">UNKNOWN</span>';
+      uiRoot.insertBefore(wrap, uiRoot.firstChild);
+    }
+    if (uiRoot && !document.getElementById("status")) {
+      const st = document.createElement("span");
+      st.id = "status";
+      uiRoot.appendChild(st);
+    }
+
+    const debugOverlayEl = document.getElementById("debugOverlay");
+
+    // =========================================================================
+    // SECTION 3: WEBSOCKET — Teleop WS connection, reconnect, message routing
+    // =========================================================================
+    function safeSend(ws, payload) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(JSON.stringify(payload));
+      return true;
+    }
+    let teleopWs = null;
+    let teleopHeartbeat = 0;
+    let teleopStarted = false;
+    let teleopWsUrl = null;
+    let teleopReconnectT = null;
+    let teleopBackoffMs = J5_CONFIG.WS_RECONNECT_BASE_MS;
+    let teleopAttemptCount = 0;
+    let imuEnabled = false;
+    let inVRSession = false;
+    // Timer per pubblicare session.frameRate dell'HMD ogni 2 s mentre la
+    // sessione XR è attiva (vedi requestSession + addEventListener("end")).
+    let _hmdRefreshTimer = null;
+    // Buffer scorrevole di timestamp dei frame video ricevuti dal WHEP cam0
+    // (webrtcVidL). Usato per stimare la latenza video lato HMD via
+    // (inter-frame interval) * buffer_depth (4.5 per WebRTC, come dashboard).
+    const _hmdVidIntervals = []; // ms, finestra scorrevole
+    // Finestra 30 sample: ~250 ms a 120 fps, ~500 ms a 60 fps, 1 s a 30 fps.
+    // Reattiva ai cambi di profilo video senza essere troppo rumorosa.
+    const HMD_VID_WINDOW = 30;
+    let _hmdVidLastT = null;
+    let _hmdVidRvfcRegistered = false;
+    const HMD_VID_BUFFER_DEPTH = 4.5;
+
+    function enforceViewerHeadDefaults() {
+      _sendUart("HEADSRC VISOR");
+      _sendUart("VLEVEL OFF");
+    }
+
+    function _scheduleTeleopReconnect() {
+      if (!teleopStarted) return;
+      if (teleopReconnectT) return;
+      const delay = teleopBackoffMs;
+      teleopBackoffMs = Math.min(Math.trunc(teleopBackoffMs * J5_CONFIG.WS_RECONNECT_FACTOR), J5_CONFIG.WS_RECONNECT_MAX_MS);
+      teleopReconnectT = setTimeout(() => {
+        teleopReconnectT = null;
+        openTeleopWebSocket();
+      }, delay);
+    }
+
+    function openTeleopWebSocket() {
+      // Non aprire WS se giÃ  aperto
+      if (teleopWs && teleopWs.readyState === WebSocket.OPEN) {
+        console.log("[WS] Teleop giÃ  aperto");
+        return;
+      }
+      // Se sta giÃ  connettendo, lascia finire
+      if (teleopWs && teleopWs.readyState === WebSocket.CONNECTING) {
+        if (window.TELEOP_DEBUG_VERBOSE) console.log("[WS] Teleop connecting...");
+        return;
+      }
+
+      teleopWsUrl = TELEOP_WS_URL;
+      if (window.TELEOP_DEBUG_VERBOSE) console.log("[WS] teleop URL:", teleopWsUrl);
+      console.log("[WS] Opening teleop WebSocket to", teleopWsUrl);
+
+      try { teleopWs && teleopWs.close(); } catch (_) {}
+      teleopWs = new WebSocket(teleopWsUrl);
+
+      teleopWs.onopen = function () {
+        console.log("[WS] Teleop WebSocket OPEN", teleopWsUrl);
+        setStatus("VR attiva: TELEOP (WS connesso)");
+        teleopBackoffMs = J5_CONFIG.WS_RECONNECT_BASE_MS;
+        teleopAttemptCount = 0;
+        enforceViewerHeadDefaults();
+      };
+
+      teleopWs.onclose = function (ev) {
+        console.warn("[WS] Teleop WebSocket CLOSE", ev.code, ev.reason || "none");
+        teleopWs = null;
+        _scheduleTeleopReconnect();
+      };
+
+      teleopWs.onerror = function (err) {
+        console.error("[WS] Teleop WebSocket ERROR", err);
+        teleopAttemptCount++;
+        _scheduleTeleopReconnect();
+      };
+
+      teleopWs.onmessage = function (ev) {
+        // opzionale, se il server manda ack
+        if (window.TELEOP_DEBUG_VERBOSE) console.log("[WS] Teleop message from server:", ev.data);
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg && msg.teleop_pose_ack === true) {
+            showTeleopPoseAck();
+            /* Ripristina Manual VR (1) solo se HEAD mode NON Ã¨ in corso di attivazione.
+             * Durante la sequenza _startHeadModeSequence l'ack viene intercettato
+             * dal listener temporaneo nella Promise â€” qui non facciamo nulla. */
+            if (!_headModeActive && !_headModeStarting) {
+              teleopMode = 2;
+              _syncModeButtons(2);
+              setStatus("[TELEOP] Pose applicata â†’ ritorno Manual VR (2)");
+            }
+          }
+          if (DEBUG_IMU_UI && msg && ("imu_valid" in msg || "imu_q_w" in msg)) {
+            const w = typeof msg.imu_q_w === "number" ? msg.imu_q_w.toFixed(3) : "—";
+            const x = typeof msg.imu_q_x === "number" ? msg.imu_q_x.toFixed(3) : "—";
+            const y = typeof msg.imu_q_y === "number" ? msg.imu_q_y.toFixed(3) : "—";
+            const z = typeof msg.imu_q_z === "number" ? msg.imu_q_z.toFixed(3) : "—";
+            lastImuValues = { w, x, y, z };
+            if (typeof updateImuTexture === "function") updateImuTexture();
+          }
+          if (msg && "imu_enabled" in msg) {
+            imuEnabled = !!msg.imu_enabled;
+          }
+          if (msg && msg.robot_state !== undefined) {
+            const badge = document.getElementById("vr-robot-state-badge");
+            if (badge) {
+              badge.textContent = msg.robot_state;
+              const cls = { IDLE: "state-on", STOPPED: "state-off", SAFE: "state-warn" };
+              badge.className = cls[msg.robot_state] || "";
+            }
+          }
+          // Mappatura controller live-update via WS (broadcast dal backend dopo POST dashboard /controllers).
+          if (msg && msg.type === "controller_mappings_updated" && window.controllerRemap) {
+            try { window.controllerRemap.handleWsMessage(msg); } catch (_) {}
+          }
+          // Calibrazione stereo inviata dalla dashboard PC â†’ applica localmente e persiste in localStorage
+          if (msg && msg.type === "vr_calib") {
+            if (typeof msg.convPx    === "number") { convPx    = Math.trunc(msg.convPx);    localStorage.setItem("convPx",    String(convPx));    updateConvUI(); }
+            // vertPx legacy: applica a entrambe le cam (retro-compat). vertPx0/1: per-cam.
+            if (typeof msg.vertPx    === "number") { vertPx0 = vertPx1 = Math.trunc(msg.vertPx); updateVertUI(); }
+            if (typeof msg.vertPx0   === "number") { vertPx0 = Math.trunc(msg.vertPx0); updateVertUI(); }
+            if (typeof msg.vertPx1   === "number") { vertPx1 = Math.trunc(msg.vertPx1); updateVertUI(); }
+            if (typeof msg.rollDeg0  === "number") { rollDeg0  = msg.rollDeg0;               localStorage.setItem("rollDeg0",  String(rollDeg0));  updateRollScaleUI(); }
+            if (typeof msg.rollDeg1  === "number") { rollDeg1  = msg.rollDeg1;               localStorage.setItem("rollDeg1",  String(rollDeg1));  updateRollScaleUI(); }
+            if (typeof msg.zoom0     === "number") { zoom0     = msg.zoom0;                  localStorage.setItem("zoom0",     String(zoom0));     updateRollScaleUI(); }
+            if (typeof msg.zoom1     === "number") { zoom1     = msg.zoom1;                  localStorage.setItem("zoom1",     String(zoom1));     updateRollScaleUI(); }
+            if (typeof msg.focusPos0 === "number") { setFocusPos(0, msg.focusPos0); }
+            if (typeof msg.focusPos1 === "number") { setFocusPos(1, msg.focusPos1); }
+            if (typeof updateHudTexture === "function") try { updateHudTexture(); } catch (_) {}
+            console.log("[VR_CALIB] parametri aggiornati dalla dashboard:", msg);
+          }
+          // vr_zoom_command: comando di zoom inviato dalle dashboard (pulsanti +/-/reset).
+          // Applica entrambi gli occhi simmetricamente usando changeZoom(); il delta o set
+          // viene poi propagato via vr_zoom_state al backend (changeZoom lo emette gia').
+          if (msg && msg.type === "vr_zoom_command") {
+            try {
+              const action = String(msg.action || "delta");
+              const value = Number(msg.value);
+              if (action === "reset") {
+                changeZoom(0, 1.0 - zoom0);
+                changeZoom(1, 1.0 - zoom1);
+              } else if (action === "set" && Number.isFinite(value)) {
+                changeZoom(0, value - zoom0);
+                changeZoom(1, value - zoom1);
+              } else if (Number.isFinite(value)) {
+                // delta
+                changeZoom(0, value);
+                changeZoom(1, value);
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      };
+    }
+
+    function startTeleopWs() {
+      if (teleopStarted) return;
+      teleopStarted = true;
+      teleopBackoffMs = J5_CONFIG.WS_RECONNECT_BASE_MS;
+      teleopAttemptCount = 0;
+      openTeleopWebSocket();
+    }
+
+    function sendTeleopIntent(intent) {
+      try {
+        if (!teleopWs || teleopWs.readyState !== WebSocket.OPEN) {
+          // Log quando il WebSocket non Ã¨ pronto (ogni 2 secondi per evitare spam)
+          if (!sendTeleopIntent._lastWarn || (Date.now() - sendTeleopIntent._lastWarn) > 2000) {
+            console.warn("[WS] Teleop non connesso, intent DROPPED. state=", teleopWs ? teleopWs.readyState : "null");
+            if (window.TELEOP_DEBUG_VERBOSE) console.warn("[WS] teleop URL:", teleopWsUrl);
+            setStatus("[TELEOP] WS non connesso â€” nessun comando inviato");
+            sendTeleopIntent._lastWarn = Date.now();
+          }
+          return;
+        }
+        if (window.TELEOP_DEBUG_VERBOSE) console.log("[WS] intent SEND:", intent);
+        safeSend(teleopWs, intent);
+        // Log quando inviamo dati (ogni 100 invii = ~3 secondi a 30Hz)
+        if (!sendTeleopIntent._sendCount) sendTeleopIntent._sendCount = 0;
+        if (++sendTeleopIntent._sendCount % 100 === 0) {
+          console.log("[teleop] Sent intent:", intent);
+          console.log("[UI] mode:", intent.mode, "cmd:", intent.cmd ?? null);
+        }
+      } catch (e) {
+        console.error("[teleop] Send error:", e);
+        setStatus(`[TELEOP] Errore invio: ${e.message || e}`);
+      }
+    }
+
+    // =========================================================================
+    // SECTION 4: UI — Buttons, mode switching, HEAD/HYBRID/IK sequences
+    // =========================================================================
+    function showTeleopPoseAck() {
+      const badge = document.getElementById("teleopPoseBadge");
+      const toast = document.getElementById("teleopPoseToast");
+      if (badge) {
+        badge.style.display = "block";
+        clearTimeout(showTeleopPoseAck._badgeT);
+        showTeleopPoseAck._badgeT = setTimeout(() => { try { badge.style.display = "none"; } catch (_) {} }, 1200);
+      }
+      if (toast) {
+        // reset animation
+        toast.classList.remove("show");
+        toast.style.display = "block";
+        requestAnimationFrame(() => {
+          toast.classList.add("show");
+        });
+        clearTimeout(showTeleopPoseAck._toastOutT);
+        clearTimeout(showTeleopPoseAck._toastHideT);
+        // fade-out 800ms su totale 1.2s
+        showTeleopPoseAck._toastOutT = setTimeout(() => { try { toast.classList.remove("show"); } catch (_) {} }, 400);
+        showTeleopPoseAck._toastHideT = setTimeout(() => { try { toast.style.display = "none"; } catch (_) {} }, 1200);
+      }
+    }
+
+    const btnStart = document.getElementById("btnStart");
+    const btnVR = document.getElementById("btnVR");
+    const btnTeleop = document.getElementById("btnTeleop");
+    const btnTeleopHead = document.getElementById("btnTeleopHead");
+    const btnTeleopHybrid = document.getElementById("btnTeleopHybrid");
+    const btnTeleopPose = document.getElementById("btnTeleopPose");
+    const btnTeleopIk = document.getElementById("btnTeleopIk");
+
+    // Stato teleop con tracking testa (HEAD/HYBRID).
+    let _headModeActive = false;
+    let _headModeStarting = false;
+
+    function _setHeadModeUI(active) {
+      _headModeActive = active;
+    }
+
+    /* Invia SAFE + ENABLE via UART e aspetta risposta (best-effort) */
+    function _sendUart(cmd) {
+      if (teleopWs && teleopWs.readyState === WebSocket.OPEN) {
+        safeSend(teleopWs, { type: "uart", cmd });
+      }
+    }
+
+    /*
+     * Sequenza avvio HEAD mode:
+     *  1. SAFE â†’ ENABLE  (porta firmware in STATE_IDLE)
+     *  2. TELEOPPOSE      (robot va in VR pose â€” attende teleop_pose_ack)
+     *  3. set_vr_mode=2   (avvia heartbeat HEAD sul backend, resetta calib IMU)
+     *  4. enterVR("teleop") se non giÃ  in VR
+     */
+    async function _startHeadModeSequence(targetMode = 3) {
+      if (_headModeStarting) return;
+      // Consenti switch HEAD <-> HYBRID <-> altro senza restare bloccati su HEAD ASSIST (5).
+      if (_headModeActive && teleopMode === targetMode) return;
+      if (_headModeActive && teleopMode !== targetMode) {
+        _stopHeadMode();
+      }
+
+      _headModeStarting = true;
+      const isHybrid = targetMode === 4;
+      const label = isHybrid ? "HYBRID" : "HEAD";
+
+      setStatus("[" + label + "] Sequenza avvio: SAFE + ENABLE...");
+      _sendUart("SAFE");
+      await new Promise(r => setTimeout(r, 200));
+      _sendUart("ENABLE");
+      await new Promise(r => setTimeout(r, 200));
+
+      if (isHybrid) {
+        _sendUart("HYBRID ENABLE");
+        await new Promise(r => setTimeout(r, 120));
+      }
+      enforceViewerHeadDefaults();
+
+      setStatus("[" + label + "] Invio TELEOPPOSE — attendo conferma robot...");
+      _sendUart("TELEOPPOSE");
+
+      const ackOk = await new Promise(resolve => {
+        const timeout = setTimeout(() => {
+          teleopWs.removeEventListener("message", onAck);
+          resolve(false);
+        }, 5000);
+        function onAck(ev) {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg && msg.teleop_pose_ack === true) {
+              clearTimeout(timeout);
+              teleopWs.removeEventListener("message", onAck);
+              resolve(true);
+            }
+          } catch (_) {}
+        }
+        if (teleopWs) teleopWs.addEventListener("message", onAck);
+        else { clearTimeout(timeout); resolve(false); }
+      });
+
+      if (!ackOk) {
+        setStatus("[" + label + "] Nessun ACK VR pose (timeout 5s) — procedo comunque");
+      } else {
+        setStatus("[" + label + "] VR pose raggiunta — avvio modalità...");
+      }
+
+      if (teleopWs && teleopWs.readyState === WebSocket.OPEN) {
+        teleopWs.send(JSON.stringify({ type: "set_vr_mode", mode: targetMode }));
+      }
+      teleopMode = targetMode;
+      _syncModeButtons(targetMode);
+      _setHeadModeUI(true);
+      setStatus("[" + label + "] Tracking testa attivo — teleoperazione IMU in corso");
+
+      if (!inVRSession) {
+        try {
+          await enterVR("teleop");
+        } catch (e) {
+          setStatus("[" + label + "] VR non avviabile: " + (e?.message || e));
+        }
+      } else {
+        vrMode = "teleop";
+      }
+
+      _headModeStarting = false;
+    }
+
+    function _stopHeadMode() {
+      if (!_headModeActive) return;
+      if (teleopWs && teleopWs.readyState === WebSocket.OPEN) {
+        teleopWs.send(JSON.stringify({ type: "set_vr_mode", mode: 2 }));
+      }
+      teleopMode = 2;
+      _syncModeButtons(2);
+      _headModeStarting = false;
+      _setHeadModeUI(false);
+      setStatus("[VR] Modalità assistita fermata → Manual VR (2)");
+    }
+
+    async function _startIkModeSequence() {
+      if (_headModeStarting) return;
+      if (_headModeActive && teleopMode === 5) return;
+      if (_headModeActive) _stopHeadMode();
+
+      _headModeStarting = true;
+      try {
+        setStatus("[HEAD ASSIST] Sequenza avvio: SAFE + ENABLE...");
+        _sendUart("SAFE");
+        await new Promise(r => setTimeout(r, 200));
+      _sendUart("ENABLE");
+      await new Promise(r => setTimeout(r, 200));
+      enforceViewerHeadDefaults();
+
+      setStatus("[HEAD ASSIST] Invio TELEOPPOSE — attendo conferma robot...");
+        _sendUart("TELEOPPOSE");
+
+        const ackOk = await new Promise(resolve => {
+          const timeout = setTimeout(() => {
+            teleopWs?.removeEventListener("message", onAck);
+            resolve(false);
+          }, 5000);
+          function onAck(ev) {
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg && msg.teleop_pose_ack === true) {
+                clearTimeout(timeout);
+                teleopWs?.removeEventListener("message", onAck);
+                resolve(true);
+              }
+            } catch (_) {}
+          }
+          if (teleopWs) teleopWs.addEventListener("message", onAck);
+          else {
+            clearTimeout(timeout);
+            resolve(false);
+          }
+        });
+
+        if (!ackOk) {
+          setStatus("[HEAD ASSIST] Nessun ACK VR pose (timeout 5s) — procedo comunque");
+        } else {
+          setStatus("[HEAD ASSIST] VR pose raggiunta — avvio modalita...");
+        }
+
+        if (teleopWs && teleopWs.readyState === WebSocket.OPEN) {
+          teleopWs.send(JSON.stringify({ type: "set_vr_mode", mode: 5 }));
+        }
+        teleopMode = 5;
+        _syncModeButtons(5);
+        _setHeadModeUI(true);
+        setStatus("[HEAD ASSIST] Attivo — doppio grip; testa guida il polso, braccio assiste se il polso va in overflow");
+
+        if (!inVRSession) {
+          try {
+            await enterVR("teleop");
+          } catch (e) {
+            setStatus("[HEAD ASSIST] VR non avviabile: " + (e?.message || e));
+          }
+        } else {
+          vrMode = "teleop";
+        }
+      } finally {
+        _headModeStarting = false;
+      }
+    }
+    // =========================================================================
+    // SECTION 5: STEREO CALIBRATION — Convergence, vertical, roll, zoom, focus
+    // =========================================================================
+    const btnConvMinus = document.getElementById("btnConvMinus");
+    const btnConvPlus = document.getElementById("btnConvPlus");
+    const convValEl = document.getElementById("convVal");
+    const btnVertMinus = document.getElementById("btnVertMinus");
+    const btnVertPlus = document.getElementById("btnVertPlus");
+    const vertValEl = document.getElementById("vertVal");
+    const btnRollMinus = document.getElementById("btnRollMinus");
+    const btnRollPlus = document.getElementById("btnRollPlus");
+    const rollValEl = document.getElementById("rollVal");
+    const btnScaleMinus = document.getElementById("btnScaleMinus");
+    const btnScalePlus = document.getElementById("btnScalePlus");
+    const scaleValEl = document.getElementById("scaleVal");
+    const statusEl = document.getElementById("status");
+    // =========================================================================
+    // SECTION 6: WEBGL — Canvas, shaders, texture upload, stereo rendering
+    // =========================================================================
+    const canvas = document.getElementById("canvas");
+    const preview = document.getElementById("preview");
+    const webrtcVidL = document.getElementById("webrtcVidL");
+    const webrtcVidR = document.getElementById("webrtcVidR");
+    // Solo WHEP / MediaMTX: sorgenti GL sono sempre HTMLVideoElement WebRTC.
+    let leftSourceEl = webrtcVidL;
+    let rightSourceEl = webrtcVidR;
+
+    // Debug: stato per pannello e root cause
+    const videoDebugState = {
+      pipeline: "â€”",
+      cam0Connected: false,
+      cam1Connected: false,
+      videoWidthL: 0, videoHeightL: 0, readyStateL: -1, pausedL: true,
+      videoWidthR: 0, videoHeightR: 0, readyStateR: -1, pausedR: true,
+      currentTimeL: 0, currentTimeR: 0,
+      stalledL: false, stalledR: false,
+      lastTexUpdateL: 0, lastTexUpdateR: 0,
+      xrActive: false,
+      sourceLeft: "â€”", sourceRight: "â€”",
+      xrDiagMode: "off",
+      webrtcJitterL: "â€”", webrtcJitterR: "â€”", webrtcRttMs: "â€”",
+    };
+    function _fmtMs(v, digits = 1) {
+      return Number.isFinite(v) ? v.toFixed(digits) : "Ã¢â‚¬â€";
+    }
+    function _fmtRttSummary(avgMs, leftMs, rightMs) {
+      if (Number.isFinite(leftMs) || Number.isFinite(rightMs)) {
+        return _fmtMs(avgMs, 0) + "ms (L=" + _fmtMs(leftMs, 0) + " R=" + _fmtMs(rightMs, 0) + ")";
+      }
+      return _fmtMs(avgMs, 0) + "ms";
+    }
+    function _avgFinite(values) {
+      const nums = values.filter((v) => Number.isFinite(v));
+      if (!nums.length) return null;
+      return nums.reduce((a, b) => a + b, 0) / nums.length;
+    }
+    function updateVideoDebugPanel() {
+      const s = videoDebugState;
+      s.xrActive = inVRSession;
+      if (leftSourceEl === webrtcVidL && webrtcVidL) {
+        s.videoWidthL = webrtcVidL.videoWidth || 0;
+        s.videoHeightL = webrtcVidL.videoHeight || 0;
+        s.readyStateL = webrtcVidL.readyState;
+        s.pausedL = webrtcVidL.paused;
+        s.currentTimeL = Number(webrtcVidL.currentTime || 0);
+        s.sourceLeft = webrtcVidL.srcObject && webrtcVidL.srcObject instanceof MediaStream ? "MediaStream" : (webrtcVidL.srcObject ? "other" : "â€”");
+      } else {
+        s.sourceLeft = leftSourceEl === webrtcVidL ? "WebRTC" : "â€”";
+        s.videoWidthL = leftSourceEl === webrtcVidL && webrtcVidL ? webrtcVidL.videoWidth : 0;
+        s.videoHeightL = leftSourceEl === webrtcVidL && webrtcVidL ? webrtcVidL.videoHeight : 0;
+      }
+      if (rightSourceEl === webrtcVidR && webrtcVidR) {
+        s.videoWidthR = webrtcVidR.videoWidth || 0;
+        s.videoHeightR = webrtcVidR.videoHeight || 0;
+        s.readyStateR = webrtcVidR.readyState;
+        s.pausedR = webrtcVidR.paused;
+        s.currentTimeR = Number(webrtcVidR.currentTime || 0);
+        s.sourceRight = webrtcVidR.srcObject && webrtcVidR.srcObject instanceof MediaStream ? "MediaStream" : (webrtcVidR.srcObject ? "other" : "â€”");
+      } else {
+        s.sourceRight = rightSourceEl === webrtcVidR ? "WebRTC" : "â€”";
+        s.videoWidthR = rightSourceEl === webrtcVidR && webrtcVidR ? webrtcVidR.videoWidth : 0;
+        s.videoHeightR = rightSourceEl === webrtcVidR && webrtcVidR ? webrtcVidR.videoHeight : 0;
+      }
+      s.webrtcJitterL = videoDebugStateLatency.jitterL != null ? videoDebugStateLatency.jitterL : "â€”";
+      s.webrtcJitterR = videoDebugStateLatency.jitterR != null ? videoDebugStateLatency.jitterR : "â€”";
+      s.webrtcRttMs = Number.isFinite(videoDebugStateLatency.rttMs) ? videoDebugStateLatency.rttMs : null;
+      const e2eLiveMs = _avgFinite([videoDebugStateLatency.e2eL, videoDebugStateLatency.e2eR]);
+      const jitterBufMs = _avgFinite([videoDebugStateLatency.jitterBufferL, videoDebugStateLatency.jitterBufferR]);
+      const decodeMs = _avgFinite([videoDebugStateLatency.decodeL, videoDebugStateLatency.decodeR]);
+      const fps = _avgFinite([videoDebugStateLatency.fpsL, videoDebugStateLatency.fpsR]);
+      const el = document.getElementById("videoDebugPanel");
+      if (!el) return;
+      el.innerHTML = [
+        "pipeline: " + s.pipeline + " | XR: " + (s.xrActive ? "YES" : "no") + " | xrtest=" + s.xrDiagMode,
+        "cam0: " + (s.cam0Connected ? "OK" : "â€”") + " cam1: " + (s.cam1Connected ? "OK" : "â€”"),
+        "L: " + s.videoWidthL + "x" + s.videoHeightL + " ready=" + s.readyStateL + " paused=" + s.pausedL + " t=" + s.currentTimeL.toFixed(2) + " stall=" + (s.stalledL ? "YES" : "no") + " src=" + s.sourceLeft,
+        "R: " + s.videoWidthR + "x" + s.videoHeightR + " ready=" + s.readyStateR + " paused=" + s.pausedR + " t=" + s.currentTimeR.toFixed(2) + " stall=" + (s.stalledR ? "YES" : "no") + " src=" + s.sourceRight,
+        "lastTex L=" + (s.lastTexUpdateL ? (Date.now() - s.lastTexUpdateL) + "ms ago" : "â€”") + " R=" + (s.lastTexUpdateR ? (Date.now() - s.lastTexUpdateR) + "ms ago" : "â€”"),
+        "Stima ricezione WebRTC ~" + _fmtMs(e2eLiveMs, 0) + "ms | RTT=" + _fmtRttSummary(videoDebugStateLatency.rttMs, videoDebugStateLatency.rttMsL, videoDebugStateLatency.rttMsR) + " | buf=" + _fmtMs(jitterBufMs) + "ms | dec=" + _fmtMs(decodeMs) + "ms | fps=" + _fmtMs(fps, 0),
+        "stima browser: rete+buffer+decode, esclusi camera/encoder/display",
+        (function () {
+          const rtt = parseFloat(s.webrtcRttMs);
+          const jL = parseFloat(s.webrtcJitterL);
+          const jR = parseFloat(s.webrtcJitterR);
+          if ((!Number.isNaN(rtt) && rtt > 80) || (!Number.isNaN(jL) && jL > 50) || (!Number.isNaN(jR) && jR > 50)) {
+            return "Rete lenta (visore Wi-Fi?): avvicina al router 5GHz.";
+          }
+          return "";
+        })(),
+      ].filter(Boolean).join("<br>");
+    }
+
+    function bindWebRTCVideoDebugHandlers() {
+      function handler(side, evName) {
+        return function (e) {
+          console.log("[WebRTC video " + side + "] " + evName, e.type, side === "L" ? webrtcVidL : webrtcVidR);
+        };
+      }
+      if (webrtcVidL) {
+        webrtcVidL.onerror = function (e) { console.warn("[WebRTC video L] onerror", e, webrtcVidL.error); };
+        webrtcVidL.onloadedmetadata = handler("L", "onloadedmetadata");
+        webrtcVidL.oncanplay = handler("L", "oncanplay");
+        webrtcVidL.onplaying = handler("L", "onplaying");
+      }
+      if (webrtcVidR) {
+        webrtcVidR.onerror = function (e) { console.warn("[WebRTC video R] onerror", e, webrtcVidR.error); };
+        webrtcVidR.onloadedmetadata = handler("R", "onloadedmetadata");
+        webrtcVidR.oncanplay = handler("R", "oncanplay");
+        webrtcVidR.onplaying = handler("R", "onplaying");
+      }
+    }
+    function updateVideoDebugPanelCompact() {
+      const s = videoDebugState;
+      s.xrActive = inVRSession;
+      if (leftSourceEl === webrtcVidL && webrtcVidL) {
+        s.videoWidthL = webrtcVidL.videoWidth || 0;
+        s.videoHeightL = webrtcVidL.videoHeight || 0;
+        s.readyStateL = webrtcVidL.readyState;
+        s.pausedL = webrtcVidL.paused;
+        s.currentTimeL = Number(webrtcVidL.currentTime || 0);
+      }
+      if (rightSourceEl === webrtcVidR && webrtcVidR) {
+        s.videoWidthR = webrtcVidR.videoWidth || 0;
+        s.videoHeightR = webrtcVidR.videoHeight || 0;
+        s.readyStateR = webrtcVidR.readyState;
+        s.pausedR = webrtcVidR.paused;
+        s.currentTimeR = Number(webrtcVidR.currentTime || 0);
+      }
+      s.webrtcJitterL = videoDebugStateLatency.jitterL != null ? videoDebugStateLatency.jitterL : "Ã¢â‚¬â€";
+      s.webrtcJitterR = videoDebugStateLatency.jitterR != null ? videoDebugStateLatency.jitterR : "Ã¢â‚¬â€";
+      s.webrtcRttMs = Number.isFinite(videoDebugStateLatency.rttMs) ? videoDebugStateLatency.rttMs : null;
+      const e2eLiveMs = _avgFinite([videoDebugStateLatency.e2eL, videoDebugStateLatency.e2eR]);
+      const jitterBufMs = _avgFinite([videoDebugStateLatency.jitterBufferL, videoDebugStateLatency.jitterBufferR]);
+      const decodeMs = _avgFinite([videoDebugStateLatency.decodeL, videoDebugStateLatency.decodeR]);
+      const fps = _avgFinite([videoDebugStateLatency.fpsL, videoDebugStateLatency.fpsR]);
+      const el = document.getElementById("videoDebugPanel");
+      if (!el) return;
+      el.innerHTML = [
+        "pipe=" + s.pipeline + " xr=" + (s.xrActive ? "YES" : "no") + " cam0=" + (s.cam0Connected ? "OK" : "Ã¢â‚¬â€") + " cam1=" + (s.cam1Connected ? "OK" : "Ã¢â‚¬â€"),
+        "L " + s.videoWidthL + "x" + s.videoHeightL + " rs=" + s.readyStateL + " t=" + s.currentTimeL.toFixed(2) + " stall=" + (s.stalledL ? "YES" : "no"),
+        "R " + s.videoWidthR + "x" + s.videoHeightR + " rs=" + s.readyStateR + " t=" + s.currentTimeR.toFixed(2) + " stall=" + (s.stalledR ? "YES" : "no"),
+        "tex L=" + (s.lastTexUpdateL ? (Date.now() - s.lastTexUpdateL) + "ms" : "Ã¢â‚¬â€") + " R=" + (s.lastTexUpdateR ? (Date.now() - s.lastTexUpdateR) + "ms" : "Ã¢â‚¬â€"),
+        "Stima ricezione WebRTC ~" + _fmtMs(e2eLiveMs, 0) + "ms | RTT=" + _fmtRttSummary(videoDebugStateLatency.rttMs, videoDebugStateLatency.rttMsL, videoDebugStateLatency.rttMsR) + " | buf=" + _fmtMs(jitterBufMs) + "ms | dec=" + _fmtMs(decodeMs) + "ms | fps=" + _fmtMs(fps, 0),
+        "stima browser: rete+buffer+decode, esclusi camera/encoder/display",
+        "jitter L=" + s.webrtcJitterL + "ms R=" + s.webrtcJitterR + "ms",
+        (function () {
+          const rtt = parseFloat(s.webrtcRttMs);
+          const jL = parseFloat(s.webrtcJitterL);
+          const jR = parseFloat(s.webrtcJitterR);
+          if ((!Number.isNaN(rtt) && rtt > 80) || (!Number.isNaN(jL) && jL > 50) || (!Number.isNaN(jR) && jR > 50)) {
+            return "Rete lenta (visore Wi-Fi?): avvicina al router 5GHz.";
+          }
+          return "";
+        })(),
+      ].filter(Boolean).join("<br>");
+    }
+    updateVideoDebugPanel = updateVideoDebugPanelCompact;
+    bindWebRTCVideoDebugHandlers();
+    // Monitor avanzamento currentTime (utile su Quest: detect stream sospeso in XR)
+    if (_videoMonitorTimer) clearInterval(_videoMonitorTimer);
+    _videoMonitorTimer = setInterval(() => {
+      if (!webrtcVidL || !webrtcVidR) return;
+      const nowL = Number(webrtcVidL.currentTime || 0);
+      const nowR = Number(webrtcVidR.currentTime || 0);
+      if (videoDebugState._prevTimeL === undefined) {
+        videoDebugState._prevTimeL = nowL;
+        videoDebugState._prevTimeR = nowR;
+        return;
+      }
+      const dL = nowL - videoDebugState._prevTimeL;
+      const dR = nowR - videoDebugState._prevTimeR;
+      const activeL = leftSourceEl === webrtcVidL && inVRSession && !webrtcVidL.paused && !webrtcVidL.ended;
+      const activeR = rightSourceEl === webrtcVidR && inVRSession && !webrtcVidR.paused && !webrtcVidR.ended;
+      videoDebugState.stalledL = activeL && dL < 0.001;
+      videoDebugState.stalledR = activeR && dR < 0.001;
+      if (videoDebugState.stalledL || videoDebugState.stalledR) {
+        console.warn("[XR] video currentTime stalled", { dL, dR, nowL, nowR, pausedL: webrtcVidL.paused, pausedR: webrtcVidR.paused });
+      }
+      // Auto-recupero: 2 check consecutivi di stallo (~1.6s) su occhio attivo -> riconnessione WHEP.
+      videoDebugState._stallStreakL = videoDebugState.stalledL ? ((videoDebugState._stallStreakL || 0) + 1) : 0;
+      videoDebugState._stallStreakR = videoDebugState.stalledR ? ((videoDebugState._stallStreakR || 0) + 1) : 0;
+      if (videoDebugState._stallStreakL >= 2) { videoDebugState._stallStreakL = 0; _recoverEye("L"); }
+      if (videoDebugState._stallStreakR >= 2) { videoDebugState._stallStreakR = 0; _recoverEye("R"); }
+      videoDebugState._prevTimeL = nowL;
+      videoDebugState._prevTimeR = nowR;
+    }, 800);
+
+    function setStatus(s) { try { if (statusEl) statusEl.textContent = s; } catch (_) {} console.log(s); }
+
+    // ModalitÃ  VR:
+    // - "stereo": calibrazione/controlli camera + HUD
+    // - "teleop": solo visione in VR (controlli camera disabilitati)
+    let vrMode = "stereo";
+
+    // Modalità teleop (WS-TELEOP intent.mode): 0=CALIB, 1=POSE, 2=MANUAL, 3=HEAD, 4=HYBRID, 5=ASSIST
+    let teleopMode = 2;
+
+    // Evidenzia il pulsante della modalità attiva (.active); spegne gli altri.
+    const _MODE_BTN_IDS = { 0: "btnVR", 2: "btnTeleop", 3: "btnTeleopHead", 4: "btnTeleopHybrid", 5: "btnTeleopIk" };
+    function _syncModeButtons(mode) {
+      Object.values(_MODE_BTN_IDS).forEach((id) => {
+        const b = document.getElementById(id);
+        if (b) b.classList.remove("active");
+      });
+      const activeId = _MODE_BTN_IDS[mode];
+      if (activeId) {
+        const b = document.getElementById(activeId);
+        if (b) b.classList.add("active");
+      }
+    }
+
+    // TELEOPPOSE viaggia via UART (ws_server.py type="uart"), non piÃ¹ via SPI intent.
+
+    // Convergenza stereo (shift orizzontale per occhio) in "pixel virtuali".
+    // Nota: localStorage Ã¨ per-device â†’ Quest1 e Quest2 avranno valori diversi automaticamente.
+    // convPx = quanti pixel (circa) spostare la texture: L=+convPx, R=-convPx.
+    let convPx = Math.trunc(Number(localStorage.getItem("convPx") || "0"));
+    const convStepPx = 1; // step fine
+    const convMinPx = -600;
+    const convMaxPx = 600;
+    function clampConvPx(v) { return Math.max(convMinPx, Math.min(convMaxPx, v)); }
+    function updateConvUI() {
+      try { if (convValEl) convValEl.textContent = "convPx=" + convPx; } catch (_) {}
+      localStorage.setItem("convPx", String(convPx));
+    }
+    updateConvUI();
+    // Setter assoluto (bypassa il gate stereo-only di changeConv) per auto-conv runtime.
+    function setConvPxAbsolute(v) {
+      const newVal = clampConvPx(Math.trunc(v));
+      if (newVal === convPx) return;
+      convPx = newVal;
+      updateConvUI();
+      if (onXRFrame._lastHud !== undefined) {
+        try { updateHudTexture(); } catch (_) {}
+      }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Auto-convergence: misura la disparita' al centro dei due frame e setta
+    // automaticamente convPx = disparity/2. Indipendente da FK e workspace.
+    // ────────────────────────────────────────────────────────────────────────
+    const _autoConv = {
+      enabled: false,
+      lpfAlpha: 0.30,        // 30% nuovo + 70% vecchio
+      lastSmoothed: null,
+      lastMeasureLog: 0,
+      buf: null,
+      ctx: null,
+      W: 232,                 // larghezza window (32 patch + 200 max disparity)
+      H: 32,                  // altezza patch
+      PW: 32,                 // patch width
+      maxD: 200,              // disparita' max in px da cercare
+      step: 2,                // step di ricerca disparita'
+    };
+
+    function _initAutoConvBuf() {
+      if (_autoConv.buf) return;
+      _autoConv.buf = document.createElement("canvas");
+      _autoConv.buf.width = _autoConv.W;
+      _autoConv.buf.height = _autoConv.H;
+      _autoConv.ctx = _autoConv.buf.getContext("2d", { willReadFrequently: true });
+    }
+
+    // Misura la disparita' L vs R al centro dei frame. Ritorna {d, conf}
+    // dove d = disparita' px (totale) e conf in [0..1] (sharpness del minimo SAD).
+    function measureCenterDisparity() {
+      _initAutoConvBuf();
+      const vL = leftSourceEl, vR = rightSourceEl;
+      if (!vL || !vR || !vL.videoWidth || !vR.videoWidth) return null;
+      const vw = vL.videoWidth, vh = vL.videoHeight;
+      const cx = vw / 2, cy = vh / 2;
+      const W = _autoConv.W, H = _autoConv.H, PW = _autoConv.PW;
+      if (cx - W/2 < 0 || cy - H/2 < 0) return null;
+      const ctx = _autoConv.ctx;
+
+      // Una sola drawImage + getImageData per cam (GPU->CPU sync minimizzato).
+      ctx.drawImage(vL, cx - W/2, cy - H/2, W, H, 0, 0, W, H);
+      const Lpx = ctx.getImageData(0, 0, W, H).data;
+      ctx.drawImage(vR, cx - W/2, cy - H/2, W, H, 0, 0, W, H);
+      const Rpx = ctx.getImageData(0, 0, W, H).data;
+
+      const Lx0 = Math.floor(W/2 - PW/2);
+      let bestSAD = Infinity, secondBestSAD = Infinity, bestD = 0;
+      for (let d = 0; d <= _autoConv.maxD; d += _autoConv.step) {
+        const Rx0 = Lx0 - d;
+        if (Rx0 < 0) break;
+        let sad = 0;
+        for (let y = 0; y < H; y++) {
+          const Lrow = y * W;
+          const Rrow = y * W;
+          for (let x = 0; x < PW; x++) {
+            // Red channel only (luma surrogate, 4x veloce di RGB)
+            sad += Math.abs(Lpx[(Lrow + Lx0 + x) * 4] - Rpx[(Rrow + Rx0 + x) * 4]);
+          }
+        }
+        if (sad < bestSAD) { secondBestSAD = bestSAD; bestSAD = sad; bestD = d; }
+        else if (sad < secondBestSAD) secondBestSAD = sad;
+      }
+      // Confidence: quanto il minimo "stacca" dal secondo migliore
+      const conf = (secondBestSAD - bestSAD) / Math.max(secondBestSAD, 1);
+      return { d: bestD, conf, sad: bestSAD };
+    }
+
+    function _autoConvTick() {
+      if (!_autoConv.enabled) return;
+      const m = measureCenterDisparity();
+      if (!m) return;
+      // Quality gate: scarta misure su zone uniformi (poca texture).
+      if (m.conf < 0.05 || m.sad > 60000) return;
+      const targetConv = m.d / 2;
+      // LPF
+      if (_autoConv.lastSmoothed === null) _autoConv.lastSmoothed = targetConv;
+      else _autoConv.lastSmoothed = _autoConv.lpfAlpha * targetConv
+                                   + (1 - _autoConv.lpfAlpha) * _autoConv.lastSmoothed;
+      setConvPxAbsolute(_autoConv.lastSmoothed);
+      // Log status non spam (ogni ~3s)
+      const _now = performance.now();
+      if (_now - _autoConv.lastMeasureLog > 3000) {
+        _autoConv.lastMeasureLog = _now;
+        // Z stimato dalla formula inversa per status
+        const Z = (m.d > 6.82) ? Math.round(39914 / (m.d - 6.82)) : -1;
+        try { setStatus("auto-conv: D=" + m.d + "px c=" + Math.round(_autoConv.lastSmoothed) +
+                       " Z≈" + (Z > 0 ? Z + "mm" : "∞") + " conf=" + m.conf.toFixed(2)); } catch (_) {}
+      }
+    }
+
+    let _autoConvIntervalId = null;
+    function _ensureAutoConvLoop() {
+      if (_autoConvIntervalId) return;
+      _autoConvIntervalId = setInterval(_autoConvTick, 250); // 4Hz
+    }
+
+    function changeConv(delta) {
+      if (vrMode === "teleop") return;
+      convPx = clampConvPx(convPx + delta);
+      updateConvUI();
+      // Forza aggiornamento HUD immediato
+      if (onXRFrame._lastHud !== undefined) {
+        updateHudTexture();
+      }
+    }
+
+    // Click singolo = 1 step. Pressione prolungata = scorre continuo (piÃ¹ lento).
+    function bindHold(btn, stepFn) {
+      let timer = null;
+      let startTimeout = null;
+      const start = (ev) => {
+        ev?.preventDefault?.();
+        try { stepFn(); } catch (_) {}
+        // dopo una breve pausa, inizia lo scorrimento continuo (lento)
+        if (startTimeout) clearTimeout(startTimeout);
+        if (timer) clearInterval(timer);
+        startTimeout = setTimeout(() => {
+          timer = setInterval(() => { try { stepFn(); } catch (_) {} }, 160);
+        }, 320);
+      };
+      const stop = () => {
+        if (startTimeout) clearTimeout(startTimeout);
+        startTimeout = null;
+        if (timer) clearInterval(timer);
+        timer = null;
+      };
+      btn.addEventListener("click", (e) => { e.preventDefault(); /* giÃ  gestito da pointer */ });
+      btn.addEventListener("pointerdown", start);
+      btn.addEventListener("pointerup", stop);
+      btn.addEventListener("pointercancel", stop);
+      btn.addEventListener("pointerleave", stop);
+    }
+
+    if (btnConvMinus && btnConvPlus) {
+      bindHold(btnConvMinus, () => changeConv(-convStepPx));
+      bindHold(btnConvPlus, () => changeConv(convStepPx));
+    }
+
+    // Offset verticale (stereo) in pixel, INDIPENDENTE per cam0 e cam1.
+    // Backward-compat: se i nuovi key non esistono, ricaviamo entrambi dal vecchio "vertPx".
+    const _legacyVertPx = Math.trunc(Number(localStorage.getItem("vertPx") || "0"));
+    let vertPx0 = Math.trunc(Number(localStorage.getItem("vertPx0") ?? _legacyVertPx));
+    let vertPx1 = Math.trunc(Number(localStorage.getItem("vertPx1") ?? _legacyVertPx));
+    const vertStepPx = 1;
+    const vertMinPx = -200;
+    const vertMaxPx = 200;
+    function clampVertPx(v) { return Math.max(vertMinPx, Math.min(vertMaxPx, v)); }
+    function updateVertUI() {
+      try { if (vertValEl) vertValEl.textContent = "vertPx L=" + vertPx0 + "  R=" + vertPx1; } catch (_) {}
+      localStorage.setItem("vertPx0", String(vertPx0));
+      localStorage.setItem("vertPx1", String(vertPx1));
+    }
+    updateVertUI();
+    // changeVert(cam, delta): cam=0 -> sx, cam=1 -> dx. Usato da UI 2D, vr_calib, e VR binding.
+    function changeVert(cam, delta) {
+      if (vrMode === "teleop") return;
+      if (cam === 0) vertPx0 = clampVertPx(vertPx0 + delta);
+      else vertPx1 = clampVertPx(vertPx1 + delta);
+      updateVertUI();
+      // Forza aggiornamento HUD immediato
+      if (onXRFrame._lastHud !== undefined) {
+        updateHudTexture();
+      }
+    }
+    // UI 2D: agisce su entrambe le cam insieme (compatibile col vecchio comportamento).
+    if (btnVertMinus && btnVertPlus) {
+      bindHold(btnVertMinus, () => { changeVert(0, -vertStepPx); changeVert(1, -vertStepPx); });
+      bindHold(btnVertPlus,  () => { changeVert(0,  vertStepPx); changeVert(1,  vertStepPx); });
+    }
+
+    // Roll (rotazione) e Scale (zoom) per allineare le due camere.
+    // Ora sono SEPARATI per cam0 (sx) e cam1 (dx), cosÃ¬ ogni controller puÃ² regolare la sua camera.
+    let rollDeg0 = Number(localStorage.getItem("rollDeg0") || "0"); // gradi (cam0)
+    let rollDeg1 = Number(localStorage.getItem("rollDeg1") || "0"); // gradi (cam1)
+    let zoom0 = Number(localStorage.getItem("zoom0") || "1.000");   // cam0
+    let zoom1 = Number(localStorage.getItem("zoom1") || "1.000");   // cam1
+    const rollStepDeg = 0.1;
+    const rollMinDeg = -5.0;
+    const rollMaxDeg = 5.0;
+    const zoomStep = 0.002; // 0.2%
+    const zoomMin = 1.00;
+    const zoomMax = 6.00;
+    function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+    function updateRollScaleUI() {
+      try { if (rollValEl) rollValEl.textContent = "roll L=" + rollDeg0.toFixed(1) + "Â°  R=" + rollDeg1.toFixed(1) + "Â°"; } catch (_) {}
+      try { if (scaleValEl) scaleValEl.textContent = "zoom L=" + zoom0.toFixed(3) + "  R=" + zoom1.toFixed(3); } catch (_) {}
+      localStorage.setItem("rollDeg0", String(rollDeg0));
+      localStorage.setItem("rollDeg1", String(rollDeg1));
+      localStorage.setItem("zoom0", String(zoom0));
+      localStorage.setItem("zoom1", String(zoom1));
+    }
+    updateRollScaleUI();
+    function changeRoll(cam, deltaDeg) {
+      if (cam === 0) rollDeg0 = clamp(rollDeg0 + deltaDeg, rollMinDeg, rollMaxDeg);
+      else rollDeg1 = clamp(rollDeg1 + deltaDeg, rollMinDeg, rollMaxDeg);
+      updateRollScaleUI();
+      // Forza aggiornamento HUD immediato
+      if (onXRFrame._lastHud !== undefined) {
+        updateHudTexture();
+      }
+    }
+    function changeZoom(cam, delta) {
+      if (cam === 0) zoom0 = clamp(zoom0 + delta, zoomMin, zoomMax);
+      else zoom1 = clamp(zoom1 + delta, zoomMin, zoomMax);
+      updateRollScaleUI();
+      // Forza aggiornamento HUD immediato
+      if (onXRFrame._lastHud !== undefined) {
+        updateHudTexture();
+      }
+      // Broadcast zoom corrente al backend (per dashboard VR Live).
+      // Throttle a ~10Hz: lo zoom continuo via stick chiama changeZoom 60+ volte/sec.
+      try {
+        const _now = performance.now();
+        if (!changeZoom._lastSend) changeZoom._lastSend = 0;
+        if (_now - changeZoom._lastSend > 100 && teleopWs && teleopWs.readyState === WebSocket.OPEN) {
+          teleopWs.send(JSON.stringify({ type: "vr_zoom_state", zoom0: zoom0, zoom1: zoom1 }));
+          changeZoom._lastSend = _now;
+        }
+      } catch (_) {}
+    }
+    // UI 2D: opzionale (nascosta nella pagina teleop/calib). Se i bottoni non esistono, saltiamo.
+    if (btnRollMinus && btnRollPlus && btnScaleMinus && btnScalePlus) {
+      // per default regola la camera destra (cam1)
+      btnRollMinus.addEventListener("click", () => changeRoll(1, -rollStepDeg));
+      btnRollPlus.addEventListener("click", () => changeRoll(1, rollStepDeg));
+      btnScaleMinus.addEventListener("click", () => changeZoom(1, -zoomStep));
+      btnScalePlus.addEventListener("click", () => changeZoom(1, zoomStep));
+    }
+
+    /** Connessione WebRTC via WHEP (proxy same-origin per evitare mixed content in VR). */
+    // =========================================================================
+    // SECTION 7: WEBRTC — WHEP connection, video stream setup
+    // =========================================================================
+    function _streamFromTrackEvent(ev) {
+      if (ev && ev.streams && ev.streams[0]) return ev.streams[0];
+      if (ev && ev.track && ev.track.kind === "video") return new MediaStream([ev.track]);
+      return null;
+    }
+
+    async function connectWHEP(path) {
+      console.log("[WebRTC] connectWHEP(" + path + ") start");
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      pc.addTransceiver("video", { direction: "recvonly" });
+      // Importante: registra ontrack PRIMA di setRemoteDescription per evitare race
+      // in cui il track arriva immediatamente e il listener lo perde.
+      const streamPromise = new Promise((resolve, reject) => {
+        pc.ontrack = (ev) => {
+          console.log("[WebRTC] ontrack fired for " + path + ", kind=" + (ev.track && ev.track.kind));
+          const stream = _streamFromTrackEvent(ev);
+          if (stream) resolve({ stream, pc });
+        };
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === "failed") reject(new Error("WebRTC failed"));
+          if (pc.connectionState === "disconnected") console.warn("[WebRTC] disconnected:", path);
+        };
+        setTimeout(() => reject(new Error("WHEP ontrack timeout")), 15000);
+      });
+      const offer = await pc.createOffer();
+      console.log("[WebRTC] connectWHEP(" + path + ") offer created");
+      await pc.setLocalDescription(offer);
+      const base = window.location.origin;
+      const resp = await fetch(`${base}/api/webrtc-whep?path=${encodeURIComponent(path)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/sdp" },
+        body: pc.localDescription.sdp,
+      });
+      if (!resp.ok) throw new Error(`WHEP ${path}: ${resp.status}`);
+      const answerSdp = await resp.text();
+      console.log("[WebRTC] connectWHEP(" + path + ") answer received");
+      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      return streamPromise;
+    }
+
+    let webrtcPcL = null, webrtcPcR = null;
+
+    // Auto-recupero di un occhio bloccato: riconnette lo stream WHEP e riassegna lo
+    // srcObject allo STESSO <video> (il binding GL non cambia). Alla connessione MediaMTX
+    // invia subito un keyframe -> l'occhio riparte. Connetto il nuovo PC PRIMA di chiudere
+    // il vecchio (niente buco). Guardie anti-loop: flag "in recupero" per lato + cooldown 4s.
+    async function _recoverEye(side) {
+      const isL = (side === "L");
+      if (isL ? videoDebugState._recoveringL : videoDebugState._recoveringR) return;
+      const nowMs = Date.now();
+      const lastMs = (isL ? videoDebugState._lastRecoverMsL : videoDebugState._lastRecoverMsR) || 0;
+      if (nowMs - lastMs < 4000) return; // cooldown anti-storm
+      if (isL) { videoDebugState._recoveringL = true; videoDebugState._lastRecoverMsL = nowMs; }
+      else { videoDebugState._recoveringR = true; videoDebugState._lastRecoverMsR = nowMs; }
+      const path = isL ? "cam0" : "cam1";
+      const vid = isL ? webrtcVidL : webrtcVidR;
+      const oldPc = isL ? webrtcPcL : webrtcPcR;
+      console.warn("[XR] auto-recover eye " + side + " (" + path + ")");
+      try {
+        const { stream, pc } = await connectWHEP(path); // connetti il nuovo PRIMA di chiudere il vecchio
+        if (isL) webrtcPcL = pc; else webrtcPcR = pc;
+        try { if (oldPc) oldPc.close(); } catch (_) {}
+        vid.srcObject = stream;
+        try { await vid.play(); } catch (_) {}
+        if (isL) videoDebugState.cam0Connected = true; else videoDebugState.cam1Connected = true;
+        // ri-baseline del monitor per evitare un falso ri-trigger immediato
+        videoDebugState._prevTimeL = undefined;
+        videoDebugState._stallStreakL = 0;
+        videoDebugState._stallStreakR = 0;
+        console.warn("[XR] eye " + side + " recovered");
+      } catch (e) {
+        // lascio il vecchio PC com'era: al prossimo stallo (dopo cooldown) si ritenta
+        console.error("[XR] eye " + side + " recovery failed:", e && e.message ? e.message : e);
+      } finally {
+        if (isL) videoDebugState._recoveringL = false; else videoDebugState._recoveringR = false;
+      }
+    }
+
+    let _webrtcLatencyTimer = null;
+    var _videoMonitorTimer = null;
+    const videoDebugStateLatency = {
+      jitterL: null, jitterR: null,
+      rttMs: null, rttMsL: null, rttMsR: null,
+      framesDecodedL: null, framesDecodedR: null,
+      jitterBufferL: null, jitterBufferR: null,
+      decodeL: null, decodeR: null,
+      fpsL: null, fpsR: null,
+      e2eL: null, e2eR: null,
+      _prevL: null, _prevR: null,
+    };
+    function resetVideoLatencyTelemetry() {
+      videoDebugStateLatency.jitterL = null;
+      videoDebugStateLatency.jitterR = null;
+      videoDebugStateLatency.rttMs = null;
+      videoDebugStateLatency.rttMsL = null;
+      videoDebugStateLatency.rttMsR = null;
+      videoDebugStateLatency.framesDecodedL = null;
+      videoDebugStateLatency.framesDecodedR = null;
+      videoDebugStateLatency.jitterBufferL = null;
+      videoDebugStateLatency.jitterBufferR = null;
+      videoDebugStateLatency.decodeL = null;
+      videoDebugStateLatency.decodeR = null;
+      videoDebugStateLatency.fpsL = null;
+      videoDebugStateLatency.fpsR = null;
+      videoDebugStateLatency.e2eL = null;
+      videoDebugStateLatency.e2eR = null;
+      videoDebugStateLatency._prevL = null;
+      videoDebugStateLatency._prevR = null;
+    }
+    function _extractCandidatePairRttMs(stats) {
+      for (const r of stats.values()) {
+        if (r.type === "candidate-pair" && r.state === "succeeded" && typeof r.currentRoundTripTime === "number") {
+          return r.currentRoundTripTime * 1000.0;
+        }
+      }
+      return null;
+    }
+    async function pollWebRTCLatency() {
+      if (!webrtcPcL || !webrtcPcR) return;
+      try {
+        const [statsL, statsR] = await Promise.all([webrtcPcL.getStats(), webrtcPcR.getStats()]);
+        const getInboundVideo = (stats) => {
+          for (const r of stats.values()) {
+            if (r.type === "inbound-rtp" && r.kind === "video") {
+              return { jitter: r.jitter, framesDecoded: r.framesDecoded, framesReceived: r.framesReceived };
+            }
+          }
+          return null;
+        };
+        const getRtt = (stats) => {
+          for (const r of stats.values()) {
+            if (r.type === "candidate-pair" && r.state === "succeeded" && typeof r.currentRoundTripTime === "number") {
+              return r.currentRoundTripTime * 1000;
+            }
+          }
+          return null;
+        };
+        const inL = getInboundVideo(statsL);
+        const inR = getInboundVideo(statsR);
+        videoDebugStateLatency.jitterL = inL && inL.jitter != null ? (inL.jitter * 1000).toFixed(1) : "â€”";
+        videoDebugStateLatency.jitterR = inR && inR.jitter != null ? (inR.jitter * 1000).toFixed(1) : "â€”";
+        videoDebugStateLatency.framesDecodedL = inL && inL.framesDecoded != null ? inL.framesDecoded : null;
+        videoDebugStateLatency.framesDecodedR = inR && inR.framesDecoded != null ? inR.framesDecoded : null;
+        const rttL = getRtt(statsL);
+        const rttR = getRtt(statsR);
+        videoDebugStateLatency.rttMs = _avgFinite([rttL, rttR]);
+        videoDebugStateLatency.rttMsL = rttL;
+        videoDebugStateLatency.rttMsR = rttR;
+      } catch (_) {}
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // WebXR stereo minimale (no librerie esterne)
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    function _extractInboundVideoStats(stats) {
+      for (const r of stats.values()) {
+        if (r.type === "inbound-rtp" && r.kind === "video") {
+          return {
+            timestamp: typeof r.timestamp === "number" ? r.timestamp : null,
+            jitter: typeof r.jitter === "number" ? r.jitter * 1000.0 : null,
+            framesDecoded: typeof r.framesDecoded === "number" ? r.framesDecoded : null,
+            jitterBufferDelay: typeof r.jitterBufferDelay === "number" ? r.jitterBufferDelay : null,
+            jitterBufferEmittedCount: typeof r.jitterBufferEmittedCount === "number" ? r.jitterBufferEmittedCount : null,
+            totalDecodeTime: typeof r.totalDecodeTime === "number" ? r.totalDecodeTime : null,
+            framesPerSecond: typeof r.framesPerSecond === "number" ? r.framesPerSecond : null,
+          };
+        }
+      }
+      return null;
+    }
+    function _deriveLatencyMetrics(current, prev, rttMs) {
+      if (!current) return { jitterBufferMs: null, decodeMs: null, fps: null, e2eMs: null };
+      let jitterBufferMs = null;
+      let decodeMs = null;
+      let fps = Number.isFinite(current.framesPerSecond) && current.framesPerSecond > 0 ? current.framesPerSecond : null;
+      if (
+        prev &&
+        Number.isFinite(current.jitterBufferDelay) &&
+        Number.isFinite(prev.jitterBufferDelay) &&
+        Number.isFinite(current.jitterBufferEmittedCount) &&
+        Number.isFinite(prev.jitterBufferEmittedCount)
+      ) {
+        const emittedDelta = current.jitterBufferEmittedCount - prev.jitterBufferEmittedCount;
+        const delayDelta = current.jitterBufferDelay - prev.jitterBufferDelay;
+        if (emittedDelta > 0 && delayDelta >= 0) jitterBufferMs = (delayDelta / emittedDelta) * 1000.0;
+      }
+      if (
+        prev &&
+        Number.isFinite(current.totalDecodeTime) &&
+        Number.isFinite(prev.totalDecodeTime) &&
+        Number.isFinite(current.framesDecoded) &&
+        Number.isFinite(prev.framesDecoded)
+      ) {
+        const decodedDelta = current.framesDecoded - prev.framesDecoded;
+        const decodeDelta = current.totalDecodeTime - prev.totalDecodeTime;
+        if (decodedDelta > 0 && decodeDelta >= 0) {
+          decodeMs = (decodeDelta / decodedDelta) * 1000.0;
+          if (!fps && Number.isFinite(current.timestamp) && Number.isFinite(prev.timestamp)) {
+            const dtMs = current.timestamp - prev.timestamp;
+            if (dtMs > 0) fps = (decodedDelta * 1000.0) / dtMs;
+          }
+        }
+      }
+      const oneWayMs = Number.isFinite(rttMs) ? (rttMs * 0.5) : null;
+      const frameWaitMs = Number.isFinite(fps) && fps > 0 ? (1000.0 / fps) * 0.5 : null;
+      const parts = [oneWayMs, jitterBufferMs, decodeMs, frameWaitMs].filter((v) => Number.isFinite(v) && v >= 0);
+      return {
+        jitterBufferMs,
+        decodeMs,
+        fps,
+        e2eMs: parts.length ? parts.reduce((a, b) => a + b, 0) : null,
+      };
+    }
+    async function pollWebRTCLatencyLive() {
+      if (!webrtcPcL || !webrtcPcR) return;
+      try {
+        const [statsL, statsR] = await Promise.all([webrtcPcL.getStats(), webrtcPcR.getStats()]);
+        const inL = _extractInboundVideoStats(statsL);
+        const inR = _extractInboundVideoStats(statsR);
+        const rttL = _extractCandidatePairRttMs(statsL);
+        const rttR = _extractCandidatePairRttMs(statsR);
+        const rttAvg = _avgFinite([rttL, rttR]);
+        const calcL = _deriveLatencyMetrics(inL, videoDebugStateLatency._prevL, Number.isFinite(rttL) ? rttL : rttAvg);
+        const calcR = _deriveLatencyMetrics(inR, videoDebugStateLatency._prevR, Number.isFinite(rttR) ? rttR : rttAvg);
+        videoDebugStateLatency.jitterL = inL && inL.jitter != null ? inL.jitter.toFixed(1) : "Ã¢â‚¬â€";
+        videoDebugStateLatency.jitterR = inR && inR.jitter != null ? inR.jitter.toFixed(1) : "Ã¢â‚¬â€";
+        videoDebugStateLatency.framesDecodedL = inL && inL.framesDecoded != null ? inL.framesDecoded : null;
+        videoDebugStateLatency.framesDecodedR = inR && inR.framesDecoded != null ? inR.framesDecoded : null;
+        videoDebugStateLatency.rttMs = rttAvg;
+        videoDebugStateLatency.rttMsL = rttL;
+        videoDebugStateLatency.rttMsR = rttR;
+        videoDebugStateLatency.jitterBufferL = calcL.jitterBufferMs;
+        videoDebugStateLatency.jitterBufferR = calcR.jitterBufferMs;
+        videoDebugStateLatency.decodeL = calcL.decodeMs;
+        videoDebugStateLatency.decodeR = calcR.decodeMs;
+        videoDebugStateLatency.fpsL = calcL.fps;
+        videoDebugStateLatency.fpsR = calcR.fps;
+        videoDebugStateLatency.e2eL = calcL.e2eMs;
+        videoDebugStateLatency.e2eR = calcR.e2eMs;
+        videoDebugStateLatency._prevL = inL;
+        videoDebugStateLatency._prevR = inR;
+      } catch (_) {}
+    }
+    pollWebRTCLatency = pollWebRTCLatencyLive;
+
+    const gl = canvas.getContext("webgl", { antialias: false, alpha: false, preserveDrawingBuffer: false, xrCompatible: true });
+    if (!gl) {
+      setStatus("WebGL non disponibile.");
+    }
+
+    function compileShader(type, src) {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(sh) || "Shader compile error");
+      }
+      return sh;
+    }
+
+    // Quad full-screen (clip space)
+    const VS = `
+      attribute vec2 aPos;
+      attribute vec2 aUV;
+      varying vec2 vUV;
+      void main() {
+        vUV = aUV;
+        gl_Position = vec4(aPos, 0.0, 1.0);
+      }
+    `;
+    const FS = `
+      precision mediump float;
+      varying vec2 vUV;
+      uniform sampler2D uTex;
+      uniform sampler2D uHudTex;
+      uniform vec2 uScale;
+      uniform vec2 uOffset;
+      uniform vec2 uSampleShift;
+      uniform float uZoom;
+      uniform float uRollRad;
+      uniform vec4 uHudRect; // x,y,w,h in screen UV (vUV)
+      uniform sampler2D uImuTex;
+      uniform vec4 uImuRect; // x,y,w,h in screen UV (0,0,0,0 = nascosto)
+      uniform float uCrosshair; // 0 = off, 1 = mirino centrale per calibrazione
+      void main() {
+        // HUD overlay in screen space (vUV).
+        vec4 hudColor = vec4(0.0);
+        if (vUV.x >= uHudRect.x && vUV.x <= (uHudRect.x + uHudRect.z) &&
+            vUV.y >= uHudRect.y && vUV.y <= (uHudRect.y + uHudRect.w)) {
+          vec2 huv = (vUV - uHudRect.xy) / uHudRect.zw;
+          hudColor = texture2D(uHudTex, huv);
+        }
+        // IMU overlay (stesso meccanismo HUD, per VR teleop â€“ come calibrazione)
+        vec4 imuColor = vec4(0.0);
+        if (uImuRect.w > 0.0 && vUV.x >= uImuRect.x && vUV.x <= (uImuRect.x + uImuRect.z) &&
+            vUV.y >= uImuRect.y && vUV.y <= (uImuRect.y + uImuRect.w)) {
+          vec2 iuv = (vUV - uImuRect.xy) / uImuRect.zw;
+          imuColor = texture2D(uImuTex, iuv);
+        }
+
+        // uScale definisce la porzione del QUAD che contiene l'immagine (<= 1.0).
+        vec2 uv = (vUV - uOffset) / uScale + uSampleShift;
+
+        // Zoom (crop) e roll (rotazione) intorno al centro.
+        vec2 p = uv - vec2(0.5, 0.5);
+        p = p / max(uZoom, 0.0001);
+        float c = cos(uRollRad);
+        float s = sin(uRollRad);
+        p = vec2(c * p.x - s * p.y, s * p.x + c * p.y);
+        uv = p + vec2(0.5, 0.5);
+
+        // Base color (video sample o letterbox nero)
+        vec4 base;
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+          base = vec4(0.0, 0.0, 0.0, 1.0);
+        } else {
+          base = texture2D(uTex, uv);
+        }
+
+        // Mirino centrale: ancorato al CENTRO DELL'IMMAGINE camera (sensor pixel
+        // center), non al centro del viewport. Cosi' allineato con il mirino della
+        // dashboard (che marca lo stesso pixel del cam). Si sposta sullo schermo
+        // con convPx (convergenza) -> i due mirini si fondono al convPx corretto.
+        // Dimensione costante in screen UV (0.022 line, 0.005 ring).
+        if (uCrosshair > 0.5) {
+          // Inverse transform: uv center (0.5,0.5) -> screen vUV.
+          // L'immagine center e' INVARIANTE a zoom/roll (perche' attorno a 0.5),
+          // quindi serve solo invertire offset/scale/sampleShift.
+          vec2 imgCenterScr = (vec2(0.5, 0.5) - uSampleShift) * uScale + uOffset;
+          vec2 d = abs(vUV - imgCenterScr);
+          float dr = length(d);
+          bool onLine = (d.y < 0.0010 && d.x < 0.022) || (d.x < 0.0010 && d.y < 0.022);
+          bool onRing = (dr > 0.0035 && dr < 0.0050);
+          if (onLine || onRing) {
+            base = vec4(vec3(1.0) - base.rgb, 1.0);
+          }
+        }
+
+        vec4 withHud = mix(base, hudColor, hudColor.a);
+        gl_FragColor = mix(withHud, imuColor, imuColor.a);
+      }
+    `;
+
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compileShader(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, compileShader(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(prog) || "Program link error");
+    }
+    gl.useProgram(prog);
+
+    const locPos = gl.getAttribLocation(prog, "aPos");
+    const locUV = gl.getAttribLocation(prog, "aUV");
+    const locTex = gl.getUniformLocation(prog, "uTex");
+    const locHudTex = gl.getUniformLocation(prog, "uHudTex");
+    const locScale = gl.getUniformLocation(prog, "uScale");
+    const locOffset = gl.getUniformLocation(prog, "uOffset");
+    const locSampleShift = gl.getUniformLocation(prog, "uSampleShift");
+    const locZoom = gl.getUniformLocation(prog, "uZoom");
+    const locRollRad = gl.getUniformLocation(prog, "uRollRad");
+    const locHudRect = gl.getUniformLocation(prog, "uHudRect");
+    const locImuTex = gl.getUniformLocation(prog, "uImuTex");
+    const locImuRect = gl.getUniformLocation(prog, "uImuRect");
+    const locCrosshair = gl.getUniformLocation(prog, "uCrosshair");
+
+    // 2 triangoli per un quad full-screen
+    const vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    // x,y,u,v
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1,  0, 0,
+       1, -1,  1, 0,
+      -1,  1,  0, 1,
+      -1,  1,  0, 1,
+       1, -1,  1, 0,
+       1,  1,  1, 1,
+    ]), gl.STATIC_DRAW);
+
+    gl.enableVertexAttribArray(locPos);
+    gl.vertexAttribPointer(locPos, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(locUV);
+    gl.vertexAttribPointer(locUV, 2, gl.FLOAT, false, 16, 8);
+    gl.uniform1i(locTex, 0);
+    gl.uniform1i(locHudTex, 1);
+    gl.uniform1i(locImuTex, 2);
+    gl.uniform4f(locImuRect, 0.0, 0.0, 0.0, 0.0);
+    gl.uniform1f(locCrosshair, 0.0);
+    gl.uniform2f(locScale, 1.0, 1.0);
+    gl.uniform2f(locOffset, 0.0, 0.0);
+    gl.uniform2f(locSampleShift, 0.0, 0.0);
+    gl.uniform1f(locZoom, 1.0);
+    gl.uniform1f(locRollRad, 0.0);
+    // HUD: colonna con valori
+    const HUD_RECT_VISIBLE = { x: 0.22, y: 0.30, w: 0.18, h: 0.36 };
+    const HUD_RECT_HIDDEN  = { x: 0.0,  y: 0.0,  w: 0.0,  h: 0.0 };
+    // Overlay latenza (teleop Hybrid/Head/Assist): piccolo riquadro in alto-sinistra.
+    // UV: y=1 = top schermo (texture caricata con UNPACK_FLIP_Y_WEBGL=true).
+    const HUD_RECT_LATENCY = { x: 0.35, y: 0.80, w: 0.30, h: 0.05 };
+    let hudVisible = (localStorage.getItem("hudVisible") !== "0");
+    let latencyOverlayVisible = false; // toggle via Y su controller SX in teleop
+    function _isLatencyOverlayActive() {
+      return latencyOverlayVisible && vrMode === "teleop"
+        && (teleopMode === 3 || teleopMode === 4 || teleopMode === 5);
+    }
+    function applyHudRect() {
+      let r;
+      if (_isLatencyOverlayActive()) r = HUD_RECT_LATENCY;
+      else if (hudVisible) r = HUD_RECT_VISIBLE;
+      else r = HUD_RECT_HIDDEN;
+      gl.uniform4f(locHudRect, r.x, r.y, r.w, r.h);
+    }
+    function toggleHudVisible() {
+      hudVisible = !hudVisible;
+      localStorage.setItem("hudVisible", hudVisible ? "1" : "0");
+      applyHudRect();
+      setStatus("HUD " + (hudVisible ? "ON" : "OFF") + " (Y su controller sx)");
+    }
+    function toggleLatencyOverlay() {
+      latencyOverlayVisible = !latencyOverlayVisible;
+      applyHudRect();
+      try { updateHudTexture(); } catch (_) {}
+      setStatus("Latenza " + (latencyOverlayVisible ? "ON" : "OFF"));
+    }
+    applyHudRect();
+
+    function makeVideoTexture() {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      // init 1x1
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,255]));
+      return tex;
+    }
+
+    const texL = makeVideoTexture();
+    const texR = makeVideoTexture();
+    const XR_DIAG_MODE = new URLSearchParams(window.location.search).get("xrtest") || "off"; // off | solid | canvas
+    videoDebugState.xrDiagMode = XR_DIAG_MODE;
+    const diagCanvasL = document.createElement("canvas");
+    const diagCanvasR = document.createElement("canvas");
+    diagCanvasL.width = 640; diagCanvasL.height = 360;
+    diagCanvasR.width = 640; diagCanvasR.height = 360;
+    const diagCtxL = diagCanvasL.getContext("2d");
+    const diagCtxR = diagCanvasR.getContext("2d");
+
+    // HUD texture (canvas 2D â†’ WebGL)
+    const hudCanvas = document.createElement("canvas");
+    // HUD canvas compatta (solo valori)
+    hudCanvas.width = 200;
+    hudCanvas.height = 255;
+    const hudCtx = hudCanvas.getContext("2d");
+    const texHud = makeVideoTexture();
+
+    function _pickStickAxes(gp) {
+      const axes = gp?.axes || [];
+      if (!axes || axes.length < 2) return { axX: 0, axY: 0, pair: -1, axesLen: (axes?.length || 0) };
+      const a0 = Number(axes[0] || 0), a1 = Number(axes[1] || 0);
+      const pair01 = { axX: a0, axY: a1, pair: 0, axesLen: axes.length };
+      if (axes.length < 4) return pair01;
+      const a2 = Number(axes[2] || 0), a3 = Number(axes[3] || 0);
+      const pair23 = { axX: a2, axY: a3, pair: 2, axesLen: axes.length };
+      const mag01 = Math.abs(a0) + Math.abs(a1);
+      const mag23 = Math.abs(a2) + Math.abs(a3);
+      // Su Quest lo stick puÃ² essere solo su (2,3): se (0,1) Ã¨ zero preferisci (2,3)
+      if (mag01 < 0.02 && mag23 >= 0.02) return pair23;
+      if (mag23 < 0.02 && mag01 >= 0.02) return pair01;
+      return mag23 > mag01 ? pair23 : pair01;
+    }
+
+    /**
+     * Sticky (0,1) vs (2,3): dopo la prima scelta resta sulla coppia finché entrambe le magnitudini
+     * sommate non tornano sotto REL (stick rilasciato). Solo teleop stick sinistro — evita flip per rumore.
+     */
+    function _pickStickAxesSticky(gp, sticky) {
+      const axes = gp?.axes || [];
+      if (!axes || axes.length < 2) {
+        if (sticky) sticky.pair = -1;
+        return { axX: 0, axY: 0, pair: -1, axesLen: (axes?.length || 0) };
+      }
+      const a0 = Number(axes[0] || 0), a1 = Number(axes[1] || 0);
+      const pair01 = { axX: a0, axY: a1, pair: 0, axesLen: axes.length };
+      if (axes.length < 4) {
+        if (sticky) sticky.pair = -1;
+        return pair01;
+      }
+      const a2 = Number(axes[2] || 0), a3 = Number(axes[3] || 0);
+      const pair23 = { axX: a2, axY: a3, pair: 2, axesLen: axes.length };
+      const mag01 = Math.abs(a0) + Math.abs(a1);
+      const mag23 = Math.abs(a2) + Math.abs(a3);
+      const REL = 0.02;
+      if (mag01 < REL && mag23 < REL) {
+        sticky.pair = -1;
+        return pair01;
+      }
+      if (sticky.pair === -1) {
+        let p;
+        if (mag01 < REL && mag23 >= REL) p = 2;
+        else if (mag23 < REL && mag01 >= REL) p = 0;
+        else p = (mag23 > mag01) ? 2 : 0;
+        sticky.pair = p;
+        return p === 0 ? pair01 : pair23;
+      }
+      return sticky.pair === 0 ? pair01 : pair23;
+    }
+
+    /** Deadzone circolare [-1,1] sullo stick sinistro MANUAL (allineata ~ a joy_dz 0.10 lato firmware). */
+    function _teleopLeftCircularDeadzone(x, y, radius) {
+      const r = Math.hypot(x, y);
+      if (r <= radius || r < 1e-8) return { x: 0, y: 0 };
+      const outR = (r - radius) / (1.0 - radius);
+      const s = outR / r;
+      return { x: x * s, y: y * s };
+    }
+
+    function drawHud() {
+      if (!hudCtx) return;
+
+      // Branch latenza minimale (teleop Hybrid/Head/Assist + flag attivo).
+      // Canvas ridimensionato per aspect-ratio coerente con HUD_RECT_LATENCY.
+      if (_isLatencyOverlayActive()) {
+        if (hudCanvas.width !== 360 || hudCanvas.height !== 60) {
+          hudCanvas.width = 360;
+          hudCanvas.height = 60;
+        }
+        const w = hudCanvas.width, h = hudCanvas.height;
+        hudCtx.clearRect(0, 0, w, h);
+        hudCtx.fillStyle = "rgba(0,0,0,0.55)";
+        hudCtx.fillRect(0, 0, w, h);
+        hudCtx.strokeStyle = "rgba(255,255,255,0.30)";
+        hudCtx.strokeRect(0.5, 0.5, w - 1, h - 1);
+        const e2e = _avgFinite([videoDebugStateLatency.e2eL, videoDebugStateLatency.e2eR]);
+        const txt = Number.isFinite(e2e) ? `latenza video: ${Math.round(e2e)}ms` : "latenza video: -- ms";
+        hudCtx.fillStyle = "rgba(255,255,255,0.95)";
+        hudCtx.font = "bold 30px monospace";
+        hudCtx.textAlign = "center";
+        hudCtx.textBaseline = "middle";
+        hudCtx.fillText(txt, w / 2, h / 2);
+        hudCtx.textAlign = "start";
+        hudCtx.textBaseline = "alphabetic";
+        return;
+      }
+
+      // Ripristina dimensioni canvas standard se erano state cambiate.
+      if (hudCanvas.width !== 200 || hudCanvas.height !== 255) {
+        hudCanvas.width = 200;
+        hudCanvas.height = 255;
+      }
+      const w = hudCanvas.width, h = hudCanvas.height;
+      hudCtx.clearRect(0, 0, w, h);
+      // background
+      hudCtx.fillStyle = "rgba(0,0,0,0.38)";
+      hudCtx.fillRect(0, 0, w, h);
+      hudCtx.strokeStyle = "rgba(255,255,255,0.25)";
+      hudCtx.strokeRect(0.5, 0.5, w - 1, h - 1);
+
+      hudCtx.fillStyle = "rgba(255,255,255,0.95)";
+      hudCtx.font = "14px monospace";
+      const afLabel = manualFocusEnabled ? "MAN" : "AUTO";
+      const lines = [
+        `L=${linkMode ? "ON" : "OFF"} off=${focusOffset01.toFixed(2)}`,
+        `AF=${afLabel} [locale, no :8556]`,
+        `f0=${focusPos0.toFixed(2)}`,
+        `f1=${focusPos1.toFixed(2)}`,
+        `r0=${rollDeg0.toFixed(1)}`,
+        `r1=${rollDeg1.toFixed(1)}`,
+        `z0=${zoom0.toFixed(3)}`,
+        `z1=${zoom1.toFixed(3)}`,
+        `c=${convPx}`,
+        `v0=${vertPx0} v1=${vertPx1}`,
+      ];
+      let y = 22;
+      for (const ln of lines) {
+        hudCtx.fillText(ln, 12, y);
+        y += 22;
+      }
+    }
+
+    function updateHudTexture() {
+      drawHud();
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, texHud);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      try {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, hudCanvas);
+      } catch (_) {}
+    }
+
+    // Texture IMU per VR teleop: colonna minimale W X Y Z + valori
+    const imuCanvas = document.createElement("canvas");
+    imuCanvas.width = 140;
+    imuCanvas.height = 82;
+    const imuCtx = imuCanvas.getContext("2d");
+    const texImu = makeVideoTexture();
+    let lastImuValues = { w: "â€”", x: "â€”", y: "â€”", z: "â€”" };
+    function updateImuTexture() {
+      if (!imuCtx) return;
+      const w = imuCanvas.width, h = imuCanvas.height;
+      imuCtx.clearRect(0, 0, w, h);
+      imuCtx.fillStyle = "rgba(0,0,0,0.75)";
+      imuCtx.fillRect(0, 0, w, h);
+      imuCtx.strokeStyle = "rgba(0,255,0,0.4)";
+      imuCtx.strokeRect(0.5, 0.5, w - 1, h - 1);
+      imuCtx.fillStyle = "#0f0";
+      imuCtx.font = "13px monospace";
+      const v = lastImuValues;
+      const lineH = 18;
+      let y = 18;
+      imuCtx.fillText("W  " + v.w, 8, y); y += lineH;
+      imuCtx.fillText("X  " + v.x, 8, y); y += lineH;
+      imuCtx.fillText("Y  " + v.y, 8, y); y += lineH;
+      imuCtx.fillText("Z  " + v.z, 8, y);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, texImu);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      try {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imuCanvas);
+      } catch (_) {}
+    }
+
+    let _lastLogTexL = null, _lastLogTexR = null;
+    function updateTexFromVideo(tex, imgEl) {
+      // Usa TEXTURE0 per non interferire con HUD (TEXTURE1) e IMU (TEXTURE2).
+      // Ottimizzazione: se l'elemento Ã¨ un <video> (es. WebRTC), upload diretto in texture
+      // senza copia intermedia su canvas, per minor latenza di rendering.
+      if (imgEl instanceof HTMLVideoElement && imgEl.readyState >= 1 && imgEl.videoWidth > 0) {
+        const key = (tex === texL) ? "L" : "R";
+        const now = Date.now();
+        if (tex === texL) { videoDebugState.lastTexUpdateL = now; } else { videoDebugState.lastTexUpdateR = now; }
+        const stateKey = key + imgEl.readyState + "x" + imgEl.videoWidth + "x" + imgEl.videoHeight;
+        if ((key === "L" && _lastLogTexL !== stateKey) || (key === "R" && _lastLogTexR !== stateKey)) {
+          console.log("[updateTexFromVideo] " + key + " video upload readyState=" + imgEl.readyState + " " + imgEl.videoWidth + "x" + imgEl.videoHeight);
+          if (key === "L") _lastLogTexL = stateKey; else _lastLogTexR = stateKey;
+        }
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        try {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imgEl);
+          if (inVRSession && key === "L" && !updateTexFromVideo._xrFirstOkL) {
+            updateTexFromVideo._xrFirstOkL = true;
+            console.log("[XR] first texImage2D success L", { w: imgEl.videoWidth, h: imgEl.videoHeight, readyState: imgEl.readyState });
+          }
+          if (inVRSession && key === "R" && !updateTexFromVideo._xrFirstOkR) {
+            updateTexFromVideo._xrFirstOkR = true;
+            console.log("[XR] first texImage2D success R", { w: imgEl.videoWidth, h: imgEl.videoHeight, readyState: imgEl.readyState });
+          }
+        } catch (e) {
+          console.warn("[updateTexFromVideo] texImage2D error " + key + ":", e && e.message);
+        }
+        const glErr = gl.getError();
+        if (glErr !== gl.NO_ERROR) {
+          console.warn("[updateTexFromVideo] gl.getError after texImage2D", key, glErr);
+        }
+        return;
+      }
+      // Nessuna sorgente MJPEG: solo HTMLVideoElement WebRTC.
+    }
+
+    function resizeCanvasToDisplaySize() {
+      const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+      const w = Math.floor(canvas.clientWidth * dpr);
+      const h = Math.floor(canvas.clientHeight * dpr);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w; canvas.height = h;
+      }
+    }
+
+    /** Disegna una singola view (usata in XR per occhio e in non-XR per metÃ  canvas). */
+    function drawOneView(vpX, vpY, vpW, vpH, vid, tex, isRight) {
+      gl.viewport(vpX, vpY, vpW, vpH);
+      if (inVRSession && !drawOneView._xrLoggedOnce) {
+        drawOneView._xrLoggedOnce = true;
+        console.log("[XR] drawOneView first frame", {
+          vpX, vpY, vpW, vpH, eye: isRight ? "R" : "L",
+          source: vid instanceof HTMLVideoElement ? "video" : "canvas",
+          tex: tex === texL ? "texL" : "texR",
+        });
+      }
+      let vW = 0, vH = 0;
+      if (vid instanceof HTMLVideoElement && vid.videoWidth > 0) {
+        vW = vid.videoWidth;
+        vH = vid.videoHeight;
+      }
+      let scaleX = 1.0, scaleY = 1.0, offX = 0.0, offY = 0.0;
+      if (vW > 0 && vH > 0) {
+        const videoAspect = vW / vH;
+        const viewAspect = vpW / vpH;
+        if (viewAspect > videoAspect) {
+          scaleX = videoAspect / viewAspect;
+          offX = (1.0 - scaleX) * 0.5;
+        } else if (viewAspect < videoAspect) {
+          scaleY = viewAspect / videoAspect;
+          offY = (1.0 - scaleY) * 0.5;
+        }
+      }
+      gl.uniform2f(locScale, scaleX, scaleY);
+      gl.uniform2f(locOffset, offX, offY);
+      let shiftUv = 0.0;
+      if (vW > 0) shiftUv = convPx / vW;
+      let shiftUvY = 0.0;
+      // Shift verticale per-cam: cam0 (sx) usa vertPx0, cam1 (dx) usa vertPx1.
+      const _vertForEye = isRight ? vertPx1 : vertPx0;
+      if (vH > 0) shiftUvY = _vertForEye / vH;
+      gl.uniform2f(locSampleShift, isRight ? -shiftUv : shiftUv, shiftUvY);
+      const rollRad = (isRight ? rollDeg1 : rollDeg0) * Math.PI / 180.0;
+      const zoom = isRight ? zoom1 : zoom0;
+      gl.uniform1f(locRollRad, rollRad);
+      gl.uniform1f(locZoom, zoom);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      const glErr = gl.getError();
+      if (glErr !== gl.NO_ERROR) {
+        console.warn("[drawOneView] gl.getError after drawArrays", { eye: isRight ? "R" : "L", glErr, vpW, vpH, vW, vH });
+      }
+    }
+
+    function uploadDiagTextures() {
+      if (XR_DIAG_MODE === "solid") {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texL);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 0, 0, 255]));
+        gl.bindTexture(gl.TEXTURE_2D, texR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 255, 0, 255]));
+        if (!uploadDiagTextures._solidLogged) {
+          uploadDiagTextures._solidLogged = true;
+          console.log("[DIAG] solid mode active (L=red, R=green)");
+        }
+        return true;
+      }
+      if (XR_DIAG_MODE === "canvas") {
+        const ts = Math.floor(performance.now());
+        diagCtxL.fillStyle = "#200";
+        diagCtxL.fillRect(0, 0, diagCanvasL.width, diagCanvasL.height);
+        diagCtxL.fillStyle = "#f44";
+        diagCtxL.font = "48px monospace";
+        diagCtxL.fillText("LEFT " + ts, 20, 120);
+        diagCtxR.fillStyle = "#020";
+        diagCtxR.fillRect(0, 0, diagCanvasR.width, diagCanvasR.height);
+        diagCtxR.fillStyle = "#4f4";
+        diagCtxR.font = "48px monospace";
+        diagCtxR.fillText("RIGHT " + ts, 20, 120);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texL);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, diagCanvasL);
+        gl.bindTexture(gl.TEXTURE_2D, texR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, diagCanvasR);
+        if (!uploadDiagTextures._canvasLogged) {
+          uploadDiagTextures._canvasLogged = true;
+          console.log("[DIAG] canvas mode active");
+        }
+        return true;
+      }
+      return false;
+    }
+
+    /** Loop di rendering quando NON siamo in XR: aggiorna texture, pannello debug e disegna L/R side-by-side. */
+    function onNonXRFrame() {
+      requestAnimationFrame(onNonXRFrame);
+      if (!started || inVRSession) return;
+      resizeCanvasToDisplaySize();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.disable(gl.DEPTH_TEST);
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      leftSourceEl = webrtcVidL;
+      rightSourceEl = webrtcVidR;
+      if (!uploadDiagTextures()) {
+        updateTexFromVideo(texL, leftSourceEl);
+        updateTexFromVideo(texR, rightSourceEl);
+      }
+      updateVideoDebugPanel();
+      const w = canvas.width, h = canvas.height;
+      const halfW = Math.floor(w / 2);
+      drawOneView(0, 0, halfW, h, leftSourceEl, texL, false);
+      drawOneView(halfW, 0, w - halfW, h, rightSourceEl, texR, true);
+    }
+    requestAnimationFrame(onNonXRFrame);
+
+    let xrSession = null;
+    let xrRefSpace = null;
+    let xrLayer = null;
+
+    function enableAllButtons() {
+      if (btnVR) btnVR.disabled = false;
+      if (btnTeleop) btnTeleop.disabled = false;
+      if (btnTeleopHead) btnTeleopHead.disabled = false;
+      if (btnTeleopHybrid) btnTeleopHybrid.disabled = false;
+      if (btnTeleopPose) btnTeleopPose.disabled = false;
+      if (btnTeleopIk) btnTeleopIk.disabled = false;
+    }
+
+    function disableButtonsDuringXR() {
+      // In XR i pulsanti modalitÃ  restano cliccabili:
+      // consente cambio modalitÃ  "al volo" senza refresh/restart camere.
+      if (btnVR) btnVR.disabled = false;
+      if (btnTeleop) btnTeleop.disabled = false;
+      if (btnTeleopHead) btnTeleopHead.disabled = false;
+      if (btnTeleopHybrid) btnTeleopHybrid.disabled = false;
+      if (btnTeleopPose) btnTeleopPose.disabled = false;
+      if (btnTeleopIk) btnTeleopIk.disabled = false;
+    }
+
+    async function enterVR(mode) {
+      vrMode = mode || "stereo";
+      if (!navigator.xr) {
+        const httpsUrl = HTTPS_ROOT + "viewer_stereo_xr.html";
+        setStatus("WebXR non disponibile qui: prova in HTTPS (" + httpsUrl + ")");
+        preview.style.display = "block";
+        return;
+      }
+      // Nota: immersive-vr richiede spesso HTTPS (secure context).
+      disableButtonsDuringXR(); // disabilita solo finchÃ© la sessione XR Ã¨ attiva
+      try {
+        // DOM Overlay: permette <div> visibili in VR (Quest Browser lo supporta in secure context).
+        const init = {
+          requiredFeatures: [],
+          optionalFeatures: ["dom-overlay"],
+          domOverlay: { root: document.body },
+        };
+        try {
+          xrSession = await navigator.xr.requestSession("immersive-vr", init);
+        } catch (e) {
+          // Fallback: se dom-overlay non Ã¨ supportato, riprova senza (non bloccare la VR).
+          console.warn("[XR] requestSession(dom-overlay) fallita, retry senza overlay:", e);
+          xrSession = await navigator.xr.requestSession("immersive-vr", { requiredFeatures: [] });
+        }
+      } catch (e) {
+        // se la sessione non parte, ripristina subito la UI
+        enableAllButtons();
+        throw e;
+      }
+      inVRSession = true;
+      videoDebugState.xrActive = true;
+      // Stop captive portal keepalive during XR — WS is already connected
+      cpStopTouch();
+      // Su Quest il video puÃ² essere sospeso quando la pagina perde focus; riavvia play() all'ingresso in XR.
+      if (leftSourceEl === webrtcVidL && webrtcVidL && webrtcVidL.srcObject) {
+        webrtcVidL.play().then(() => console.log("[XR] webrtcVidL.play() after XR start OK")).catch((e) => console.warn("[XR] webrtcVidL.play() after XR start failed", e && e.message));
+        webrtcVidR.play().then(() => console.log("[XR] webrtcVidR.play() after XR start OK")).catch((e) => console.warn("[XR] webrtcVidR.play() after XR start failed", e && e.message));
+      }
+      xrSession.addEventListener("end", () => {
+        console.log("[XR] Session ended");
+        cpStartTouch(); // Resume captive portal keepalive
+        inVRSession = false;
+        videoDebugState.xrActive = false;
+        // Stop publishing HMD refresh rate
+        if (_hmdRefreshTimer) { clearInterval(_hmdRefreshTimer); _hmdRefreshTimer = null; }
+        // Notifica fine sessione XR ai client dashboard (per spegnere card HMD refresh)
+        safeSend(teleopWs, { type: "vr_session_state", active: false });
+        xrSession = null;
+        xrRefSpace = null;
+        xrLayer = null;
+        vrMode = null;
+        teleopMode = null;
+        _syncModeButtons(null);
+        // Nessun control WS legacy (8556) con pipeline MediaMTX-only.
+        enableAllButtons(); // NON solo TeleopPose: tutti i pulsanti tornano disponibili
+        setStatus("VR terminata.");
+        // Nascondi overlay diagnostici e scritte rosse/verdi (resta solo IMU se attiva)
+        if (debugOverlayEl) { debugOverlayEl.style.display = "none"; debugOverlayEl.innerHTML = ""; }
+        const badge = document.getElementById("teleopPoseBadge"); if (badge) badge.style.display = "none";
+        const toast = document.getElementById("teleopPoseToast"); if (toast) { toast.classList.remove("show"); toast.style.display = "none"; }
+      });
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Pubblicazione live del refresh rate dell'HMD via WS.
+      // session.frameRate è la frequenza nativa del visore (72 Hz Quest 1,
+      // 90/120 Hz Quest 2/3). Il valore può cambiare se l'utente lo configura
+      // via XR menu; pubblichiamo ogni 2 s per sopravvivere a riconnessioni
+      // WS e disconnessioni temporanee. La dashboard test page riceve e
+      // mostra in una card dedicata "HMD refresh".
+      // Pubblichiamo anche la latenza video lato HMD: inter-frame timing sul
+      // <video> WHEP cam0 (webrtcVidL) raccolto via requestVideoFrameCallback,
+      // mediato sugli ultimi 60 frame, moltiplicato per buffer_depth = 4.5
+      // (stesso coefficiente WebRTC della dashboard test page).
+      function _hmdRegisterVideoCallback() {
+        if (_hmdVidRvfcRegistered) return;
+        const v = webrtcVidL;
+        if (!v || typeof v.requestVideoFrameCallback !== "function") return;
+        _hmdVidRvfcRegistered = true;
+        const cb = (now, _meta) => {
+          if (_hmdVidLastT != null) {
+            const dt = now - _hmdVidLastT;
+            if (dt > 1 && dt < 500) {
+              _hmdVidIntervals.push(dt);
+              while (_hmdVidIntervals.length > HMD_VID_WINDOW) _hmdVidIntervals.shift();
+            }
+          }
+          _hmdVidLastT = now;
+          if (v && typeof v.requestVideoFrameCallback === "function") {
+            v.requestVideoFrameCallback(cb);
+          }
+        };
+        v.requestVideoFrameCallback(cb);
+      }
+      _hmdRegisterVideoCallback();
+
+      // Tick a 500 ms = 2 pubblicazioni/s. Buon compromesso: la dashboard
+      // si aggiorna in modo visibilmente reattivo senza spammare WS.
+      let _hmdTickCount = 0;
+      _hmdRefreshTimer = setInterval(() => {
+        if (!xrSession) return;
+        _hmdTickCount++;
+        // Pubblica session.frameRate ogni 4° tick (~2 s): cambia raramente.
+        if (_hmdTickCount % 4 === 0) {
+          const supported = (typeof xrSession.supportedFrameRates !== "undefined")
+            ? Array.from(xrSession.supportedFrameRates || []) : [];
+          let fr = (Number.isFinite(xrSession.frameRate) && xrSession.frameRate > 0)
+            ? xrSession.frameRate : null;
+          if (fr == null) {
+            // Quest 1: session.frameRate undefined -> stima dal loop XR,
+            // agganciata al rate supportato piu' vicino (entro +/-8%).
+            const m = _hmdMeasuredFps();
+            if (m != null) {
+              let best = m;
+              if (supported.length) {
+                const near = supported.reduce((p, c) => Math.abs(c - m) < Math.abs(p - m) ? c : p, supported[0]);
+                if (Math.abs(near - m) <= 0.08 * near) best = near;
+              }
+              fr = best;
+            } else if (supported.length) {
+              fr = Math.max(...supported);
+            }
+          }
+          safeSend(teleopWs, {
+            type: "vr_session_refresh",
+            frame_rate_hz: fr,
+            supported_rates_hz: supported,
+            user_agent: navigator.userAgent.slice(0, 140),
+          });
+        }
+        // Stato latenza video lato HMD (cam0) — pubblicato ad ogni tick (500 ms)
+        if (_hmdVidIntervals.length >= 5) {
+          const arr = _hmdVidIntervals.slice().sort((a,b)=>a-b);
+          const n = arr.length;
+          const mn = arr[0];
+          const mx = arr[n-1];
+          const mean = arr.reduce((s,x)=>s+x,0) / n;
+          // Riprova a registrare il callback in caso il video sia stato
+          // sostituito (refocus camere) dopo il primo register.
+          _hmdRegisterVideoCallback();
+          safeSend(teleopWs, {
+            type: "vr_video_latency",
+            n_frames: n,
+            interframe_ms: { min: mn, mean: mean, max: mx },
+            buffer_depth: HMD_VID_BUFFER_DEPTH,
+            estimated_latency_ms: {
+              min: mn * HMD_VID_BUFFER_DEPTH,
+              mean: mean * HMD_VID_BUFFER_DEPTH,
+              max: mx * HMD_VID_BUFFER_DEPTH,
+            },
+          });
+        }
+      }, 500);
+      // Invio immediato (non aspettare 2 s dopo apertura sessione)
+      setTimeout(() => {
+        if (!xrSession) return;
+        const supported = (typeof xrSession.supportedFrameRates !== "undefined")
+          ? Array.from(xrSession.supportedFrameRates || []) : [];
+        let fr = (Number.isFinite(xrSession.frameRate) && xrSession.frameRate > 0)
+          ? xrSession.frameRate : null;
+        if (fr == null) {
+          // Quest 1: session.frameRate undefined -> stima dal loop XR,
+          // agganciata al rate supportato piu' vicino (entro +/-8%).
+          const m = _hmdMeasuredFps();
+          if (m != null) {
+            let best = m;
+            if (supported.length) {
+              const near = supported.reduce((p, c) => Math.abs(c - m) < Math.abs(p - m) ? c : p, supported[0]);
+              if (Math.abs(near - m) <= 0.08 * near) best = near;
+            }
+            fr = best;
+          } else if (supported.length) {
+            fr = Math.max(...supported);
+          }
+        }
+        safeSend(teleopWs, {
+          type: "vr_session_refresh",
+          frame_rate_hz: fr,
+          supported_rates_hz: supported,
+          user_agent: navigator.userAgent.slice(0, 140),
+        });
+        // Notifica session attiva ai client dashboard
+        safeSend(teleopWs, { type: "vr_session_state", active: true });
+      }, 200);
+      // Conv/Vert: NON usiamo piÃ¹ select/squeeze (click) perchÃ© su Quest puÃ² dare un â€œflashâ€/feedback fastidioso.
+      // Li leggiamo in polling da gamepad.buttons nel loop XR (pressione continua = stessa fluiditÃ  degli altri controlli).
+
+      await gl.makeXRCompatible?.();
+      xrLayer = new XRWebGLLayer(xrSession, gl);
+      xrSession.updateRenderState({ baseLayer: xrLayer });
+      xrRefSpace = await xrSession.requestReferenceSpace("local");
+      if (vrMode === "teleop") {
+        // In teleop (Manual 1, Head 2, Hybrid 3, Pose 4): HUD off e controlli camera disabilitati
+        try { hudVisible = false; localStorage.setItem("hudVisible", "0"); applyHudRect(); } catch (_) {}
+        setStatus("VR attiva: TELEOP (controlli camera disabilitati).");
+        // Layer teleop: prova a connettere WS 8557 in background (non blocca video/VR).
+        startTeleopWs();
+        if (typeof updateImuTexture === "function") updateImuTexture();
+      } else {
+        setStatus("VR attiva: stereo (L=cam0, R=cam1).");
+      }
+      xrSession.requestAnimationFrame(onXRFrame);
+    }
+
+    function _safeNum(x) { const v = Number(x); return Number.isFinite(v) ? v : 0; }
+    // Stima del refresh rate reale dell'HMD dai timestamp del loop XR
+    // (necessaria su Quest 1, dove session.frameRate resta undefined).
+    // Ritorna Hz (float) oppure null se non ci sono abbastanza campioni.
+    function _hmdMeasuredFps() {
+      const fa = (typeof onXRFrame !== "undefined") ? onXRFrame._frameStamps : null;
+      if (!fa || fa.length < 8) return null;
+      const span = fa[fa.length - 1] - fa[0];
+      if (span <= 0) return null;
+      return (fa.length - 1) * 1000 / span;
+    }
+    // =========================================================================
+    // SECTION 8: XR SESSION — Frame loop, controller input, intent dispatch
+    // =========================================================================
+    function onXRFrame(t, frame) {
+      const session = frame.session;
+      const pose = frame.getViewerPose(xrRefSpace);
+      session.requestAnimationFrame(onXRFrame);
+      // Campiona i timestamp del loop di presentazione XR per stimare il
+      // refresh reale dell'HMD (serve su Quest 1, dove session.frameRate e'
+      // undefined). Mantiene ~1 s di storia.
+      {
+        const fa = onXRFrame._frameStamps || (onXRFrame._frameStamps = []);
+        fa.push(t);
+        while (fa.length > 2 && (t - fa[0]) > 1000) fa.shift();
+      }
+      if (!pose) return;
+
+      const glLayer = session.renderState.baseLayer;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
+      gl.disable(gl.DEPTH_TEST);
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      // aggiorna texture una volta per frame
+      if (!uploadDiagTextures()) {
+        updateTexFromVideo(texL, leftSourceEl);
+        updateTexFromVideo(texR, rightSourceEl);
+      }
+      // Mirino centrale al centro di ogni schermo (vUV 0.5,0.5 = center per-occhio).
+      // Toggle via window._crosshairOn (default true). Action "toggleCrosshair"
+      // registrata + mappabile dalla dashboard /controllers.
+      gl.uniform1f(locCrosshair, (window._crosshairOn !== false) ? 1.0 : 0.0);
+      // HUD + controlli solo in modalitÃ  stereo (calibrazione).
+      if (vrMode === "stereo") {
+        // HUD: aggiorna a ~10Hz per non pesare troppo
+        const nowHud = performance.now();
+        if (!onXRFrame._lastHud || (nowHud - onXRFrame._lastHud) > 100) {
+          updateHudTexture();
+          onXRFrame._lastHud = nowHud;
+        }
+
+        // Joystick in VR:
+        // - Stick Y:          fuoco separato (sx controller -> cam0, dx controller -> cam1)
+        // - Stick X:          SCALE o ROLL per quella camera (toggle con click dello stick SINISTRO)
+        // - Click stick DX:   autofocus continuo entrambe le camere
+        // - Click stick SX:   toggle mode SCALE <-> ROLL
+        // Debounce per evitare iper-sensibilitÃ  (ridotto per risposta piÃ¹ rapida).
+        const now = performance.now();
+        if (!onXRFrame._lastJoy) onXRFrame._lastJoy = 0;
+        if (now - onXRFrame._lastJoy > 50) {
+          try {
+          if (!onXRFrame._mode) onXRFrame._mode = { left: 0, right: 0 }; // 0=scale, 1=roll
+          if (!onXRFrame._thumbPrev) onXRFrame._thumbPrev = { left: false, right: false };
+          if (!onXRFrame._joyDbg) onXRFrame._joyDbg = {
+            left: { axX: 0, axY: 0, pair: -1, axesLen: 0, mode: 0, hasGp: false },
+            right: { axX: 0, axY: 0, pair: -1, axesLen: 0, mode: 0, hasGp: false },
+          };
+
+          for (const src of session.inputSources) {
+            const hand = src.handedness || "none";
+            if (hand !== "left" && hand !== "right") continue;
+
+            const gp = src.gamepad;
+            const cam = (hand === "left") ? 0 : 1;
+            const modeNow = onXRFrame._mode[hand] || 0;
+
+            if (!gp) {
+              onXRFrame._joyDbg[hand] = { axX: 0, axY: 0, pair: -1, axesLen: 0, mode: modeNow, hasGp: false };
+              continue;
+            }
+
+            const { axX, axY, pair, axesLen } = _pickStickAxes(gp);
+            onXRFrame._joyDbg[hand] = { axX, axY, pair, axesLen, mode: modeNow, hasGp: true };
+
+            // Pulsante A sul controller destro: entrambe le camere in autofocus (continuous)
+            // Mapping tipico Quest: buttons[4] = A (right), buttons[5] = B (right).
+            // Face buttons DESTRI (A/B) press-once -> dispatch via controllerRemap.
+            // Default config STEREO: A=setAutofocusBoth, B=setManualFocusMode.
+            // Configurabile da dashboard /controllers.
+            if (hand === "right" && window.controllerRemap) {
+              if (!onXRFrame._btnPrev) onXRFrame._btnPrev = { A: false, B: false };
+              const aPressed = !!gp.buttons?.[4]?.pressed;
+              if (aPressed && !onXRFrame._btnPrev.A) {
+                const _mn = window.controllerRemap.modeName(vrMode, teleopMode);
+                window.controllerRemap.dispatch(_mn, "right.A.press");
+              }
+              onXRFrame._btnPrev.A = aPressed;
+
+              const bPressed = !!gp.buttons?.[5]?.pressed;
+              if (bPressed && !onXRFrame._btnPrev.B) {
+                const _mn = window.controllerRemap.modeName(vrMode, teleopMode);
+                window.controllerRemap.dispatch(_mn, "right.B.press");
+              }
+              onXRFrame._btnPrev.B = bPressed;
+            }
+
+            // Pulsante X sul controller SINISTRO: toggle modalitÃ  LINK (focus/roll/zoom insieme)
+            // Mapping tipico Quest: buttons[4] = X (left), buttons[5] = Y (left).
+            // Face buttons SINISTRI (X/Y) press-once -> dispatch via controllerRemap.
+            // Default config STEREO: X=toggleLinkMode, Y=toggleHudVisible.
+            if (hand === "left" && window.controllerRemap) {
+              if (!onXRFrame._btnPrevL) onXRFrame._btnPrevL = { X: false, Y: false };
+              const xPressed = !!gp.buttons?.[4]?.pressed;
+              if (xPressed && !onXRFrame._btnPrevL.X) {
+                const _mn = window.controllerRemap.modeName(vrMode, teleopMode);
+                window.controllerRemap.dispatch(_mn, "left.X.press");
+              }
+              onXRFrame._btnPrevL.X = xPressed;
+
+              const yPressed = !!gp.buttons?.[5]?.pressed;
+              if (yPressed && !onXRFrame._btnPrevL.Y) {
+                const _mn = window.controllerRemap.modeName(vrMode, teleopMode);
+                window.controllerRemap.dispatch(_mn, "left.Y.press");
+              }
+              onXRFrame._btnPrevL.Y = yPressed;
+            }
+
+            // Click thumbstick:
+            //   controller DESTRO  â†’ autofocus entrambe le camere (continuous)
+            //   controller SINISTRO â†’ toggle mode SCALE <-> ROLL (come prima)
+            const thumbIdx = (gp.buttons && gp.buttons.length > 3) ? 3 : -1;
+            if (thumbIdx >= 0) {
+              const pressed = !!gp.buttons[thumbIdx]?.pressed;
+              const prev = onXRFrame._thumbPrev[hand] || false;
+              if (pressed && !prev) {
+                if (hand === "right" && window.controllerRemap) {
+                  // Right thumbstick click -> dispatch (default web action: setAutofocusBoth).
+                  const _mn = window.controllerRemap.modeName(vrMode, teleopMode);
+                  window.controllerRemap.dispatch(_mn, "right.thumb.click");
+                } else if (hand === "left") {
+                  // Left thumbstick: toggle SCALE/ROLL stick mode (stato interno hardcoded).
+                  onXRFrame._mode[hand] = onXRFrame._mode[hand] ? 0 : 1;
+                  setStatus("left stick mode = " + (onXRFrame._mode[hand] ? "ROLL" : "SCALE"));
+                }
+              }
+              onXRFrame._thumbPrev[hand] = pressed;
+            }
+
+            // Conv/Vert fluidi (pressione continua) usando trigger/grip come bottoni:
+            // - Trigger: Conv (sx = -, dx = +)
+            // - Grip:    Vert (sx = -, dx = +)
+            // Indici tipici Oculus/Quest: 0=trigger, 1=grip, 3=thumbstick (giÃ  usato sopra).
+            const trig = !!gp.buttons?.[0]?.pressed || (Number(gp.buttons?.[0]?.value || 0) > 0.85);
+            const grip = !!gp.buttons?.[1]?.pressed || (Number(gp.buttons?.[1]?.value || 0) > 0.85);
+            if (trig) changeConv(hand === "left" ? -1 : +1);
+            // VertPx per-cam: grip + stick Y deflesso -> sposta SOLO la cam di QUESTA mano.
+            // (left=cam0, right=cam1). axY < 0 = stick su = +1 (cam su).
+            if (grip && Math.abs(axY) > 0.25) {
+              const _vDir = (axY < 0) ? +1 : -1;
+              changeVert(cam, _vDir);
+            }
+
+            // Focus/Roll/Zoom: in LINK mode si comandano insieme SOLO dal controller destro
+            const allowThisHandForLink = (!linkMode) || (hand === "right");
+            if (allowThisHandForLink) {
+              // deadzone (piÃ¹ permissiva: basta meno corsa stick)
+              // NOTA: se AF Ã¨ attivo, inibiamo il fuoco manuale via stick Y (evita tocchi accidentali).
+              if (manualFocusEnabled && Math.abs(axY) > 0.25) {
+                const delta = (axY < 0 ? +1 : -1); // stick su = focus+, giÃ¹ = focus-
+                if (linkMode && hand === "right") {
+                  setLinkedFocus0(focusPos0 + delta * focusStep);
+                } else {
+                  const current = (cam === 0) ? focusPos0 : focusPos1;
+                  setFocusPos(cam, current + delta * focusStep);
+                }
+              }
+
+              if (Math.abs(axX) > 0.25) {
+                const mode = onXRFrame._mode[hand] || 0;
+                if (linkMode && hand === "right") {
+                  // Stesso incremento su entrambe, senza offset
+                  if (mode === 0) { changeZoom(0, axX > 0 ? zoomStep : -zoomStep); changeZoom(1, axX > 0 ? zoomStep : -zoomStep); }
+                  else { changeRoll(0, axX > 0 ? rollStepDeg : -rollStepDeg); changeRoll(1, axX > 0 ? rollStepDeg : -rollStepDeg); }
+                } else {
+                  if (mode === 0) changeZoom(cam, axX > 0 ? zoomStep : -zoomStep);
+                  else changeRoll(cam, axX > 0 ? rollStepDeg : -rollStepDeg);
+                }
+              }
+            }
+          }
+          } catch (e) {
+            const msg = (e && (e.message || String(e))) || "unknown";
+            // Non spammare: aggiorna max 1 volta al secondo
+            if (!onXRFrame._joyErrAt || (now - onXRFrame._joyErrAt) > 1000) {
+              onXRFrame._joyErrAt = now;
+              setStatus("JOY ERR: " + msg);
+            }
+          }
+          onXRFrame._lastJoy = now;
+        }
+      }
+      // Teleop: invia intent a ~30Hz (best-effort). Non influenza la pipeline video.
+      // Controller mapping in teleop:
+      //   Stick SX (assi):            joy_x / joy_y â†’ movimento base robot
+      //   Stick DX (assi), CON grip:  yaw / pitch   â†’ orientamento testa/braccio
+      //   Stick DX (asse X), SENZA grip: zoom entrambe le camere (Â±)
+      //   Grip SX/DX (btn[1]):        deadman (vert Â±) â†’ firmware; in IK mode (5) anche trigger DX (btn[0])
+      //   Y (sx, btn[4]):             toggle box IMU/servo
+      //   Click stick DX (btn[3]):    autofocus continuo entrambe le camere
+      if (vrMode === "teleop") {
+        // Debug frame counter + WS status
+        if (!onXRFrame._dbgFrame) onXRFrame._dbgFrame = 0;
+        const dbgFrame = (++onXRFrame._dbgFrame) | 0;
+        const wsState = teleopWs ? teleopWs.readyState : -1;
+
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // A) Polling controller VR (QUEST-FIRST): SOLO XRInputSource.gamepad (primario)
+        // - session.inputSources -> handedness left/right
+        // - left:  axes[0]->joy_x_raw, axes[1]->joy_y_raw
+        // - right: axes[0]->pitch_raw, axes[1]->yaw_raw
+        // - grip:  buttons[1].pressed
+        // Fallback (solo se XR gamepad non disponibile): navigator.getGamepads()
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        let joy_x_raw = 0, joy_y_raw = 0, pitch_raw = 0, yaw_raw = 0;
+        let gripL = 0, gripR = 0;
+        let buttonsLeftMask = 0, buttonsRightMask = 0;
+        let leftControllerQuat = null, rightControllerQuat = null;
+        let xrLeftButtonsValid = false, xrRightButtonsValid = false;
+        // XRInputSource.gamepad (primario)
+        let xrLeftGp = null, xrRightGp = null;
+        try {
+          for (const src of (session?.inputSources || [])) {
+            const hand = src?.handedness || "none";
+            const gp = src?.gamepad || null;
+            if (!gp) continue;
+            if (hand === "left") xrLeftGp = gp;
+            else if (hand === "right") xrRightGp = gp;
+          }
+        } catch (_) {}
+
+        const _maskButtons16 = (btns) => {
+          let m = 0;
+          try {
+            if (!btns) return 0;
+            for (let i = 0; i < Math.min(btns.length || 0, 16); i++) {
+              const b = btns[i];
+              if (b && (b.pressed || (b.value !== undefined && Number(b.value || 0) > 0.5))) {
+                m |= (1 << i);
+              }
+            }
+          } catch (_) {}
+          return m | 0;
+        };
+
+        const _readSourceQuat = (src) => {
+          try {
+            const space = src?.gripSpace || src?.targetRaySpace;
+            if (!space) return null;
+            const srcPose = frame.getPose(space, xrRefSpace);
+            const q = srcPose?.transform?.orientation;
+            if (!q) return null;
+            return {
+              w: Number(q.w || 1.0),
+              x: Number(q.x || 0.0),
+              y: Number(q.y || 0.0),
+              z: Number(q.z || 0.0),
+            };
+          } catch (_) {
+            return null;
+          }
+        };
+
+        // Allineato a JONNY5-3.0_rev4 (funzionante): un solo loop su inputSources,
+        // grip da buttons[1] OR buttons[2] (su Quest il grip puÃ² essere su [2]).
+        let usedXrGamepad = false;
+        (function () {
+          const srcs = session?.inputSources || [];
+          if (!srcs.length) return;
+          for (const src of srcs) {
+            const hand = src?.handedness || "none";
+            if (hand !== "left" && hand !== "right") continue;
+            const srcQuat = _readSourceQuat(src);
+            if (hand === "left") leftControllerQuat = srcQuat;
+            else rightControllerQuat = srcQuat;
+            const gp = src?.gamepad || null;
+            if (!gp) continue;
+            usedXrGamepad = true;
+            const g1 = !!gp.buttons?.[1]?.pressed || (Number(gp.buttons?.[1]?.value || 0) > 0.5);
+            const g2 = !!gp.buttons?.[2]?.pressed || (Number(gp.buttons?.[2]?.value || 0) > 0.5);
+              const { axX, axY } = _pickStickAxes(gp);
+            if (hand === "left") {
+              joy_x_raw = Number(axX || 0);
+              joy_y_raw = Number(axY || 0);
+              gripL = (g1 || g2) ? 1 : 0;
+              buttonsLeftMask = _maskButtons16(gp.buttons);
+              xrLeftButtonsValid = !!(gp.buttons && gp.buttons.length > 0);
+            } else {
+              yaw_raw = Number(axX || 0);
+              pitch_raw = Number(axY || 0);
+              gripR = (g1 || g2) ? 1 : 0;
+              buttonsRightMask = _maskButtons16(gp.buttons);
+              xrRightButtonsValid = !!(gp.buttons && gp.buttons.length > 0);
+            }
+          }
+        })();
+
+        // Quest fallback assi: se assi XR tutti ~0, prova getGamepads() per stick.
+        const axesMag = Math.abs(joy_x_raw) + Math.abs(joy_y_raw) + Math.abs(pitch_raw) + Math.abs(yaw_raw);
+        if (axesMag < 0.05 && typeof navigator.getGamepads === "function") {
+          const pads = navigator.getGamepads();
+          if (pads && (pads[0] || pads[1])) {
+            for (let i = 0; i <= 1; i++) {
+              const p = pads[i];
+              if (!p || !p.axes || p.axes.length < 2) continue;
+              const g1 = !!(p.buttons && p.buttons[1] && (p.buttons[1].pressed || (p.buttons[1].value || 0) > 0.5));
+              const g2 = !!(p.buttons && p.buttons[2] && (p.buttons[2].pressed || (p.buttons[2].value || 0) > 0.5));
+              if (i === 0) {
+                const fb = _pickStickAxes(p);
+                joy_x_raw = Number(fb.axX || 0);
+                joy_y_raw = Number(fb.axY || 0);
+                gripL = (g1 || g2) ? 1 : 0;
+                buttonsLeftMask = _maskButtons16(p.buttons);
+              } else {
+                const { axX: rx, axY: ry } = _pickStickAxes(p);
+                yaw_raw = Number(rx || 0);
+                pitch_raw = Number(ry || 0);
+                gripR = (g1 || g2) ? 1 : 0;
+                buttonsRightMask = _maskButtons16(p.buttons);
+              }
+              usedXrGamepad = false;
+            }
+          }
+        }
+
+        // Quest fallback PULSANTI:
+        // - se XR della mano è valido, mantieni autoritativi i bit X/Y (4/5)
+        //   per evitare instabilità del ROLL dovuta a merge ambiguo.
+        // - se XR non è valido, fallback completo da navigator.getGamepads().
+        if (typeof navigator.getGamepads === "function") {
+          const pads = navigator.getGamepads();
+          if (pads) {
+            if (pads[0] && pads[0].buttons) {
+              const maskL = _maskButtons16(pads[0].buttons);
+              buttonsLeftMask |= maskL;
+              if (maskL & (1 << 1) || maskL & (1 << 2)) gripL = 1;
+            }
+            if (pads[1] && pads[1].buttons) {
+              const maskR = _maskButtons16(pads[1].buttons);
+              if (xrRightButtonsValid) {
+                const ab = (1 << 4) | (1 << 5);
+                buttonsRightMask = (buttonsRightMask & ab) | ((buttonsRightMask | maskR) & ~ab);
+              } else {
+                buttonsRightMask |= maskR;
+              }
+              if (maskR & (1 << 1) || maskR & (1 << 2)) gripR = 1;
+            }
+          }
+        }
+
+        // Normalizza scala ai16: -32768..+32767
+        // In HYBRID (mode=4) base/spalla/gomito sono manuali su joy_x/joy_y.
+        // Su alcuni Quest lo stick sinistro puÃ² risultare "muto" in XR:
+        // fallback automatico allo stick destro per non perdere il controllo braccio.
+        if (teleopMode === 4) {
+          const joyMag = Math.abs(joy_x_raw) + Math.abs(joy_y_raw);
+          if (joyMag < 0.05 && xrRightGp) {
+            const { axX: fbX, axY: fbY } = _pickStickAxes(xrRightGp);
+            joy_x_raw = Number(fbX || 0);
+            joy_y_raw = Number(fbY || 0);
+          }
+        }
+
+        const clamp11 = (v) => Math.max(-1, Math.min(1, Number(v || 0)));
+        const toI16 = (v) => Math.max(-32768, Math.min(32767, Math.round(clamp11(v) * 32767)));
+        const joy_x = toI16(joy_x_raw);
+        const joy_y = toI16(joy_y_raw);
+        const pitch = toI16(pitch_raw);
+        const yaw = toI16(yaw_raw);
+
+        // B) Y (controller SX, buttons[5]) in teleop -> dispatch via controllerRemap.
+        // Append grip-modifier suffix per consentire alla dashboard di mappare
+        // azioni differenti in base allo stato dei grip al momento della pressione.
+        // Il dispatcher fa fallback automatico alla versione senza modifier se
+        // non c'e' binding specifico per il contesto corrente.
+        const bothGrips = !!(gripL && gripR);
+        if (xrLeftGp?.buttons) {
+          const yPressed = !!(xrLeftGp.buttons[5]?.pressed || (Number(xrLeftGp.buttons[5]?.value || 0) > 0.5));
+          if (yPressed && !onXRFrame._yButtonPrev && window.controllerRemap) {
+            try {
+              const _modeName = window.controllerRemap.modeName(vrMode, teleopMode);
+              let _gSfx = "";
+              if (gripL && gripR)         _gSfx = "|bothGrips";
+              else if (!gripL && !gripR)  _gSfx = "|noGrips";
+              else if (gripL && !gripR)   _gSfx = "|leftGrip";
+              else if (!gripL && gripR)   _gSfx = "|rightGrip";
+              window.controllerRemap.dispatch(_modeName, "left.Y.press" + _gSfx);
+            } catch (_) {}
+          }
+          onXRFrame._yButtonPrev = yPressed;
+        } else {
+          onXRFrame._yButtonPrev = false;
+        }
+
+        // C) Click thumbstick destro in teleop -> dispatch via controllerRemap.
+        // Default config: autofocus in MANUAL/HEAD/HYBRID/ASSIST, escluso POSE.
+        // Configurabile dalla dashboard /controllers.
+        if (xrRightGp?.buttons && xrRightGp.buttons.length > 3 && window.controllerRemap) {
+          const rThumbPressed = !!xrRightGp.buttons[3]?.pressed;
+          if (rThumbPressed && !onXRFrame._rThumbPrevTeleop) {
+            const _mn = window.controllerRemap.modeName(vrMode, teleopMode);
+            window.controllerRemap.dispatch(_mn, "right.thumb.click");
+          }
+          onXRFrame._rThumbPrevTeleop = rThumbPressed;
+        }
+
+        // D) Stick DX asse X senza grip â†’ zoom entrambe le camere
+        // Quando entrambi i grip sono rilasciati il robot Ã¨ fermo (no deadman):
+        // l'asse X del controller destro, normalmente usato per yaw, viene
+        // riutilizzato per regolare lo zoom di entrambe le camere contemporaneamente.
+        if (!gripL && !gripR && xrRightGp) {
+          const { axX: zoomAxX } = _pickStickAxes(xrRightGp);
+          if (Math.abs(zoomAxX) > 0.25) {
+            const zFactor = 5; // piÃ¹ rapido rispetto alla calibrazione
+            changeZoom(0, zoomAxX > 0 ? zoomStep * zFactor : -zoomStep * zFactor);
+            changeZoom(1, zoomAxX > 0 ? zoomStep * zFactor : -zoomStep * zFactor);
+          }
+        }
+
+        // E) A/B controller DX held -> dispatch continuo via controllerRemap.
+        // Modificatore "|bothGrips" appeso quando entrambi i grip sono premuti, cosi'
+        // l'azione mappata cambia in funzione del contesto (default HYBRID + bothGrips:
+        // A->zoom_in_continuous, B->zoom_out_continuous). Personalizzabile dashboard /controllers.
+        if (xrRightGp && xrRightGp.buttons && window.controllerRemap) {
+          const aHeld = !!(xrRightGp.buttons[4] && (xrRightGp.buttons[4].pressed || (Number(xrRightGp.buttons[4].value || 0) > 0.5)));
+          const bHeld = !!(xrRightGp.buttons[5] && (xrRightGp.buttons[5].pressed || (Number(xrRightGp.buttons[5].value || 0) > 0.5)));
+          if (aHeld !== bHeld) {
+            const _modeName = window.controllerRemap.modeName(vrMode, teleopMode);
+            const _suffix = bothGrips ? "|bothGrips" : "";
+            if (aHeld) window.controllerRemap.dispatch(_modeName, "right.A.held" + _suffix);
+            else       window.controllerRemap.dispatch(_modeName, "right.B.held" + _suffix);
+          }
+        }
+
+        // F) Overlay latenza video (Hybrid/Head/Assist):
+        // - rect riallineato ogni frame (gestisce anche cambio teleopMode mid-VR)
+        // - texture HUD ridisegnata a ~4Hz (i dati WebRTC arrivano a ~1Hz)
+        try { applyHudRect(); } catch (_) {}
+        if (latencyOverlayVisible && _isLatencyOverlayActive()) {
+          const nowL = performance.now();
+          if (!onXRFrame._lastLatHud) onXRFrame._lastLatHud = 0;
+          if (nowL - onXRFrame._lastLatHud > 250) {
+            try { updateHudTexture(); } catch (_) {}
+            onXRFrame._lastLatHud = nowL;
+          }
+        }
+
+        // C) Logging avanzato per debug (attivo di default)
+        if (window.TELEOP_DEBUG_VERBOSE) {
+          try { console.log("[XR] XR gp used=", usedXrGamepad, "L=", xrLeftGp, "R=", xrRightGp); } catch (_) {}
+          console.log("[XR] joy,pitch,yaw:", joy_x, joy_y, pitch, yaw);
+          console.log("[XR] grip:", gripL, gripR);
+        }
+
+        const now = performance.now();
+        if (!onXRFrame._lastTeleopSend) onXRFrame._lastTeleopSend = 0;
+        /* HEAD/HYBRID restano veloci; HEAD ASSIST usa una cadenza piu' leggera
+           per non saturare solver/backend al primo deadman. */
+        const teleopIntervalMs = (teleopMode === 5) ? 40 : 16.67;
+        if (now - onXRFrame._lastTeleopSend > teleopIntervalMs) {
+          try {
+            let grip = 0;
+            let buttonsLeft = buttonsLeftMask | 0;
+            let buttonsRight = buttonsRightMask | 0;
+            
+            // Leggi quaternioni orientamento visore
+            let quatW = 1.0, quatX = 0.0, quatY = 0.0, quatZ = 0.0;
+            if (pose && pose.transform && pose.transform.orientation) {
+              const q = pose.transform.orientation;
+              quatW = Number(q.w || 1.0);
+              quatX = Number(q.x || 0.0);
+              quatY = Number(q.y || 0.0);
+              quatZ = Number(q.z || 0.0);
+            }
+            
+            // Trigger destro (bit0): telemetria separata, non richiesto per il deadman.
+            let trigR = false;
+            try {
+              if (xrRightGp?.buttons?.length > 0) {
+                const b0 = xrRightGp.buttons[0];
+                trigR = !!(b0 && (b0.pressed || (Number(b0.value || 0) > 0.85)));
+              }
+            } catch (_) {}
+            // Deadman classico: doppio grip contemporaneo anche in HEAD ASSIST (5).
+            grip = (gripL && gripR) ? 1 : 0;
+            // Bitmask: garantisci grip su bit1 (coerente con firmware)
+            if (gripL) buttonsLeft |= (1 << 1);
+            if (gripR) buttonsRight |= (1 << 1);
+            if (trigR) buttonsRight |= (1 << 0);
+
+            // Trigger swap per MANUAL (2) e HYBRID (4): il firmware mappa
+            // trigger_left -> BASE(-) e trigger_right -> BASE(+), ma l'operatore
+            // vuole l'inverso (sx=ruota a sx, dx=ruota a dx). In ASSIST il solver
+            // gestisce gia' la direzione corretta, quindi NON facciamo swap li'.
+            if (teleopMode === 2 || teleopMode === 4) {
+              const _tBitL = buttonsLeft  & (1 << 0);
+              const _tBitR = buttonsRight & (1 << 0);
+              buttonsLeft  = (buttonsLeft  & ~(1 << 0)) | _tBitR;
+              buttonsRight = (buttonsRight & ~(1 << 0)) | _tBitL;
+            }
+
+            // Deadman: bit1 = grip (nessun overlay UI)
+            const leftGrip  = (buttonsLeft  & (1 << 1)) !== 0;
+            const rightGrip = (buttonsRight & (1 << 1)) !== 0;
+
+            // JSON target: joy_x/joy_y/pitch/yaw come int16 ([-32768..32767]), intensity come uint8 [0..255]
+            const clamp01 = (v) => Math.max(0, Math.min(1, v));
+            const intensity01 = clamp01(Math.sqrt(_safeNum(joy_x_raw) * _safeNum(joy_x_raw) + _safeNum(joy_y_raw) * _safeNum(joy_y_raw)));
+            const intensityU8 = Math.max(0, Math.min(255, Math.round(intensity01 * 255)));
+            const nowSec = performance.now() / 1000;
+            teleopHeartbeat = (teleopHeartbeat + 1) & 0xFFFF;
+            
+            // Log intent prima di inviare (ogni 100 invii)
+            if (!onXRFrame._teleopIntentLog) onXRFrame._teleopIntentLog = 0;
+            if (++onXRFrame._teleopIntentLog % 100 === 0) {
+              const fmtQuat = (q) => q
+                ? `[${q.w.toFixed(3)},${q.x.toFixed(3)},${q.y.toFixed(3)},${q.z.toFixed(3)}]`
+                : "[n/a]";
+              console.log(
+                `[teleop] Intent: mode=${teleopMode} ` +
+                `raw(L)=${joy_x_raw.toFixed(2)},${joy_y_raw.toFixed(2)} raw(R)=${pitch_raw.toFixed(2)},${yaw_raw.toFixed(2)} ` +
+                `scaled joy=${joy_x},${joy_y} pitch=${pitch} yaw=${yaw} ` +
+                `head=[${quatW.toFixed(3)},${quatX.toFixed(3)},${quatY.toFixed(3)},${quatZ.toFixed(3)}] ` +
+                `ctrlL=${fmtQuat(leftControllerQuat)} ctrlR=${fmtQuat(rightControllerQuat)} ` +
+                `buttons_L=0x${buttonsLeft.toString(16)} buttons_R=0x${buttonsRight.toString(16)}`
+              );
+            }
+            
+            // Invia sempre mode numerico (0,1,2,3,4) cosÃ¬ il firmware riceve 4->1 al "Riprendi"
+            // e puÃ² riarmare; lo "idle" in Manual VR Ã¨ gestito lato STM32 (freeze dopo inattivitÃ ).
+            const intent = {
+              mode: teleopMode,
+              joy_x,
+              joy_y,
+              pitch,
+              yaw,
+              quat_w: quatW,
+              quat_x: quatX,
+              quat_y: quatY,
+              quat_z: quatZ,
+              intensity: intensityU8,
+              buttons_left: buttonsLeft,
+              buttons_right: buttonsRight,
+              grip: grip ? 1 : 0,
+              heartbeat: teleopHeartbeat,
+              timestamp: nowSec,
+            };
+            if (leftControllerQuat) {
+              intent.ctrl_left_quat_w = leftControllerQuat.w;
+              intent.ctrl_left_quat_x = leftControllerQuat.x;
+              intent.ctrl_left_quat_y = leftControllerQuat.y;
+              intent.ctrl_left_quat_z = leftControllerQuat.z;
+            }
+            if (rightControllerQuat) {
+              intent.ctrl_right_quat_w = rightControllerQuat.w;
+              intent.ctrl_right_quat_x = rightControllerQuat.x;
+              intent.ctrl_right_quat_y = rightControllerQuat.y;
+              intent.ctrl_right_quat_z = rightControllerQuat.z;
+            }
+
+            sendTeleopIntent(intent);
+            /* box quaternioni visore non aggiornato: sempre nascosto */
+          } catch (e) {
+            console.error("[teleop] Error reading joystick:", e);
+          }
+          onXRFrame._lastTeleopSend = now;
+        }
+      }
+
+      // In teleop (solo HEAD/HYBRID): overlay IMU in WebGL; in Manual VR non mostrare
+      if (vrMode === "teleop") {
+        /* IMU overlay removed — always hide rect */
+        gl.uniform4f(locImuRect, 0.0, 0.0, 0.0, 0.0);
+      } else {
+        gl.uniform4f(locImuRect, 0.0, 0.0, 0.0, 0.0);
+      }
+
+      for (const view of pose.views) {
+        const vp = glLayer.getViewport(view);
+        const isRight = (view.eye === "right");
+        const tex = isRight ? texR : texL;
+        const vid = isRight ? rightSourceEl : leftSourceEl;
+        drawOneView(vp.x, vp.y, vp.width, vp.height, vid, tex, isRight);
+      }
+      updateVideoDebugPanel();
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // UI flow
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    let started = false;
+    // Fuoco separato: cam0 (sx) e cam1 (dx)
+    let focusPos0 = Number(localStorage.getItem("focusPos0") || "1.0");
+    let focusPos1 = Number(localStorage.getItem("focusPos1") || "1.0");
+
+    // Offset fisso tra focus0 e focus1 (configurabile via file + localStorage)
+    // Convenzione: focus1 = focus0 - focusOffset01
+    let focusOffset01 = Number(localStorage.getItem("focusOffset01") || "0.25");
+    // =========================================================================
+    // SECTION 9: FOCUS & STARTUP — Autofocus, calibration load, boot sequence
+    // =========================================================================
+    async function loadCalibration() {
+      try {
+        const r = await fetch("/api/webrtc-calibration", { cache: "no-store" });
+        if (!r.ok) return;
+        const j = await r.json();
+        const off = Number(j?.focusOffset01);
+        if (Number.isFinite(off)) {
+          focusOffset01 = off;
+          localStorage.setItem("focusOffset01", String(focusOffset01));
+          setStatus("Calib ok: focusOffset01=" + focusOffset01.toFixed(2));
+        }
+      } catch (_) {}
+    }
+
+    // ModalitÃ  LINK: focus/roll/zoom contemporanei (comandi dal controller destro)
+    let linkMode = (localStorage.getItem("linkMode") === "1");
+    function setLinkMode(v) {
+      linkMode = !!v;
+      localStorage.setItem("linkMode", linkMode ? "1" : "0");
+      setStatus("LINK " + (linkMode ? "ON" : "OFF") + " (X su controller sx)");
+      // aggiorna HUD subito
+      try { if (onXRFrame._lastHud !== undefined) updateHudTexture(); } catch (_) {}
+    }
+    function toggleLinkMode() { setLinkMode(!linkMode); }
+    // Ultimi target desiderati (buffer) â€” se il Control WS cade, li reinviamo al reconnect.
+    let desiredFocus0 = focusPos0;
+    let desiredFocus1 = focusPos1;
+    let _focusSendTimer = null;
+    let _lastSent0 = null;
+    let _lastSent1 = null;
+
+    // AF mode desiderato (quando premi A sul controller destro)
+    let desiredAfMode = null; // "auto" | "continuous" | "manual" | null
+    let _afSendTimer = null;
+    let _lastSentAfMode = null;
+    // Quando AF Ã¨ attivo, inibiamo il fuoco manuale via stick Y (evita cambi accidentali)
+    let manualFocusEnabled = (localStorage.getItem("manualFocusEnabled") !== "0");
+    const focusStep = 0.01;
+    const focusMin = 0.0;
+    const focusMax = 10.0;
+
+    function _scheduleSendAf() {
+      /* MediaMTX + WHEP: nessun signaling su :8556 — solo stato locale / HUD. */
+      if (_afSendTimer) return;
+      _afSendTimer = setTimeout(() => {
+        _afSendTimer = null;
+        if (!desiredAfMode) return;
+        _lastSentAfMode = desiredAfMode;
+        setStatus("AF (locale): " + desiredAfMode + " — non inviato al server (pipeline MediaMTX-only)");
+      }, 120);
+    }
+
+    function setAutofocusBoth() {
+      // â€œautofocusâ€ = continuo (segue la scena)
+      desiredAfMode = "continuous";
+      manualFocusEnabled = false;
+      localStorage.setItem("manualFocusEnabled", "0");
+      _scheduleSendAf();
+    }
+
+    function setManualFocusMode() {
+      // Disattiva autofocus: passa a manuale (poi gli stick regolano f0/f1 separatamente)
+      desiredAfMode = "manual";
+      manualFocusEnabled = true;
+      localStorage.setItem("manualFocusEnabled", "1");
+      _scheduleSendAf();
+      // assicura che i lensPos correnti siano (ri)spediti
+      try { _lastSent0 = null; _lastSent1 = null; _scheduleSendFocus(); } catch (_) {}
+    }
+
+    function _scheduleSendFocus() {
+      /* Nessun invio set_focus: la pipeline non espone più il WS di controllo signaling. */
+      if (_focusSendTimer) return;
+      _focusSendTimer = setTimeout(() => {
+        _focusSendTimer = null;
+        const v0 = Number(desiredFocus0.toFixed(2));
+        const v1 = Number(desiredFocus1.toFixed(2));
+        _lastSent0 = v0;
+        _lastSent1 = v1;
+      }, 140);
+    }
+
+    function setFocusPos(cam, v) {
+      const vv = clamp(v, focusMin, focusMax);
+      if (cam === 0) {
+        focusPos0 = vv;
+        localStorage.setItem("focusPos0", String(focusPos0));
+        desiredFocus0 = vv;
+      } else {
+        focusPos1 = vv;
+        localStorage.setItem("focusPos1", String(focusPos1));
+        desiredFocus1 = vv;
+      }
+      _scheduleSendFocus();
+      setStatus(`focus cam${cam}=` + vv.toFixed(2) + " (solo HUD locale; MediaMTX-only)");
+      // Forza aggiornamento HUD immediato
+      if (onXRFrame._lastHud !== undefined) {
+        updateHudTexture();
+      }
+    }
+
+    function setLinkedFocus0(vFocus0) {
+      // In link-mode comandiamo entrambe: focus1 = focus0 - offset
+      const v0 = clamp(vFocus0, focusMin, focusMax);
+      const v1 = clamp(v0 - focusOffset01, focusMin, focusMax);
+      focusPos0 = v0; focusPos1 = v1;
+      desiredFocus0 = v0; desiredFocus1 = v1;
+      localStorage.setItem("focusPos0", String(focusPos0));
+      localStorage.setItem("focusPos1", String(focusPos1));
+      _scheduleSendFocus();
+      setStatus(`focus LINK f0=${v0.toFixed(2)} f1=${v1.toFixed(2)} (off=${focusOffset01.toFixed(2)})`);
+      if (onXRFrame._lastHud !== undefined) updateHudTexture();
+    }
+
+    if (btnStart) btnStart.addEventListener("click", async () => {
+      if (started) return;
+      console.log("[Viewer] Start video button clicked");
+      started = true;
+      btnStart.disabled = true;
+      setStatus("Connessione alle 2 camere (WHEP)â€¦");
+      try {
+        resetVideoLatencyTelemetry();
+        await loadCalibration();
+        startTeleopWs();
+        let cfg = {};
+        let res;
+        try {
+          res = await fetch("/api/video-config");
+          try {
+            cfg = await res.json();
+          } catch (_) {
+            cfg = {};
+          }
+        } catch (netErr) {
+          console.error("[Viewer] /api/video-config network error:", netErr);
+          throw new Error("Rete: impossibile leggere /api/video-config (" + (netErr && netErr.message ? netErr.message : netErr) + ")");
+        }
+        console.log("[Viewer] /api/video-config HTTP", res.status, cfg);
+        if (!res.ok) {
+          const detail = (cfg && cfg.error) ? cfg.error : ("HTTP " + res.status);
+          throw new Error("Video config non disponibile: " + detail);
+        }
+        if (!cfg || cfg.video_pipeline !== "webrtc") {
+          const detail = (cfg && cfg.error) ? cfg.error : "atteso video_pipeline: webrtc";
+          throw new Error("Pipeline video non supportata: " + detail);
+        }
+        videoDebugState.pipeline = "webrtc";
+        setStatus("WebRTC cam0/cam1 (WHEP)â€¦");
+        console.log("[Viewer] connectWHEP(cam0) start");
+        const { stream: streamL, pc: pcL } = await connectWHEP("cam0");
+        webrtcPcL = pcL;
+        console.log("[Viewer] connectWHEP(cam1) start");
+        const { stream: streamR, pc: pcR } = await connectWHEP("cam1");
+        webrtcPcR = pcR;
+        console.log("[Viewer] webrtcVidL.srcObject assigned");
+        webrtcVidL.srcObject = streamL;
+        console.log("[Viewer] webrtcVidR.srcObject assigned");
+        webrtcVidR.srcObject = streamR;
+        if (_webrtcLatencyTimer) clearInterval(_webrtcLatencyTimer);
+        _webrtcLatencyTimer = setInterval(pollWebRTCLatency, 1500);
+        videoDebugState.cam0Connected = !!(streamL && streamL.getVideoTracks && streamL.getVideoTracks().length);
+        videoDebugState.cam1Connected = !!(streamR && streamR.getVideoTracks && streamR.getVideoTracks().length);
+        try {
+          await Promise.all([webrtcVidL.play(), webrtcVidR.play()]);
+          console.log("[Viewer] webrtcVidL.play() and webrtcVidR.play() resolved");
+        } catch (playErr) {
+          console.error("[Viewer] play() rejected:", playErr && playErr.name, playErr && playErr.message);
+          setStatus("Video play() err: " + (playErr && playErr.message ? playErr.message : playErr));
+        }
+        leftSourceEl = webrtcVidL;
+        rightSourceEl = webrtcVidR;
+        console.log("[Viewer] leftSourceEl/rightSourceEl = webrtc video elements");
+        await Promise.race([
+          Promise.all([
+            new Promise((resolve) => {
+              const t0 = performance.now();
+              (function waitL() {
+                if ((webrtcVidL.videoWidth > 0 && webrtcVidL.currentTime > 0) || (performance.now() - t0) > 2500) return resolve();
+                requestAnimationFrame(waitL);
+              })();
+            }),
+            new Promise((resolve) => {
+              const t0 = performance.now();
+              (function waitR() {
+                if ((webrtcVidR.videoWidth > 0 && webrtcVidR.currentTime > 0) || (performance.now() - t0) > 2500) return resolve();
+                requestAnimationFrame(waitR);
+              })();
+            }),
+          ]),
+          new Promise((resolve) => setTimeout(resolve, 2600)),
+        ]);
+        console.log("[Viewer] post-play readiness", {
+          l: { w: webrtcVidL.videoWidth, h: webrtcVidL.videoHeight, t: webrtcVidL.currentTime, rs: webrtcVidL.readyState, p: webrtcVidL.paused },
+          r: { w: webrtcVidR.videoWidth, h: webrtcVidR.videoHeight, t: webrtcVidR.currentTime, rs: webrtcVidR.readyState, p: webrtcVidR.paused },
+        });
+        setStatus("WebRTC (WHEP) attivo. Entra in VR.");
+        enableAllButtons();
+        preview.style.display = "block";
+      } catch (e) {
+        console.error("[Viewer] Start video error:", e);
+        setStatus("Errore connessione video: " + (e?.message || e));
+        btnStart.disabled = false;
+        started = false;
+      }
+    });
+
+    function sendCalibrationIntentOnce() {
+      if (!teleopWs || teleopWs.readyState !== 1) return;
+      try {
+        teleopHeartbeat = (teleopHeartbeat + 1) | 0;
+        const intent = {
+          mode: 0,
+          joy_x: 0, joy_y: 0, pitch: 0, yaw: 0,
+          quat_w: 1, quat_x: 0, quat_y: 0, quat_z: 0,
+          intensity: 0, buttons_left: 0, buttons_right: 0,
+          grip: 0, heartbeat: teleopHeartbeat,
+        };
+        teleopWs.send(JSON.stringify(intent));
+        console.log("[UI] mode: 0 (calibration) sent once");
+      } catch (_) {}
+    }
+
+    if (btnVR) btnVR.addEventListener("click", async () => {
+      try {
+        if (_headModeActive) _stopHeadMode();
+        teleopMode = 0; // CALIBRATION_CAMERA
+        _syncModeButtons(0);
+        sendCalibrationIntentOnce();
+        if (!inVRSession) {
+          await enterVR("stereo");
+        } else {
+          vrMode = "stereo";
+          setStatus("ModalitÃ  calibrazione camera (0) attiva");
+        }
+      } catch (e) {
+        setStatus("VR non avviabile: " + (e?.message || e) + " (probabile: serve HTTPS)");
+      }
+    });
+
+    if (btnTeleop) btnTeleop.addEventListener("click", async () => {
+      try {
+        if (_headModeActive) _stopHeadMode();
+        teleopMode = 2; // MANUAL_VR
+        _syncModeButtons(2);
+        if (!inVRSession) {
+          await enterVR("teleop");
+        } else {
+          vrMode = "teleop";
+          setStatus("Manual VR (2) attiva");
+        }
+      } catch (e) {
+        setStatus("VR non avviabile: " + (e?.message || e) + " (probabile: serve HTTPS)");
+      }
+    });
+
+    if (btnTeleopHead) btnTeleopHead.addEventListener("click", async () => {
+      // Toggle stop solo se siamo già in Head VR (3); da IK/Hybrid il click avvia HEAD.
+      if (_headModeActive && teleopMode === 3) {
+        _stopHeadMode();
+        return;
+      }
+      try {
+        await _startHeadModeSequence(3);
+      } catch (e) {
+        _headModeStarting = false;
+        setStatus("[HEAD] Errore avvio: " + (e?.message || e));
+        _setHeadModeUI(false);
+      }
+    });
+
+
+    if (btnTeleopHybrid) btnTeleopHybrid.addEventListener("click", async () => {
+      try {
+        if (_headModeActive) _stopHeadMode();
+        await _startHeadModeSequence(4);
+      } catch (e) {
+        _headModeStarting = false;
+        setStatus("VR non avviabile: " + (e?.message || e) + " (probabile: serve HTTPS)");
+      }
+    });
+
+    if (btnTeleopPose) btnTeleopPose.addEventListener("click", async () => {
+      /* Invia TELEOPPOSE via UART (stesso canale WS, type="uart") â€” identico alla dashboard */
+      if (teleopWs && teleopWs.readyState === WebSocket.OPEN) {
+        teleopWs.send(JSON.stringify({ type: "uart", cmd: "TELEOPPOSE" }));
+        setStatus("[TELEOP] Pose VR â†’ TELEOPPOSE via UART (modalitÃ  corrente invariata)");
+      } else {
+        setStatus("[TELEOP] Pose VR: WS non connesso, comando non inviato");
+      }
+      // Pose VR non cambia modalitÃ : se sei in HEAD/HYBRID resti lÃ¬.
+      if (!inVRSession) {
+        try {
+          await enterVR("teleop");
+        } catch (e) {
+          setStatus("VR non avviabile per Pose: " + (e?.message || e));
+        }
+      } else {
+        vrMode = "teleop";
+      }
+    });
+
+    if (btnTeleopIk) btnTeleopIk.addEventListener("click", async () => {
+      if (_headModeActive && teleopMode === 5) {
+        _stopHeadMode();
+        return;
+      }
+      try {
+        await _startIkModeSequence();
+      } catch (e) {
+        _headModeStarting = false;
+        setStatus("[HEAD ASSIST] Errore avvio: " + (e?.message || e));
+      }
+    });
+
+    // Apertura da dashboard con ?mode=0|1|2|3|4: applica la modalitÃ  dopo breve delay (WS + DOM pronti)
+    (function applyLaunchMode() {
+      const params = new URLSearchParams(window.location.search);
+      const modeParam = params.get("mode");
+      if (modeParam === null) return;
+      const m = parseInt(modeParam, 10);
+      if (Number.isNaN(m) || m < 0 || m > 5) return;
+      const btn = m === 0 ? btnVR : m === 1 ? btnTeleopPose : m === 2 ? btnTeleop : m === 3 ? btnTeleopHead : m === 4 ? btnTeleopHybrid : btnTeleopIk;
+      if (!btn) return;
+      setTimeout(function () {
+        btn.click();
+        try { window.history.replaceState({}, "", window.location.pathname); } catch (_) {}
+      }, 1600);
+    })();
+
+    // canvas sizing per fallback (non XR): usa ResizeObserver invece di raf a 60Hz
+    // cosÃ¬ il resize avviene solo quando il canvas cambia dimensione, non ad ogni frame.
+    resizeCanvasToDisplaySize();
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(() => { if (!inVRSession) resizeCanvasToDisplaySize(); }).observe(canvas);
+    } else {
+      // Fallback per browser senza ResizeObserver
+      window.addEventListener("resize", () => { if (!inVRSession) resizeCanvasToDisplaySize(); });
+    }
+
+    // ---- Controller remap: registra tutte le action note + carica config dal server.
+    // Tutte le action devono essere gia' definite a questo punto (siamo a fine script).
+    if (window.controllerRemap) {
+      const cr = window.controllerRemap;
+      cr.registerAction("noop", () => {});
+      cr.registerAction("setAutofocusBoth",   setAutofocusBoth);
+      cr.registerAction("setManualFocusMode", setManualFocusMode);
+      cr.registerAction("toggleHudVisible",   toggleHudVisible);
+      cr.registerAction("toggleLatencyOverlay", toggleLatencyOverlay);
+      cr.registerAction("toggleLinkMode",     toggleLinkMode);
+      // Continuous zoom: ogni call applica un singolo step (chiamato per-frame quando held).
+      cr.registerAction("zoom_in_continuous",  () => { changeZoom(0,  zoomStep * 5); changeZoom(1,  zoomStep * 5); });
+      cr.registerAction("zoom_out_continuous", () => { changeZoom(0, -zoomStep * 5); changeZoom(1, -zoomStep * 5); });
+      // Crosshair: persistito in localStorage. Default ON.
+      try {
+        const _saved = localStorage.getItem("crosshairOn");
+        window._crosshairOn = (_saved === null) ? true : (_saved === "1");
+      } catch (_) { window._crosshairOn = true; }
+      cr.registerAction("toggleCrosshair", () => {
+        window._crosshairOn = !window._crosshairOn;
+        try { localStorage.setItem("crosshairOn", window._crosshairOn ? "1" : "0"); } catch (_) {}
+        try { setStatus("Mirino " + (window._crosshairOn ? "ON" : "OFF")); } catch (_) {}
+      });
+      // Hardware refocus: trigger restart MediaMTX (re-init libcamera AF su entrambe).
+      // Causa ~1-2s di glitch video. Debounce client-side 5s + server-side 3s.
+      // Auto-convergence on/off (misura disparita' L/R al centro -> convPx)
+      try {
+        const _saved = localStorage.getItem("autoConvEnabled");
+        _autoConv.enabled = (_saved === "1");
+      } catch (_) {}
+      if (_autoConv.enabled) _ensureAutoConvLoop();
+      cr.registerAction("toggleAutoConv", () => {
+        _autoConv.enabled = !_autoConv.enabled;
+        try { localStorage.setItem("autoConvEnabled", _autoConv.enabled ? "1" : "0"); } catch (_) {}
+        if (_autoConv.enabled) _ensureAutoConvLoop();
+        try { setStatus("Auto-convergence " + (_autoConv.enabled ? "ON" : "OFF")); } catch (_) {}
+      });
+      cr.registerAction("refocusCamerasHw", () => {
+        const _now = performance.now();
+        if (window._lastRefocusTs && (_now - window._lastRefocusTs) < 5000) {
+          try { setStatus("Refocus in cooldown (5s)"); } catch (_) {}
+          return;
+        }
+        window._lastRefocusTs = _now;
+        try { setStatus("Refocus camere in corso..."); } catch (_) {}
+        fetch("/api/refocus-cameras", { method: "POST" })
+          .then(r => r.json().then(b => ({ ok: r.ok, body: b })))
+          .then(({ ok, body }) => {
+            try { setStatus(ok ? "Refocus OK" : ("Refocus errore: " + (body.error || "?"))); } catch (_) {}
+            // Broadcast a tutti gli altri client (es. dashboard vr-live)
+            // cosi' che riconnettano i propri stream WHEP dopo restart MediaMTX.
+            if (ok) {
+              try {
+                if (teleopWs && teleopWs.readyState === WebSocket.OPEN) {
+                  teleopWs.send(JSON.stringify({ type: "cameras_refocus_triggered" }));
+                }
+              } catch (_) {}
+            }
+          })
+          .catch(e => { try { setStatus("Refocus errore: " + (e.message || e)); } catch (_) {} });
+      });
+      cr.loadFromServer();
+    }
+  </script>
+</body>
+</html>

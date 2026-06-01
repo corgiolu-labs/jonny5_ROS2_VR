@@ -1,0 +1,12 @@
+[Unit]
+Description=JONNY5 WebRTC fallback check every 60s
+After=jonny5-video-init.service
+
+[Timer]
+# Grace period: prima verifica 2 min dopo boot (MediaMTX ha tempo di avviarsi)
+OnBootSec=120
+OnUnitActiveSec=60
+AccuracySec=10
+
+[Install]
+WantedBy=timers.target

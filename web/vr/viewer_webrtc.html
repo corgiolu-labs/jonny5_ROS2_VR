@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<title>JONNY5 WebRTC Dual Camera</title>
+<style>
+  body {
+    background: #000;
+    margin: 0;
+    padding: 0;
+  }
+  .header-log {
+    display: none; /* nascosto: si vedono solo le camere */
+  }
+  .videos {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    padding: 8px;
+    min-height: 100vh;
+    box-sizing: border-box;
+  }
+  .video-box {
+    flex: 1;
+    min-width: 280px;
+  }
+  .video-box label {
+    display: none; /* solo video visibili */
+  }
+  video {
+    width: 100%;
+    max-width: 640px;
+    background: #222;
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div class="header-log">
+  <h2>JONNY5 WebRTC Dual Camera</h2>
+  <div id="log">Boot…</div>
+</div>
+<div class="videos">
+  <div class="video-box">
+    <label>Camera 0</label>
+    <video id="remoteVideo0" playsinline autoplay muted></video>
+  </div>
+  <div class="video-box">
+    <label>Camera 1</label>
+    <video id="remoteVideo1" playsinline autoplay muted></video>
+  </div>
+</div>
+
+<script>
+const logDiv = document.getElementById("log");
+function mlog(msg) {
+  console.log(msg);
+  if (logDiv) logDiv.textContent += "\n" + msg;
+}
+
+// Host dinamico: usa l'IP con cui la pagina è stata caricata.
+const WS_HOST = window.location.hostname;
+const PORTS = [8554, 8555]; // cam0, cam1
+
+/** Apre una PeerConnection verso una porta di signaling e mostra il video in remoteVideo{idx}. */
+async function connectCamera(port, idx) {
+  const ws = new WebSocket(`wss://${WS_HOST}:${port}`);
+  const video = document.getElementById("remoteVideo" + idx);
+  if (!video) return;
+
+  const pc = new RTCPeerConnection({ iceServers: [] });
+  pc.addTransceiver("video", { direction: "recvonly" });
+
+  pc.ontrack = (ev) => {
+    if (ev.track.kind !== "video") return;
+    mlog("cam" + idx + " ontrack");
+    video.srcObject = new MediaStream([ev.track]);
+    video.play().catch(() => {});
+  };
+
+  pc.onicecandidate = (ev) => {
+    if (ev.candidate) ws.send(JSON.stringify({ candidate: ev.candidate }));
+  };
+
+  ws.onopen = async () => {
+    mlog("cam" + idx + " WebSocket open, sending offer...");
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ sdp: offer.sdp, type: offer.type }));
+  };
+
+  ws.onmessage = async (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.sdp) {
+      await pc.setRemoteDescription(new RTCSessionDescription({ type: msg.type, sdp: msg.sdp }));
+    }
+    if (msg.candidate) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+      } catch (e) {
+        console.error("cam" + idx + " addIceCandidate", e);
+      }
+    }
+  };
+
+  ws.onerror = () => mlog("cam" + idx + " WebSocket error");
+  ws.onclose = () => mlog("cam" + idx + " WebSocket closed");
+}
+
+async function start() {
+  mlog("Dual camera: connecting to ws://" + WS_HOST + ":" + PORTS[0] + " and " + PORTS[1]);
+  await Promise.all([connectCamera(PORTS[0], 0), connectCamera(PORTS[1], 1)]);
+}
+
+start();
+</script>
+
+</body>
+</html>
+

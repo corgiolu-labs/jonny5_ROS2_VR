@@ -1,0 +1,15 @@
+[Unit]
+Description=JONNY5 video boot — MediaMTX low-latency only (webrtc)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/jonny5/raspberry5
+ExecStart=/bin/bash /home/jonny5/raspberry5/scripts/select_video_pipeline.sh
+User=jonny5
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=JONNY5 SPI J5VR TX (~100 Hz verso STM32)
+After=network.target
+
+[Service]
+WorkingDirectory=/home/jonny5/raspberry5/controller/web_services
+Environment=PYTHONPATH=/home/jonny5/raspberry5
+Environment=J5_SPI_CANONICAL_128=1
+Environment=J5_ASSIST_V2_RAW=0
+Environment=J5_ASSIST_V2_SHADOW=0
+Environment=J5_ASSIST_V2_RAW_EXCLUSIVE=0
+# 128B @ ~100 Hz: nessun ritardo post-xfer. L'allineamento del frame e' garantito
+# dallo scan della finestra 128B (verificato in HW: offset 'J5' = 0 fino a 844 Hz,
+# 0 errori); il delay di 20 ms serviva solo a ridurre le riletture della stessa
+# telemetria a 30 Hz, gestite comunque dalla logica imu_repeated lato bridge.
+Environment=J5_SPI_POST_XFER_DELAY_MS=0
+ExecStart=/home/jonny5/raspberry5/.venv/bin/python3 -u /home/jonny5/raspberry5/controller/teleop/spi_j5vr_tx.py
+Restart=always
+RestartSec=1
+User=jonny5
+
+[Install]
+WantedBy=multi-user.target

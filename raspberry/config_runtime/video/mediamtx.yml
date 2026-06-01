@@ -1,0 +1,43 @@
+# MediaMTX — configurazione unica low-latency JONNY5 (dual camera 800x450, 120 FPS).
+# Path: config_runtime/video/mediamtx.yml (accanto a video_pipeline.yaml).
+# Caricata da scripts/start_mediamtx.sh quando video_pipeline: webrtc.
+
+logLevel: info
+writeQueueSize: 64
+readTimeout: 5s
+writeTimeout: 5s
+
+rtsp: true
+rtspAddress: :8554
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcLocalTCPAddress: ":8189"
+webrtcHandshakeTimeout: 5s
+webrtcTrackGatherTimeout: 2s
+
+paths:
+  cam0:
+    source: rpiCamera
+    rpiCameraCamID: 0
+    rpiCameraWidth: 800
+    rpiCameraHeight: 450
+    rpiCameraFPS: 120
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 20
+    rpiCameraBitrate: 3000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal
+  cam1:
+    source: rpiCamera
+    rpiCameraCamID: 1
+    rpiCameraWidth: 800
+    rpiCameraHeight: 450
+    rpiCameraFPS: 120
+    rpiCameraCodec: auto
+    rpiCameraDenoise: "off"
+    rpiCameraIDRPeriod: 20
+    rpiCameraBitrate: 3000000
+    rpiCameraAfMode: continuous
+    rpiCameraAfRange: normal

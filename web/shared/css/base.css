@@ -1,0 +1,14 @@
+/* Base palette + reset per tutto JONNY5-4.0 */
+:root {
+    --bg: #05070c;
+    --panel: #111a28;
+    --text: #f6f8fb;
+    --muted: #9db1cc;
+    --primary: #3d9dff;
+    --secondary: #12c2b2;
+    --danger: #ff5161;
+    --success: #4caf50;
+    --warning: #ff9800;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: "Segoe UI", sans-serif; }
