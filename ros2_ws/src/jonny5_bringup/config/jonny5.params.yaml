@@ -1,0 +1,20 @@
+﻿jonny5_spi_bridge:
+  ros__parameters:
+    hardware_enabled: false
+    publish_rate_hz: 50.0
+    legacy_root: ""
+    telemetry_file: "/dev/shm/j5vr_telemetry.json"
+    intent_file: "/dev/shm/j5vr_latest_intent.json"
+    joint_names:
+      - base_joint
+      - shoulder_joint
+      - elbow_joint
+      - wrist_yaw_joint
+      - wrist_pitch_joint
+      - wrist_roll_joint
+
+jonny5_vr_bridge:
+  ros__parameters:
+    bind_host: "0.0.0.0"
+    bind_port: 8567
+    legacy_root: ""

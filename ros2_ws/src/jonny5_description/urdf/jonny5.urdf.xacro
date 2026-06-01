@@ -1,0 +1,121 @@
+﻿<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="jonny5">
+  <xacro:property name="base_height" value="0.112" />
+  <xacro:property name="upper_arm" value="0.060" />
+  <xacro:property name="forearm" value="0.173" />
+  <xacro:property name="wrist_stack" value="0.172" />
+  <xacro:property name="tool_x" value="0.057" />
+
+  <material name="jonny5_dark"><color rgba="0.08 0.09 0.10 1.0" /></material>
+  <material name="jonny5_signal"><color rgba="0.10 0.58 0.78 1.0" /></material>
+
+  <link name="world" />
+  <joint name="world_to_base" type="fixed">
+    <parent link="world" />
+    <child link="base_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+
+  <link name="base_link">
+    <visual><geometry><cylinder radius="0.065" length="0.045" /></geometry><material name="jonny5_dark" /></visual>
+    <collision><geometry><cylinder radius="0.065" length="0.045" /></geometry></collision>
+    <inertial><mass value="0.6" /><origin xyz="0 0 0.022" /><inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001" /></inertial>
+  </link>
+
+  <link name="shoulder_link">
+    <visual><origin xyz="0 0 ${base_height/2}" /><geometry><box size="0.060 0.060 ${base_height}" /></geometry><material name="jonny5_signal" /></visual>
+    <collision><origin xyz="0 0 ${base_height/2}" /><geometry><box size="0.060 0.060 ${base_height}" /></geometry></collision>
+    <inertial><mass value="0.4" /><origin xyz="0 0 ${base_height/2}" /><inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001" /></inertial>
+  </link>
+
+  <joint name="base_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="shoulder_link" />
+    <origin xyz="0 0 0.022" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-0.785398" upper="0.785398" effort="5.0" velocity="2.0" />
+  </joint>
+
+  <link name="upper_arm_link">
+    <visual><origin xyz="0 0 ${upper_arm/2}" /><geometry><box size="0.045 0.045 ${upper_arm}" /></geometry><material name="jonny5_dark" /></visual>
+    <collision><origin xyz="0 0 ${upper_arm/2}" /><geometry><box size="0.045 0.045 ${upper_arm}" /></geometry></collision>
+    <inertial><mass value="0.35" /><origin xyz="0 0 ${upper_arm/2}" /><inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001" /></inertial>
+  </link>
+
+  <joint name="shoulder_joint" type="revolute">
+    <parent link="shoulder_link" />
+    <child link="upper_arm_link" />
+    <origin xyz="0 0 ${base_height}" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="-1.047198" upper="0.959931" effort="5.0" velocity="1.5" />
+  </joint>
+
+  <link name="forearm_link">
+    <visual><origin xyz="0 0 ${forearm/2}" /><geometry><box size="0.040 0.040 ${forearm}" /></geometry><material name="jonny5_signal" /></visual>
+    <collision><origin xyz="0 0 ${forearm/2}" /><geometry><box size="0.040 0.040 ${forearm}" /></geometry></collision>
+    <inertial><mass value="0.3" /><origin xyz="0 0 ${forearm/2}" /><inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001" /></inertial>
+  </link>
+
+  <joint name="elbow_joint" type="revolute">
+    <parent link="upper_arm_link" />
+    <child link="forearm_link" />
+    <origin xyz="0 0 ${upper_arm}" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="-1.047198" upper="0.959931" effort="5.0" velocity="1.5" />
+  </joint>
+
+  <link name="wrist_yaw_link"><visual><origin xyz="0 0 ${wrist_stack/3}" /><geometry><box size="0.035 0.035 ${wrist_stack/3}" /></geometry><material name="jonny5_dark" /></visual></link>
+  <joint name="wrist_yaw_joint" type="revolute">
+    <parent link="forearm_link" />
+    <child link="wrist_yaw_link" />
+    <origin xyz="0 0 ${forearm}" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-0.785398" upper="0.785398" effort="2.0" velocity="1.5" />
+  </joint>
+
+  <link name="wrist_pitch_link"><visual><origin xyz="0 0 ${wrist_stack/3}" /><geometry><box size="0.032 0.032 ${wrist_stack/3}" /></geometry><material name="jonny5_signal" /></visual></link>
+  <joint name="wrist_pitch_joint" type="revolute">
+    <parent link="wrist_yaw_link" />
+    <child link="wrist_pitch_link" />
+    <origin xyz="0 0 ${wrist_stack/3}" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="-0.959931" upper="0.523599" effort="2.0" velocity="1.5" />
+  </joint>
+
+  <link name="wrist_roll_link"><visual><origin xyz="0 0 ${wrist_stack/3}" /><geometry><box size="0.030 0.030 ${wrist_stack/3}" /></geometry><material name="jonny5_dark" /></visual></link>
+  <joint name="wrist_roll_joint" type="revolute">
+    <parent link="wrist_pitch_link" />
+    <child link="wrist_roll_link" />
+    <origin xyz="0 0 ${wrist_stack/3}" rpy="0 0 0" />
+    <axis xyz="1 0 0" />
+    <limit lower="-0.785398" upper="0.785398" effort="2.0" velocity="1.5" />
+  </joint>
+
+  <link name="ee_link"><visual><origin xyz="${tool_x/2} 0 0" /><geometry><box size="${tool_x} 0.025 0.025" /></geometry><material name="jonny5_signal" /></visual></link>
+  <joint name="tool_joint" type="fixed">
+    <parent link="wrist_roll_link" />
+    <child link="ee_link" />
+    <origin xyz="0 0 ${wrist_stack/3}" rpy="0 0 0" />
+  </joint>
+
+  <link name="imu_link" />
+  <joint name="imu_joint" type="fixed">
+    <parent link="ee_link" />
+    <child link="imu_link" />
+    <origin xyz="0.030 0 0.020" rpy="0 0 0" />
+  </joint>
+
+  <link name="left_camera_link" />
+  <joint name="left_camera_joint" type="fixed">
+    <parent link="ee_link" />
+    <child link="left_camera_link" />
+    <origin xyz="0.045 0.032 0" rpy="0 0 0" />
+  </joint>
+
+  <link name="right_camera_link" />
+  <joint name="right_camera_joint" type="fixed">
+    <parent link="ee_link" />
+    <child link="right_camera_link" />
+    <origin xyz="0.045 -0.032 0" rpy="0 0 0" />
+  </joint>
+</robot>

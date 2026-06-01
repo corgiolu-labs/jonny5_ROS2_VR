@@ -1,0 +1,18 @@
+﻿<?xml version="1.0"?>
+<package format="3">
+  <name>jonny5_hardware</name>
+  <version>0.1.0</version>
+  <description>ROS2 bridge for the JONNY5 Raspberry Pi to STM32 hardware path.</description>
+  <maintainer email="dev@corgiolu-labs.local">corgiolu-labs</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>jonny5_msgs</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
