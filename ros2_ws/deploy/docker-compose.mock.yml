@@ -1,0 +1,6 @@
+# Override for a hardware-free smoke test (no SPI device, synthetic telemetry).
+#   docker compose -f docker-compose.yml -f docker-compose.mock.yml up
+services:
+  jonny5:
+    devices: []
+    command: ["ros2", "launch", "jonny5_bringup", "bringup.launch.py", "use_mock_spi:=true", "sim_intent:=true"]

@@ -1,10 +1,15 @@
-jonny5_spi_bridge:
+# JONNY5 ROS2 runtime parameters (native stack — see ADR-001).
+
+jonny5_spi_driver:
   ros__parameters:
-    hardware_enabled: false
-    publish_rate_hz: 50.0
+    # Dry-run default. Set use_mock_spi:=false on the real Raspberry Pi.
+    use_mock_spi: true
+    spi_device: "/dev/spidev0.0"
+    spi_speed_hz: 1000000
+    tx_rate_hz: 100.0
+    # Path to the dir containing the legacy 'controller' package.
+    # Empty = auto-resolve (env JONNY5_LEGACY_ROOT, repo walk-up, Pi fallback).
     legacy_root: ""
-    telemetry_file: "/dev/shm/j5vr_telemetry.json"
-    intent_file: "/dev/shm/j5vr_latest_intent.json"
     joint_names:
       - base_joint
       - shoulder_joint
@@ -17,4 +22,3 @@ jonny5_vr_bridge:
   ros__parameters:
     bind_host: "0.0.0.0"
     bind_port: 8567
-    legacy_root: ""

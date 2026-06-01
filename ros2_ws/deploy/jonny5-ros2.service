@@ -1,0 +1,20 @@
+# Autostart the JONNY5 ROS2 container at boot.
+# Install:  sudo cp jonny5-ros2.service /etc/systemd/system/ && sudo systemctl enable --now jonny5-ros2
+# Adjust User= and WorkingDirectory= to match your username and clone location.
+[Unit]
+Description=JONNY5 ROS2 control plane (Docker)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jonny5
+WorkingDirectory=/home/jonny5/JONNY5_ROS2/ros2_ws/deploy
+ExecStart=/usr/bin/docker compose up
+ExecStop=/usr/bin/docker compose down
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

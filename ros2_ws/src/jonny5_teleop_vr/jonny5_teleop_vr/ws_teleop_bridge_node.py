@@ -82,6 +82,13 @@ class WebSocketTeleopBridgeNode(Node):
         msg.buttons_left = int(data.get("buttons_left", 0) or 0) & 0xFFFF
         msg.buttons_right = int(data.get("buttons_right", 0) or 0) & 0xFFFF
 
+        cam = data.get("camctrl") if isinstance(data.get("camctrl"), dict) else {}
+        cam_cmd = {"focus": 1, "zoom": 2, "conv": 3}.get(cam.get("cmd"), 0)
+        cam_delta = self._i16(cam.get("delta", 0))
+        # A zero delta or unknown command means "no camera action this frame".
+        msg.camctrl_cmd = cam_cmd if cam_delta != 0 else 0
+        msg.camctrl_delta = cam_delta if cam_cmd != 0 else 0
+
         mode5 = data.get("mode5_arm") if isinstance(data.get("mode5_arm"), dict) else {}
         msg.mode5_arm_valid = bool(mode5.get("valid", False))
         msg.mode5_grip_active = bool(mode5.get("grip_active", False))
@@ -101,6 +108,14 @@ class WebSocketTeleopBridgeNode(Node):
                 return max(-32768, min(32767, value))
             value_f = max(-1.0, min(1.0, float(value)))
             return int(round(value_f * 32767.0))
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _i16(value: Any) -> int:
+        """Clamp a raw integer step to int16 (no normalization)."""
+        try:
+            return max(-32768, min(32767, int(round(float(value)))))
         except Exception:
             return 0
 

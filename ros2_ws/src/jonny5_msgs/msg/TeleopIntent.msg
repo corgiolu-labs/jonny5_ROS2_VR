@@ -23,6 +23,14 @@ geometry_msgs/Quaternion headset_orientation
 uint16 buttons_left
 uint16 buttons_right
 
+# Camera control (VR): focus / zoom / convergence step. delta is a raw step count.
+uint8 CAMCTRL_NONE=0
+uint8 CAMCTRL_FOCUS=1
+uint8 CAMCTRL_ZOOM=2
+uint8 CAMCTRL_CONV=3
+uint8 camctrl_cmd
+int16 camctrl_delta
+
 bool mode5_arm_valid
 bool mode5_grip_active
 bool mode5_hold_active
