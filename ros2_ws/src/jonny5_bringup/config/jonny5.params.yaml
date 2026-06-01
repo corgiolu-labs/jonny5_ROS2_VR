@@ -7,6 +7,9 @@ jonny5_spi_driver:
     spi_device: "/dev/spidev0.0"
     spi_speed_hz: 1000000
     tx_rate_hz: 100.0
+    # Rate of interleaved 0x03 STATUS requests to read the firmware diag
+    # (deadman/armed/freeze/guard). 0 disables (telemetry-only).
+    status_request_hz: 5.0
     # Path to the dir containing the legacy 'controller' package.
     # Empty = auto-resolve (env JONNY5_LEGACY_ROOT, repo walk-up, Pi fallback).
     legacy_root: ""

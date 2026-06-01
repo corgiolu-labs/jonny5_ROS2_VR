@@ -108,6 +108,7 @@ class SpiDriverNode(Node):
         self.declare_parameter("spi_device", "/dev/spidev0.0")
         self.declare_parameter("spi_speed_hz", 1_000_000)
         self.declare_parameter("tx_rate_hz", 100.0)
+        self.declare_parameter("status_request_hz", 5.0)
         self.declare_parameter("legacy_root", "")
         self.declare_parameter("joint_names", [
             "base_joint",
@@ -120,6 +121,9 @@ class SpiDriverNode(Node):
 
         self.use_mock = bool(self.get_parameter("use_mock_spi").value)
         self.joint_names = [str(x) for x in self.get_parameter("joint_names").value]
+        self._tick_count = 0
+        self._fw_diag: Optional[Dict[str, Any]] = None
+        self._imu_ok = False
 
         self.joint_pub = self.create_publisher(JointState, "joint_states", 10)
         self.imu_pub = self.create_publisher(Imu, "imu/data", 10)
@@ -133,9 +137,14 @@ class SpiDriverNode(Node):
         self.bridge = self._build_bridge()
 
         rate = float(self.get_parameter("tx_rate_hz").value)
+        status_hz = float(self.get_parameter("status_request_hz").value)
+        # Every Nth tick sends a 0x03 STATUS request instead of a setpoint, to read
+        # the firmware diag (deadman/armed/freeze/guard). 0 disables.
+        self._status_every = int(round(rate / status_hz)) if status_hz > 0 else 0
         self.create_timer(1.0 / max(rate, 1.0), self._tick)
         self.get_logger().info(
-            f"JONNY5 native SPI driver started (mock={self.use_mock}, tx_rate={rate} Hz)"
+            f"JONNY5 native SPI driver started (mock={self.use_mock}, tx_rate={rate} Hz, "
+            f"status_every={self._status_every})"
         )
 
     def _build_bridge(self):
@@ -150,6 +159,13 @@ class SpiDriverNode(Node):
         self.get_logger().info(f"Legacy data-plane root: {legacy_root}")
 
         from controller.spi_dataplane.j5vr_spi_bridge import J5VRSPIBridge
+        from controller.spi_dataplane.j5vr_frame import J5VRFrame
+        from controller.spi_dataplane.spi_transport_mode import (
+            extract_canonical_frame64_from_transport_rx,
+        )
+
+        self._make_frame = J5VRFrame
+        self._extract_rx = extract_canonical_frame64_from_transport_rx
 
         if self.use_mock:
             spi = MockSpiWorker()
@@ -169,9 +185,45 @@ class SpiDriverNode(Node):
 
     def _tick(self) -> None:
         try:
-            self.bridge.send_setpoint_once()
+            self._tick_count += 1
+            if self._status_every and (self._tick_count % self._status_every == 0):
+                self._request_status()
+            else:
+                self.bridge.send_setpoint_once()
         except Exception as exc:  # keep the node alive on transient SPI errors
             self.get_logger().warning(f"SPI tick failed: {exc}")
+
+    def _request_status(self) -> None:
+        """Poll the STM32 with a 0x03 STATUS frame and parse the firmware diag.
+
+        Firmware responds to 0x04/0x05 with 0x01 telemetry, but the diag bits
+        (deadman/input/armed/freeze/guard, mode echo) ride only in the 0x03
+        STATUS reply (see firmware j5vr_fill_tx_telemetry). A 0x03 request does
+        not update the setpoint; skipping a few setpoints/sec is negligible.
+        """
+        seq = int(self.bridge.sequence_counter) & 0xFFFF
+        tx = self._make_frame(sequence_counter=seq, frame_type=0x03).to_bytes()
+        fl = int(getattr(self.bridge.spi_worker, "_frame_len", 64))
+        if len(tx) == 64 and fl != 64:
+            tx = tx + b"\x00" * (fl - 64)
+        rx = self.bridge.spi_worker.transfer(tx)
+        self.bridge.sequence_counter = (seq + 1) & 0xFFFF
+        rxc = self._extract_rx(rx) if rx and len(rx) >= 64 else rx
+        if not rxc or len(rxc) < 64 or rxc[0:2] != b"J5" or rxc[3] != 0x03:
+            return
+        pl = rxc[8:62]
+        diag = (pl[50] << 8) | pl[51]
+        self._fw_diag = {
+            "mask": diag,
+            "mode": pl[48],
+            "hb": (pl[46] << 8) | pl[47],
+            "deadman": bool(diag & (1 << 0)),
+            "input": bool(diag & (1 << 1)),
+            "armed": bool(diag & (1 << 2)),
+            "freeze": bool(diag & (1 << 3)),
+            "guard": bool(diag & (1 << 4)),
+        }
+        self._publish_status()
 
     # --- telemetry publishing (called by the provider per RX frame) -------
     def publish_telemetry(self, t: Dict[str, Any]) -> None:
@@ -210,22 +262,45 @@ class SpiDriverNode(Node):
         spi_msg.servo_deg = servo
         spi_msg.rt_loop_period_us = int(t.get("rt_loop_period_us", 0) or 0) & 0xFFFF
         spi_msg.rt_step_us = 0  # not carried in 0x01 telemetry frames
-        spi_msg.raw_mode = 0  # FSM/mode echo lives in 0x03 STATUS frames (see task #3)
-        spi_msg.raw_heartbeat = 0
-        spi_msg.diag_mask = 0
+        cmd = self.provider.read_intent_from_file() or {}
+        spi_msg.raw_mode = int(cmd.get("mode", 0) or 0) & 0xFF
+        spi_msg.raw_heartbeat = int(cmd.get("heartbeat", 0) or 0) & 0xFFFF
+        spi_msg.diag_mask = (int(self._fw_diag["mask"]) & 0xFFFF) if self._fw_diag else 0
         self.telemetry_pub.publish(spi_msg)
 
-        status_msg = RobotStatus()
-        status_msg.stamp = now
-        status_msg.state = "TELEMETRY_OK" if imu_valid else "NO_IMU"
-        status_msg.spi_online = True
-        status_msg.stm32_online = True
-        status_msg.imu_online = imu_valid
-        status_msg.deadman_active = False  # only known from 0x03 STATUS frames
-        status_msg.input_active = self.provider.read_intent_from_file() is not None
-        status_msg.movement_allowed = True
-        status_msg.detail = "native spi_driver (0x01 telemetry; FSM state via 0x03 pending)"
-        self.status_pub.publish(status_msg)
+        self._imu_ok = imu_valid
+        self._publish_status()
+
+    def _publish_status(self) -> None:
+        """Publish RobotStatus from the firmware 0x03 diag when available, else
+        from the commanded intent (deadman uses the same grip logic as the
+        firmware: both grips pressed)."""
+        now = self.get_clock().now().to_msg()
+        cmd = self.provider.read_intent_from_file() or {}
+        d = self._fw_diag
+        msg = RobotStatus()
+        msg.stamp = now
+        msg.spi_online = True
+        msg.stm32_online = True
+        msg.imu_online = self._imu_ok
+        if d is not None:
+            msg.deadman_active = bool(d["deadman"])
+            msg.input_active = bool(d["input"])
+            msg.movement_allowed = bool(d["armed"] and not d["freeze"])
+            msg.state = "IDLE" if d["armed"] else "SAFE"
+            flags = [n for n, on in (("freeze", d["freeze"]), ("guard", d["guard"])) if on]
+            suffix = (" [" + ",".join(flags) + "]") if flags else ""
+            msg.detail = ("diag from 0x03 STATUS; SAFE/IDLE/STOPPED FSM not on wire "
+                          "(state approx from armed bit)" + suffix)
+        else:
+            gl = bool(int(cmd.get("buttons_left", 0) or 0) & (1 << 1))
+            gr = bool(int(cmd.get("buttons_right", 0) or 0) & (1 << 1))
+            msg.deadman_active = gl and gr
+            msg.input_active = bool(cmd)
+            msg.movement_allowed = True
+            msg.state = "TELEMETRY_OK" if self._imu_ok else "NO_IMU"
+            msg.detail = "0x01 telemetry; awaiting first 0x03 STATUS for firmware diag"
+        self.status_pub.publish(msg)
 
     @staticmethod
     def _intent_to_legacy_dict(msg: TeleopIntent) -> Dict[str, Any]:

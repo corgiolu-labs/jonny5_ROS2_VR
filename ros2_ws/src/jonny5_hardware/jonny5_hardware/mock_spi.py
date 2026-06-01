@@ -68,14 +68,53 @@ def build_telemetry_frame(
     return bytes(frame)
 
 
+def build_status_frame(
+    *,
+    diag_mask: int,
+    mode: int,
+    heartbeat: int,
+    sequence: int = 0,
+) -> bytes:
+    """Assemble a protocol-valid 64-byte J5 STATUS (0x03) frame.
+
+    Mirrors the firmware ``j5vr_fill_tx_telemetry`` layout (payload offsets):
+      46-47 heartbeat (BE), 48 mode, 50-51 diag_mask (BE):
+      bit0=deadman, 1=input_active, 2=armed, 3=freeze, 4=guard_seen.
+    """
+    frame = bytearray(64)
+    frame[0] = 0x4A  # 'J'
+    frame[1] = 0x35  # '5'
+    frame[2] = 0x01  # protocol version
+    frame[3] = 0x03  # frame_type = STATUS
+    struct.pack_into(">H", frame, 4, sequence & 0xFFFF)
+    frame[6] = 64
+    frame[7] = 0x00
+
+    payload = bytearray(54)
+    payload[46] = (int(heartbeat) >> 8) & 0xFF
+    payload[47] = int(heartbeat) & 0xFF
+    payload[48] = int(mode) & 0xFF
+    payload[50] = (int(diag_mask) >> 8) & 0xFF
+    payload[51] = int(diag_mask) & 0xFF
+    frame[8:62] = payload
+    return bytes(frame)
+
+
 class MockSpiWorker:
-    """Drop-in replacement for ``SPIWorker`` that fabricates telemetry frames."""
+    """Drop-in replacement for ``SPIWorker`` that fabricates telemetry frames.
+
+    Responds to a J5VR/J5IK setpoint (or any non-status frame) with a TELEMETRY
+    (0x01) frame, and to a STATUS request (0x03) with a STATUS (0x03) frame
+    carrying a synthetic diag mask — mirroring the real firmware dispatch.
+    """
 
     def __init__(self, *, rt_loop_period_us: int = 1000) -> None:
         self._is_open = False
         self._frame_len = 64
         self._rt_loop_period_us = int(rt_loop_period_us)
         self._tick = 0
+        # Synthetic firmware diag: deadman+input+armed set (bits 0,1,2).
+        self._diag_mask = 0x0007
 
     # --- SPIWorker-compatible surface -------------------------------------
     def open(self) -> None:
@@ -89,7 +128,20 @@ class MockSpiWorker:
         return self._is_open
 
     def transfer(self, tx: bytes) -> bytes:
-        """Ignore the TX setpoint and return a fresh synthetic telemetry frame."""
+        """Return a synthetic RX frame matching the firmware dispatch.
+
+        A STATUS request (tx frame_type 0x03) yields a STATUS frame with the
+        synthetic diag; anything else yields a TELEMETRY frame.
+        """
+        tx_type = tx[3] if len(tx) > 3 else 0
+        if tx_type == 0x03:
+            self._tick += 1
+            return build_status_frame(
+                diag_mask=self._diag_mask,
+                mode=2,
+                heartbeat=self._tick & 0xFFFF,
+                sequence=(tx[4] << 8 | tx[5]) if len(tx) >= 6 else self._tick,
+            )
         t = self._tick / 50.0
         quat_yaw = 0.25 * math.sin(t * 0.5)
         half = quat_yaw / 2.0
