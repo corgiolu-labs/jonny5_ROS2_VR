@@ -1,4 +1,4 @@
-﻿jonny5_spi_bridge:
+jonny5_spi_bridge:
   ros__parameters:
     hardware_enabled: false
     publish_rate_hz: 50.0

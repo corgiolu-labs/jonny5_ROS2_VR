@@ -1,4 +1,4 @@
-﻿# ROS2 Workspace
+# ROS2 Workspace
 
 This workspace is intentionally incremental. The legacy JONNY5 runtime remains available while ROS2 packages are introduced around it.
 

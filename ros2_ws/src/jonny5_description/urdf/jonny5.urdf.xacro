@@ -1,4 +1,4 @@
-﻿<?xml version="1.0"?>
+<?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="jonny5">
   <xacro:property name="base_height" value="0.112" />
   <xacro:property name="upper_arm" value="0.060" />

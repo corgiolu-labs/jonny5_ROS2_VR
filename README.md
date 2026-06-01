@@ -1,4 +1,4 @@
-﻿# JONNY5 ROS2 VR
+# JONNY5 ROS2 VR
 
 ROS2 migration workspace for JONNY5, a VR-teleoperated 6-DoF robot arm.
 

@@ -1,4 +1,4 @@
-﻿jonny5:
+jonny5:
   joint_limits:
     base_joint: {min_deg: -45.0, max_deg: 45.0, velocity: 2.0}
     shoulder_joint: {min_deg: -60.0, max_deg: 55.0, velocity: 1.5}

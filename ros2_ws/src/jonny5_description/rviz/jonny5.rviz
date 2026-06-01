@@ -1,4 +1,4 @@
-﻿Panels:
+Panels:
   - Class: rviz_common/Displays
 Visualization Manager:
   Class: ""

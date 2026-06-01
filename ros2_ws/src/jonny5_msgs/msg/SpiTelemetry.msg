@@ -1,4 +1,4 @@
-﻿# Parsed telemetry from the STM32 SPI data plane.
+# Parsed telemetry from the STM32 SPI data plane.
 
 builtin_interfaces/Time stamp
 uint32 packet_index

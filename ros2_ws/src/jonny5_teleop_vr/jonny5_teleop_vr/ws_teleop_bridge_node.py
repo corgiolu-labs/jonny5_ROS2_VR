@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import threading
 from typing import Any, Dict, Optional

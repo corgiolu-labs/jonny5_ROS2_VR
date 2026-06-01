@@ -1,4 +1,4 @@
-﻿# High-level JONNY5 robot state suitable for diagnostics and UI.
+# High-level JONNY5 robot state suitable for diagnostics and UI.
 
 builtin_interfaces/Time stamp
 string state

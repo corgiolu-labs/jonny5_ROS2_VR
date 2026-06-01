@@ -1,4 +1,4 @@
-﻿from setuptools import setup
+from setuptools import setup
 
 package_name = "jonny5_teleop_vr"
 

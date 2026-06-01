@@ -1,4 +1,4 @@
-﻿# Normalized JONNY5 VR teleoperation intent.
+# Normalized JONNY5 VR teleoperation intent.
 
 builtin_interfaces/Time stamp
 
