@@ -28,11 +28,7 @@ class WebSocketTeleopBridgeNode(Node):
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        self.get_logger().info(
-            "JONNY5 VR WebSocket ROS2 bridge listening on ws://%s:%d",
-            self.host,
-            self.port,
-        )
+        self.get_logger().info(f"JONNY5 VR WebSocket ROS2 bridge listening on ws://{self.host}:{self.port}")
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -46,7 +42,7 @@ class WebSocketTeleopBridgeNode(Node):
         await websockets.serve(self._handle_client, self.host, self.port, ping_interval=20, ping_timeout=10)
 
     async def _handle_client(self, websocket, path=None) -> None:
-        self.get_logger().info("VR bridge client connected: %s", getattr(websocket, "remote_address", "?"))
+        self.get_logger().info(f"VR bridge client connected: {getattr(websocket, 'remote_address', '?')}")
         async for raw in websocket:
             try:
                 data = json.loads(raw)

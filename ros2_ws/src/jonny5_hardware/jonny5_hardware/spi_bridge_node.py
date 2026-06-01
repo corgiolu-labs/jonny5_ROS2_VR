@@ -65,11 +65,7 @@ class SpiBridgeNode(Node):
 
         rate = float(self.get_parameter("publish_rate_hz").value)
         self.create_timer(1.0 / max(rate, 1.0), self._publish_state)
-        self.get_logger().info(
-            "JONNY5 SPI bridge started (hardware_enabled=%s, telemetry_file=%s)",
-            self.hardware_enabled,
-            self.telemetry_file,
-        )
+        self.get_logger().info(f"JONNY5 SPI bridge started (hardware_enabled={self.hardware_enabled}, telemetry_file={self.telemetry_file})")
 
     def _on_intent(self, msg: TeleopIntent) -> None:
         if not self.hardware_enabled:
@@ -140,7 +136,7 @@ class SpiBridgeNode(Node):
         try:
             self._cached_telemetry = json.loads(self.telemetry_file.read_text(encoding="utf-8"))
         except Exception as exc:
-            self.get_logger().warning("Failed to read telemetry JSON: %s", exc)
+            self.get_logger().warning(f"Failed to read telemetry JSON: {exc}")
         return self._cached_telemetry, fresh
 
     @staticmethod
