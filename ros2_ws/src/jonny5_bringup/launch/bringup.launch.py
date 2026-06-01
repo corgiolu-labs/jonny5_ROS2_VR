@@ -9,6 +9,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     hardware_enabled = LaunchConfiguration("hardware_enabled")
     sim_telemetry = LaunchConfiguration("sim_telemetry")
+    sim_intent = LaunchConfiguration("sim_intent")
     params_file = PathJoinSubstitution([
         FindPackageShare("jonny5_bringup"), "config", "jonny5.params.yaml"
     ])
@@ -31,6 +32,11 @@ def generate_launch_description():
             default_value="false",
             description="Write simulated legacy telemetry for local dry-run development.",
         ),
+        DeclareLaunchArgument(
+            "sim_intent",
+            default_value="false",
+            description="Publish simulated VR teleoperation intents for local dry-run development.",
+        ),
         Node(
             package="robot_state_publisher",
             executable="robot_state_publisher",
@@ -45,6 +51,13 @@ def generate_launch_description():
             output="screen",
             condition=IfCondition(sim_telemetry),
             parameters=[params_file],
+        ),
+        Node(
+            package="jonny5_sim",
+            executable="teleop_intent_sim_node",
+            name="jonny5_teleop_intent_sim",
+            output="screen",
+            condition=IfCondition(sim_intent),
         ),
         Node(
             package="jonny5_hardware",
