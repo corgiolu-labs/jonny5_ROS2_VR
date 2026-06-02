@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One-time host setup on a fresh Raspberry Pi OS Bookworm (64-bit).
+# One-time host setup on a fresh Raspberry Pi OS Trixie / Debian 13 (64-bit).
+# (Docker is installed via get.docker.com, which auto-detects the 'trixie' codename.)
 # Enables SPI and installs Docker. Cameras/MediaMTX are configured separately
 # (legacy native setup) and are intentionally left untouched here.
 set -euo pipefail

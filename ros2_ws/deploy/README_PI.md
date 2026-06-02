@@ -3,7 +3,7 @@
 Target architecture (see [ADR-001](../docs/ADR-001-migration-strategy.md)):
 
 ```
-Raspberry Pi OS Bookworm (64-bit) — HOST
+Raspberry Pi OS Trixie / Debian 13 (64-bit) — HOST
 ├── cameras / libcamera / MediaMTX   ← NATIVE, unchanged (the 37-38 ms video path)
 └── Docker
     └── ros:jazzy container          ← ROS2 control plane
@@ -18,7 +18,7 @@ through host networking (DDS + the VR WebSocket on 8567). The STM32 firmware and
 
 ## Prerequisites
 
-- Raspberry Pi OS **Bookworm 64-bit** freshly imaged.
+- Raspberry Pi OS **Trixie (Debian 13) 64-bit** freshly imaged. *(Trixie is the proven host on this Pi — the native camera/MediaMTX 37–38 ms path already runs on it; ROS2 stays in the `ros:jazzy` container regardless of host OS.)*
 - The STM32 wired to the Pi SPI1 bus as in the legacy setup.
 - (Separately) the native camera + MediaMTX setup, as in the legacy deployment.
 

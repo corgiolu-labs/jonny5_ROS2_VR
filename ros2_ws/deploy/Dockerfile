@@ -1,5 +1,5 @@
 # JONNY5 ROS2 Jazzy container.
-# Host: Raspberry Pi OS Bookworm (arm64). Cameras / libcamera / MediaMTX stay NATIVE
+# Host: Raspberry Pi OS Trixie / Debian 13 (arm64). Cameras / libcamera / MediaMTX stay NATIVE
 # on the host (the 37-38 ms video path is untouched). This image runs only the ROS2
 # control plane (SPI data plane + VR teleop bridge). See ADR-001.
 FROM ros:jazzy-ros-base

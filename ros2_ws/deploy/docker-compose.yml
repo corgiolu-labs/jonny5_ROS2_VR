@@ -1,4 +1,4 @@
-# JONNY5 ROS2 control plane on the Pi (Raspberry Pi OS Bookworm host).
+# JONNY5 ROS2 control plane on the Pi (Raspberry Pi OS Trixie / Debian 13 host).
 # Real hardware path. For a hardware-free smoke test use the mock override:
 #   docker compose -f docker-compose.yml -f docker-compose.mock.yml up
 services:
