@@ -20,22 +20,25 @@ through host networking (DDS + the VR WebSocket on 8567). The STM32 firmware and
 
 - Raspberry Pi OS **Trixie (Debian 13) 64-bit** freshly imaged. *(Trixie is the proven host on this Pi — the native camera/MediaMTX 37–38 ms path already runs on it; ROS2 stays in the `ros:jazzy` container regardless of host OS.)*
 - The STM32 wired to the Pi SPI1 bus as in the legacy setup.
-- (Separately) the native camera + MediaMTX setup, as in the legacy deployment.
+- (Separately) only the native MediaMTX/video pipeline, as in the legacy deployment —
+  the camera overlays (2× IMX708) and the STM32 UART are configured by `host_setup_pi.sh`.
 
 ## 1. Host setup (once)
 
 ```bash
 git clone <repo> ~/JONNY5_ROS2          # must contain ros2_ws/ and raspberry/
 cd ~/JONNY5_ROS2/ros2_ws/deploy
-bash host_setup_pi.sh                    # enables SPI, installs Docker
+bash host_setup_pi.sh                    # enables SPI + cameras + UART, installs Docker
 sudo reboot
 ```
 
 After reboot, verify:
 
 ```bash
-ls -l /dev/spidev0.0      # SPI device present
-groups | grep docker      # docker group active
+ls -l /dev/spidev0.0          # SPI device present
+rpicam-hello --list-cameras   # 2x imx708
+ls -l /dev/serial0            # STM32 UART -> ttyAMA0
+groups | grep docker          # docker group active
 ```
 
 ## 2. Build the image and the workspace
