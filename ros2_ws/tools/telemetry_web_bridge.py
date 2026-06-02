@@ -19,6 +19,8 @@ Solo telemetria (robot->browser); i comandi del browser sono drenati e ignorati.
 """
 import asyncio
 import json
+import os
+import ssl
 import threading
 
 import rclpy
@@ -105,8 +107,18 @@ async def _serve(ws, *_args):
         drain_task.cancel()
 
 
+def _make_ssl_ctx():
+    """https_server proxya verso :8557 in TLS (wss) -> il bridge DEVE servire wss.
+    Riusa i cert self-signed di https_server; il proxy salta la verifica (CERT_NONE)."""
+    cert = os.environ.get("J5_WS_CERT", "/opt/jonny5/raspberry/config_runtime/tls/webrtc.crt")
+    key = os.environ.get("J5_WS_KEY", "/opt/jonny5/raspberry/config_runtime/tls/webrtc.key")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(certfile=cert, keyfile=key)
+    return ctx
+
+
 async def _main_async():
-    async with websockets.serve(_serve, "0.0.0.0", 8557, ping_interval=None):
+    async with websockets.serve(_serve, "0.0.0.0", 8557, ssl=_make_ssl_ctx(), ping_interval=None):
         await asyncio.Future()
 
 
