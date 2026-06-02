@@ -887,6 +887,39 @@ document.getElementById("btn-self-test")?.addEventListener("click", () => {
   addLog("SELF TEST avviato dalla pagina Test");
 });
 
+// Formattazione picchi/bande — stesso contratto di ws_dashboard.js.
+// Sorgente reale: il payload self_test_result del backend (self_test_imu.run_self_test_imu):
+//   dynamic_response_peaks_hz / imu_vibration_peaks_hz / imu_modal_peaks_hz (liste di Hz).
+function fmtPeaksHz(arr) {
+  if (Array.isArray(arr) && arr.length > 0) return arr.map((hz) => `${Number(hz).toFixed(2)} Hz`).join(", ");
+  return "–";
+}
+function fmtSelfTestBands(msg) {
+  const raw = [];
+  for (const arr of [msg?.dynamic_response_peaks_hz, msg?.dynamic_motion_peaks_hz, msg?.imu_vibration_peaks_hz, msg?.imu_modal_peaks_hz]) {
+    if (Array.isArray(arr)) for (const x of arr) { const n = Number(x); if (Number.isFinite(n) && n > 0.05) raw.push(n); }
+  }
+  raw.sort((a, b) => a - b);
+  const peaks = [];
+  for (const p of raw) if (!peaks.length || Math.abs(p - peaks[peaks.length - 1]) > 0.2) peaks.push(p);
+  if (peaks.length < 2) return "–";
+  const clusters = []; let cur = [peaks[0]];
+  for (let i = 1; i < peaks.length; i++) {
+    if (peaks[i] - peaks[i - 1] <= 2.75) cur.push(peaks[i]);
+    else { clusters.push(cur); cur = [peaks[i]]; }
+  }
+  clusters.push(cur);
+  const weight = (c) => c.length * (Math.max(...c) - Math.min(...c) + 1);
+  const top = clusters.slice().sort((a, b) => weight(b) - weight(a)).slice(0, 3).sort((a, b) => a[0] - b[0]);
+  const parts = top.map((c) => {
+    const mn = Math.min(...c), mx = Math.max(...c);
+    const lo = Math.max(0, Math.floor(mn)), hi = Math.ceil(mx);
+    if (hi <= lo + 1 && mx - mn < 1.25) return `~${Math.round((mn + mx) / 2)}`;
+    return `~${lo}–${hi}`;
+  });
+  return `${parts.join(", ")} Hz`;
+}
+
 registerSelfTestStatusHandler((msg) => {
   const btn = document.getElementById("btn-self-test");
   if (btn) btn.disabled = Boolean(msg?.running);
@@ -897,10 +930,7 @@ registerSelfTestStatusHandler((msg) => {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v == null ? "–" : v; };
   set("self-test-status", msg?.running ? "Running" : (msg?.status || "Idle"));
   set("self-test-message", msg?.message || "Ready");
-  if (msg?.dyn_peaks)  set("self-test-dynamic-motion", msg.dyn_peaks.join(", "));
-  if (msg?.exp_peaks)  set("self-test-vibration", msg.exp_peaks.join(", "));
-  if (msg?.modal_peaks) set("self-test-modal-vibration", msg.modal_peaks.join(", "));
-  if (msg?.bands)       set("self-test-bands", msg.bands.join(", "));
+  // Picchi e per-asse arrivano nel self_test_result (handler sotto), non nello status.
 });
 
 registerSelfTestResultHandler((msg) => {
@@ -911,14 +941,20 @@ registerSelfTestResultHandler((msg) => {
   addLog(`SELF TEST RESULT: ${msg?.result || "UNKNOWN"}`);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v == null ? "–" : v; };
   set("self-test-result", msg?.result || "–");
-  if (msg?.per_axis) {
-    set("self-test-base", msg.per_axis.base || "–");
-    set("self-test-shoulder", msg.per_axis.shoulder || "–");
-    set("self-test-elbow", msg.per_axis.elbow || "–");
-    set("self-test-yaw", msg.per_axis.yaw || "–");
-    set("self-test-pitch", msg.per_axis.pitch || "–");
-    set("self-test-roll", msg.per_axis.roll || "–");
-  }
+  // Frequenze caratteristiche: il backend le invia nel result come *_peaks_hz.
+  set("self-test-dynamic-motion", fmtPeaksHz(msg?.dynamic_response_peaks_hz ?? msg?.dynamic_motion_peaks_hz));
+  set("self-test-vibration", fmtPeaksHz(msg?.imu_vibration_peaks_hz));
+  set("self-test-modal-vibration", fmtPeaksHz(msg?.imu_modal_peaks_hz));
+  set("self-test-bands", fmtSelfTestBands(msg));
+  // Per-asse: backend = `axes.{base,spalla,gomito,yaw,pitch,roll}.classification`
+  // (spalla=shoulder, gomito=elbow); il valore è la stringa classification, non l'oggetto.
+  const axes = msg?.axes || {};
+  set("self-test-base", axes.base?.classification || "–");
+  set("self-test-shoulder", axes.spalla?.classification || "–");
+  set("self-test-elbow", axes.gomito?.classification || "–");
+  set("self-test-yaw", axes.yaw?.classification || "–");
+  set("self-test-pitch", axes.pitch?.classification || "–");
+  set("self-test-roll", axes.roll?.classification || "–");
 });
 
 // ===========================================================================
@@ -1181,6 +1217,137 @@ function handleSystemLoadMessage(msg) {
 }
 
 // ===========================================================================
+// Timeline di scheduling live — 4 frequenze operative.
+// Vista "logic-analyzer" STATICA, triggerata sul control loop (rt-loop): la base
+// dei tempi è agganciata al loop deterministico STM32 (master a ~1 kHz) e tutte
+// le corsie sono allineate all'istante di trigger t=0 (un fronte di salita del
+// rt-loop). Ogni corsia è un'onda quadra (50% duty) al periodo 1/f della
+// frequenza misurata. Niente scorrimento: il quadro si aggiorna solo quando
+// cambiano le frequenze. I valori sono letti dalle card "Frequenze operative",
+// così la timeline segue le stesse misure senza duplicare la logica WS.
+// ===========================================================================
+const FT_WINDOW_MS = 50;   // ampiezza finestra temporale visualizzata (≈ 50 periodi rt-loop)
+const FT_LANES = [
+  { id: "val-hmd",  name: "HMD refresh (VR)",   color: "#b18cff", inactive: "no XR session" },
+  { id: "val-spi",  name: "SPI uplink",         color: "#4db4ff", inactive: "in attesa…" },
+  { id: "val-imu",  name: "IMU sample rate",    color: "#34d399", inactive: "in attesa…" },
+  { id: "val-loop", name: "STM32 control loop", color: "#fbbf24", inactive: "in attesa…" },
+];
+let _ftCanvas = null, _ftCtx = null, _ftDpr = 1, _ftW = 0, _ftH = 0, _ftTimer = 0;
+
+function _ftReadHz(id) {
+  const f = parseFloat(document.getElementById(id)?.textContent);
+  return (Number.isFinite(f) && f > 0) ? f : null;
+}
+
+function _ftResize() {
+  if (!_ftCanvas || !_ftCtx) return;
+  const r = _ftCanvas.getBoundingClientRect();
+  _ftDpr = window.devicePixelRatio || 1;
+  _ftW = r.width; _ftH = r.height;
+  _ftCanvas.width  = Math.max(1, Math.round(_ftW * _ftDpr));
+  _ftCanvas.height = Math.max(1, Math.round(_ftH * _ftDpr));
+  _ftCtx.setTransform(_ftDpr, 0, 0, _ftDpr, 0, 0);
+}
+
+function _ftDraw() {
+  if (!_ftCtx) return;
+  const ctx = _ftCtx, W = _ftW, H = _ftH;
+  const gutter = 172, padR = 14, padT = 12, padB = 24;
+  const plotX = gutter, plotW = Math.max(10, W - gutter - padR);
+  const n = FT_LANES.length, laneGap = 10;
+  const plotH = Math.max(20, H - padT - padB);
+  const laneH = (plotH - laneGap * (n - 1)) / n;
+  const pxPerMs = plotW / FT_WINDOW_MS;
+  const winStart = 0;   // t=0 = istante di trigger (fronte di salita del rt-loop)
+
+  ctx.clearRect(0, 0, W, H);
+
+  // gridlines verticali ogni 10 ms + scala asse
+  ctx.strokeStyle = "rgba(255,255,255,0.06)";
+  ctx.fillStyle = "#5c6573";
+  ctx.lineWidth = 1;
+  ctx.font = "10px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  for (let ms = 0; ms <= FT_WINDOW_MS; ms += 10) {
+    const x = plotX + ms * pxPerMs;
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH); ctx.stroke();
+    ctx.fillText(ms === FT_WINDOW_MS ? ms + " ms" : String(ms), x, padT + plotH + 14);
+  }
+
+  for (let i = 0; i < n; i++) {
+    const lane = FT_LANES[i];
+    const y = padT + i * (laneH + laneGap);
+    const hz = _ftReadHz(lane.id);
+
+    // sfondo corsia
+    ctx.fillStyle = "rgba(255,255,255,0.03)";
+    ctx.fillRect(plotX, y, plotW, laneH);
+
+    // etichette a sinistra (nome + Hz/periodo)
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#cdd6e4";
+    ctx.font = "600 12px system-ui, sans-serif";
+    ctx.fillText(lane.name, 4, y + laneH / 2 - 1);
+    ctx.font = "11px system-ui, sans-serif";
+    if (hz) {
+      const Tlbl = 1000 / hz;
+      ctx.fillStyle = lane.color;
+      ctx.fillText(`${hz.toFixed(hz >= 100 ? 0 : 1)} Hz · T=${Tlbl.toFixed(Tlbl < 10 ? 2 : 1)} ms`, 4, y + laneH / 2 + 14);
+    } else {
+      ctx.fillStyle = "#6b7280";
+      ctx.fillText(lane.inactive, 4, y + laneH / 2 + 14);
+    }
+    if (!hz) continue;
+
+    // treno di impulsi STATICO: onda quadra 50% duty allineata al trigger (t=0)
+    const T = 1000 / hz, high = T / 2;
+    const barTop = y + 4, barH = Math.max(4, laneH - 8);
+    ctx.fillStyle = lane.color;
+    const kEnd = Math.floor(FT_WINDOW_MS / T) + 1;
+    for (let k = 0; k <= kEnd; k++) {
+      const rise = k * T;                                   // fronte di salita (ms-segnale)
+      const cx0 = Math.max(plotX, plotX + (rise - winStart) * pxPerMs);
+      const cx1 = Math.min(plotX + plotW, plotX + (rise + high - winStart) * pxPerMs);
+      if (cx1 > cx0) ctx.fillRect(cx0, barTop, cx1 - cx0, barH);
+    }
+  }
+
+  // cornice del plot
+  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.strokeRect(plotX, padT, plotW, plotH);
+
+  // marcatore di trigger sul bordo sinistro (t=0, agganciato al rt-loop)
+  const loopHz = _ftReadHz("val-loop");
+  const trigOn = loopHz != null;
+  ctx.strokeStyle = trigOn ? "rgba(251,191,36,0.65)" : "rgba(120,130,145,0.5)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(plotX, padT); ctx.lineTo(plotX, padT + plotH); ctx.stroke();
+  ctx.fillStyle = trigOn ? "#fbbf24" : "#788192";
+  ctx.beginPath();
+  ctx.moveTo(plotX - 5, padT - 8); ctx.lineTo(plotX + 5, padT - 8); ctx.lineTo(plotX, padT - 2);
+  ctx.closePath(); ctx.fill();
+  ctx.textAlign = "left"; ctx.font = "10px system-ui, sans-serif";
+  ctx.fillStyle = trigOn ? "#d9a93a" : "#788192";
+  ctx.fillText("trigger: rt-loop" + (trigOn ? ` ${loopHz.toFixed(0)} Hz` : " (in attesa)"), plotX + 9, padT - 1);
+}
+
+function initFreqTimeline() {
+  _ftCanvas = document.getElementById("freq-timeline");
+  if (!_ftCanvas) return;
+  _ftCtx = _ftCanvas.getContext("2d");
+  if (!_ftCtx) return;
+  _ftResize();
+  window.addEventListener("resize", () => { _ftResize(); _ftDraw(); });
+  clearInterval(_ftTimer);
+  // Vista statica: ridisegno a bassa cadenza per recepire i cambi di frequenza
+  // (le card vengono aggiornate via WS ~1 Hz). Nessun rAF, niente scorrimento.
+  _ftDraw();
+  _ftTimer = setInterval(_ftDraw, 500);
+}
+
+// ===========================================================================
 // Avvio
 // ===========================================================================
 
@@ -1208,6 +1375,9 @@ function init() {
   // calcolare la latenza lower-bound del browser (~38 ms con profilo
   // Low-latency 800×450@120). Speculare alla HMD video latency.
   _startDashLatency().catch(() => {});
+
+  // Timeline di scheduling live (treni di impulsi delle 4 frequenze operative).
+  initFreqTimeline();
 
   addLog("Pagina Test inizializzata.");
 }
