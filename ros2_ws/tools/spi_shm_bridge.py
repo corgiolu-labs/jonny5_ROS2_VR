@@ -53,6 +53,8 @@ class SpiShmBridge(Node):
     def __init__(self):
         super().__init__("jonny5_spi_shm_bridge")
         self._status = {}
+        self._imu_prev_counter = None
+        self._imu_prev_t = None
         self.create_subscription(SpiTelemetry, "/jonny5/spi/telemetry", self._on_tel, 10)
         self.create_subscription(RobotStatus, "/jonny5/status", self._on_status, 10)
         self.intent_pub = self.create_publisher(TeleopIntent, "/jonny5/teleop/intent", 10)
@@ -84,6 +86,23 @@ class SpiShmBridge(Node):
             "frame_type": int(m.frame_type),
             "diag_mask": int(m.diag_mask),
         }
+        # Diagnostica rate (la pagina test legge rt_loop_hz_est e imu_rate_hz_est):
+        # nel legacy queste le calcola j5vr_spi_bridge; nello stack ROS2 le ricavo qui.
+        rt_us = int(m.rt_loop_period_us)
+        if rt_us > 0:
+            d["rt_loop_hz_est"] = 1_000_000.0 / rt_us
+        sc = int(m.imu_sample_counter)
+        now = self.get_clock().now().nanoseconds / 1e9
+        if self._imu_prev_t is not None and self._imu_prev_counter is not None:
+            delta = (sc - self._imu_prev_counter) & 0xFFFFFF
+            dt = now - self._imu_prev_t
+            d["imu_sample_delta"] = int(delta)
+            d["imu_sample_repeated"] = bool(delta == 0)
+            d["imu_sample_jump"] = int(delta - 1) if delta > 1 else 0
+            if dt > 1e-6:
+                d["imu_rate_hz_est"] = float(delta / dt)
+        self._imu_prev_counter = sc
+        self._imu_prev_t = now
         servos = list(m.servo_deg)
         for i, k in enumerate(_SERVO):
             if i < len(servos):
