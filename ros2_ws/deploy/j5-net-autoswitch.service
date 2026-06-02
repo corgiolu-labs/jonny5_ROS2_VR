@@ -1,0 +1,14 @@
+[Unit]
+Description=J5 Network Autoswitch Daemon (eth0 router/ICS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/j5_net_autoswitch.sh
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
