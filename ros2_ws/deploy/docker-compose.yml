@@ -10,6 +10,9 @@ services:
     container_name: jonny5_ros2
     # Host network so DDS discovery and the VR WebSocket (8567) reach the LAN/headset.
     network_mode: host
+    # Share the host /dev/shm so the SPI shim (spi_shm_bridge) and the legacy
+    # ws_server on the host exchange telemetry/intent via shared_state files.
+    ipc: host
     # SPI data plane to the STM32.
     devices:
       - "/dev/spidev0.0:/dev/spidev0.0"
