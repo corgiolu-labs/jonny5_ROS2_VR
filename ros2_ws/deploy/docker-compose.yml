@@ -19,6 +19,12 @@ services:
     environment:
       - JONNY5_LEGACY_ROOT=/opt/jonny5/raspberry
       - ROS_DOMAIN_ID=0
+      # SPI transport = proven deployment config (legacy jonny5-spi-j5vr.service).
+      # The 128B canonical-window mode resolves the STM32 slave's stale/phased
+      # telemetry (the driver scans the 128B window for the 'J5' offset). Without
+      # it the native driver runs legacy_64 and cannot parse real frames.
+      - J5_SPI_CANONICAL_128=1
+      - J5_SPI_POST_XFER_DELAY_MS=0
     working_dir: /opt/jonny5/ros2_ws
     restart: unless-stopped
     command: ["ros2", "launch", "jonny5_bringup", "bringup.launch.py", "use_mock_spi:=false"]
