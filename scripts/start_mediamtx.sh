@@ -14,8 +14,25 @@
 #   carica il legacy mediamtx.yml (presente accanto ai mediamtx_*.yml).
 
 set -e
-RASPBERY5_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUNTIME_VIDEO_DIR="$RASPBERY5_ROOT/config_runtime/video"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Individua config_runtime/video in modo robusto rispetto al layout del repo
+# (raspberry/ o raspberry5/, scripts/ top-level o annidato): primo candidato che
+# contiene video_pipeline.yaml. Evita il vecchio assunto "$0/../config_runtime".
+RUNTIME_VIDEO_DIR=""
+for _cand in \
+  "$SCRIPT_DIR/../config_runtime/video" \
+  "$SCRIPT_DIR/../raspberry/config_runtime/video" \
+  "$SCRIPT_DIR/../raspberry5/config_runtime/video" \
+  "$SCRIPT_DIR/../../raspberry/config_runtime/video"; do
+  if [ -f "$_cand/video_pipeline.yaml" ]; then
+    RUNTIME_VIDEO_DIR="$(cd "$_cand" && pwd)"
+    break
+  fi
+done
+if [ -z "$RUNTIME_VIDEO_DIR" ]; then
+  echo "ERR: config_runtime/video non trovata (cercato accanto a $SCRIPT_DIR)" >&2
+  exit 1
+fi
 CONFIG="$RUNTIME_VIDEO_DIR/video_pipeline.yaml"
 
 if [ ! -f "$CONFIG" ]; then
@@ -57,14 +74,17 @@ fi
 echo "Using MediaMTX profile: $VIDEO_PROFILE ($MEDIAMTX_YML)"
 
 MEDIAMTX_BIN=""
-if [ -x "/home/jonny5/mediamtx" ]; then
-  MEDIAMTX_BIN="/home/jonny5/mediamtx"
-elif [ -x "/home/jonny5/mediamtx/mediamtx" ]; then
-  MEDIAMTX_BIN="/home/jonny5/mediamtx/mediamtx"
-elif command -v mediamtx >/dev/null 2>&1; then
+# Cerca il binario in modo indipendente dall'utente: prima $HOME (jonny5ros2,
+# jonny5, ...), poi il path legacy, infine il PATH di sistema.
+for _b in "$HOME/mediamtx" "$HOME/mediamtx/mediamtx" \
+          "/home/jonny5/mediamtx" "/home/jonny5/mediamtx/mediamtx"; do
+  if [ -x "$_b" ]; then MEDIAMTX_BIN="$_b"; break; fi
+done
+if [ -z "$MEDIAMTX_BIN" ] && command -v mediamtx >/dev/null 2>&1; then
   MEDIAMTX_BIN="mediamtx"
-else
-  echo "ERR: MediaMTX non trovato." >&2
+fi
+if [ -z "$MEDIAMTX_BIN" ]; then
+  echo "ERR: MediaMTX non trovato (cercato \$HOME/mediamtx, /home/jonny5/mediamtx, PATH)." >&2
   exit 1
 fi
 

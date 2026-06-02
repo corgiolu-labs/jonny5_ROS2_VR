@@ -5,6 +5,9 @@
 # Web control plane
 websockets>=12
 
+# Runtime config YAML (profili video_pipeline e altri runtime config letti/scritti da ws_server)
+PyYAML>=6.0
+
 # Hardware bridges
 pyserial>=3.5
 spidev>=3.6
