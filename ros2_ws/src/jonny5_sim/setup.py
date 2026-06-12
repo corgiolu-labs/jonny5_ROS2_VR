@@ -18,7 +18,6 @@ setup(
     license="MIT",
     entry_points={
         "console_scripts": [
-            "legacy_telemetry_sim_node = jonny5_sim.legacy_telemetry_sim_node:main",
             "teleop_intent_sim_node = jonny5_sim.teleop_intent_sim_node:main",
         ],
     },

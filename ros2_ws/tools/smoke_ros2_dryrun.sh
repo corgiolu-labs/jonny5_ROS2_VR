@@ -82,8 +82,7 @@ set -u
 pass "sourced workspace overlay"
 
 ros2 launch jonny5_bringup bringup.launch.py \
-  hardware_enabled:=false \
-  sim_telemetry:=true \
+  use_mock_spi:=true \
   sim_intent:=true \
   >"${LOG_FILE}" 2>&1 &
 LAUNCH_PID=$!
@@ -91,9 +90,8 @@ LAUNCH_PID=$!
 sleep 8
 
 wait_for_node "/robot_state_publisher"
-wait_for_node "/jonny5_legacy_telemetry_sim"
 wait_for_node "/jonny5_teleop_intent_sim"
-wait_for_node "/jonny5_spi_bridge"
+wait_for_node "/jonny5_spi_driver"
 wait_for_node "/jonny5_vr_bridge"
 
 wait_for_topic "/joint_states"

@@ -11,5 +11,5 @@ colcon build --symlink-install
 Recommended first launch:
 
 ```bash
-ros2 launch jonny5_bringup bringup.launch.py hardware_enabled:=false
+ros2 launch jonny5_bringup bringup.launch.py use_mock_spi:=true
 ```

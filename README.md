@@ -35,7 +35,7 @@ ros2_ws/src/
 cd ~/jonny5_ROS2_VR/ros2_ws
 colcon build --symlink-install
 source install/setup.bash
-ros2 launch jonny5_bringup bringup.launch.py hardware_enabled:=false
+ros2 launch jonny5_bringup bringup.launch.py use_mock_spi:=true
 ```
 
 The initial bridge defaults to dry-run mode so the ROS2 graph can be inspected before hardware actuation is enabled.

@@ -18,7 +18,6 @@ setup(
     license="MIT",
     entry_points={
         "console_scripts": [
-            "spi_bridge_node = jonny5_hardware.spi_bridge_node:main",
             "spi_driver_node = jonny5_hardware.spi_driver_node:main",
         ],
     },

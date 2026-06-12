@@ -2,7 +2,6 @@
 
 builtin_interfaces/Time stamp
 uint32 packet_index
-uint16 sequence_counter
 uint8 frame_type
 bool header_ok
 bool telemetry_fresh
