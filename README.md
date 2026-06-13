@@ -2,6 +2,8 @@
 
 ROS2 migration workspace for JONNY5, a VR-teleoperated 6-DoF robot arm.
 
+> **Main project** — full hardware build, demo video, photos and docs: **[corgiolu-labs/jonny5](https://github.com/corgiolu-labs/jonny5)**
+
 This repository keeps the working legacy subsystems in place while adding a ROS2 layer around them:
 
 - `firmware/`: STM32/Zephyr real-time firmware, kept unchanged during the first migration phase.
