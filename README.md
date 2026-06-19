@@ -2,6 +2,8 @@
 
 ROS2 migration workspace for JONNY5, a VR-teleoperated 6-DoF robot arm.
 
+> ⚠️ **Experimental, AI-assisted layer.** This ROS 2 migration was produced with AI assistance on top of the proven JONNY5 real-time core. The bridge defaults to **dry-run** and the graph is meant to be inspected — it explores the ROS 2 control/observation surfaces, and is **not** a production deployment or a claim of deep ROS 2 expertise.
+
 > **Main project** — full hardware build, demo video, photos and docs: **[corgiolu-labs/jonny5](https://github.com/corgiolu-labs/jonny5)**
 
 This repository keeps the working legacy subsystems in place while adding a ROS2 layer around them:
