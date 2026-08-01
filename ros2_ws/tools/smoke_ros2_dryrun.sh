@@ -6,8 +6,13 @@ WS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOG_FILE="$(mktemp /tmp/jonny5_ros2_dryrun.XXXXXX.log)"
 ECHO_DIR="$(mktemp -d /tmp/jonny5_ros2_echo.XXXXXX)"
 LAUNCH_PID=""
+ECHO_PID=""
 
 cleanup() {
+  if [[ -n "${ECHO_PID}" ]] && kill -0 "${ECHO_PID}" 2>/dev/null; then
+    kill "${ECHO_PID}" 2>/dev/null || true
+    wait "${ECHO_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${LAUNCH_PID}" ]] && kill -0 "${LAUNCH_PID}" 2>/dev/null; then
     kill "${LAUNCH_PID}" 2>/dev/null || true
     wait "${LAUNCH_PID}" 2>/dev/null || true
@@ -120,6 +125,13 @@ grep -q "mode: 2" "${ECHO_DIR}/sim_intent.txt" \
   || fail "simulated intent did not publish MODE_MANUAL"
 pass "simulated teleop intent publishes"
 
+# Subscribe before sending the WebSocket payload. Starting the subscriber after
+# the short-lived command burst creates a race and can miss every matching sample.
+stdbuf -oL ros2 topic echo /jonny5/teleop/intent >"${ECHO_DIR}/ws_intent.txt" &
+ECHO_PID=$!
+# Allow DDS discovery to match the new CLI subscriber before the finite command burst.
+sleep 3
+
 python3 - <<'PY'
 import asyncio
 import json
@@ -143,17 +155,27 @@ async def main():
         "buttons_right": 2,
     }
     async with websockets.connect("ws://127.0.0.1:8567") as ws:
-        for _ in range(5):
+        for _ in range(20):
             await ws.send(json.dumps(payload))
             await asyncio.sleep(0.2)
 
 asyncio.run(main())
 PY
 
-timeout 12s bash -lc "ros2 topic echo /jonny5/teleop/intent | tee '${ECHO_DIR}/ws_intent.txt' | grep -m1 'heartbeat: 4242'" \
-  >/dev/null || fail "WebSocket intent heartbeat was not observed on ROS2 topic"
+deadline=$((SECONDS + 12))
+while (( SECONDS < deadline )); do
+  if grep -q "heartbeat: 4242" "${ECHO_DIR}/ws_intent.txt"; then
+    break
+  fi
+  sleep 1
+done
+grep -q "heartbeat: 4242" "${ECHO_DIR}/ws_intent.txt" \
+  || fail "WebSocket intent heartbeat was not observed on ROS2 topic"
 grep -q "grip: true" "${ECHO_DIR}/ws_intent.txt" \
   || fail "WebSocket intent grip=true was not observed on ROS2 topic"
+kill "${ECHO_PID}" 2>/dev/null || true
+wait "${ECHO_PID}" 2>/dev/null || true
+ECHO_PID=""
 pass "WebSocket JSON is bridged to /jonny5/teleop/intent"
 
 echo "[PASS] JONNY5 ROS2 dry-run smoke test completed"
