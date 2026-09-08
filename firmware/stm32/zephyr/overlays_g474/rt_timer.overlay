@@ -1,0 +1,15 @@
+/*
+ * rt_timer.overlay (G474 / SHIELD rev3)
+ * TIM6 basic timer = sorgente tick hardware 1 kHz del RT loop (come su F446:
+ * nessun pin I/O, nessun conflitto coi PWM). Sul G474 il nodo timers6 esiste
+ * gia' nel dtsi: basta abilitarlo e attaccare il counter driver.
+ * st,prescaler = 169: clock timer 170 MHz -> contatore a 1 MHz.
+ */
+&timers6 {
+	st,prescaler = <169>;
+	status = "okay";
+	rt_tick_counter: counter {
+		compatible = "st,stm32-counter";
+		status = "okay";
+	};
+};

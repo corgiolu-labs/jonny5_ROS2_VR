@@ -44,7 +44,11 @@ static uint32_t _max_us_tim8     = 2500U;
 static uint32_t _max_deg_tim8    = 180U;
 
 /* Configurazione PWM runtime per gruppo TIM1 (PITCH/ROLL). */
+#if defined(CONFIG_SOC_SERIES_STM32G4X)
+static uint32_t _pwm_hz_tim1     = 330U; /* SHIELD rev3: PITCH/ROLL su TIM5, servi INJS 330 Hz */
+#else
 static uint32_t _pwm_hz_tim1     = 50U;
+#endif
 static uint32_t _min_us_tim1     = 500U;
 static uint32_t _max_us_tim1     = 2500U;
 static uint32_t _max_deg_tim1    = 180U;

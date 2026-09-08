@@ -1,0 +1,21 @@
+# MediaMTX — config di TEST per la misura glass-to-glass WebRTC (Idea 1, Stadio 3).
+# NON ha rpiCamera: la camera CSI è usata dal publisher stamped_h264_source.py.
+# Il path cam_g2g accetta un publisher RTSP (ffmpeg libx264 timbrato) e lo serve in
+# WebRTC/WHEP sulle stesse porte della produzione (così il proxy /api/webrtc-whep va).
+# Va avviato SOLO dopo aver fermato jonny5-mediamtx (porte 8889/8554/8189 condivise).
+logLevel: error
+readTimeout: 10s
+writeTimeout: 10s
+
+rtsp: yes
+rtspAddress: :8554
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: no
+webrtcLocalTCPAddress: ":8189"
+webrtcHandshakeTimeout: 5s
+webrtcTrackGatherTimeout: 2s
+
+paths:
+  cam_g2g:

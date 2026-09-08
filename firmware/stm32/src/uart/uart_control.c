@@ -30,6 +30,7 @@
  */
 
 #include "uart/uart_control.h"
+#include "core/j5_board.h"
 #include "core/state_machine.h"
 #include "servo/j5vr_actuation.h"
 #include "servo/j5vr_head.h"
@@ -751,7 +752,7 @@ static void uart_process_command(uint32_t seq, const char *cmd)
 
 void uart_control_init(void)
 {
-    uart_dev = DEVICE_DT_GET(DT_NODELABEL(usart1));
+    uart_dev = DEVICE_DT_GET(J5_UART_NODE);
     if (!device_is_ready(uart_dev))
     {
         printk("[UART] UART1 (control plane) non pronto\n");

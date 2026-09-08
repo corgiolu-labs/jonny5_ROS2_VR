@@ -1,0 +1,105 @@
+/*
+ * pwm.overlay (G474 / SHIELD rev3) — mappa DEFINITIVA WEACT_PINS.md §10.
+ *
+ * Gruppo 50 Hz (LDX-218, periodo 20 ms):
+ *   BASE   = PB7 TIM4_CH2 (J3)     YAW    = PB6 TIM4_CH1 (J7)
+ *   SPALLA = PB9 TIM17_CH1 (J4)    GOMITO = PB5 TIM3_CH2 (J6)
+ *   AUX    = PA1 TIM2_CH2 (J13, riserva fuori dal modello 6-DOF)
+ * Gruppo 330 Hz (INJS, periodo 3030303 ns):
+ *   ROLL   = PA2 TIM5_CH3 (J16)    PITCH  = PA3 TIM5_CH4 (J14)
+ *
+ * Un timer = un periodo: TIM3/TIM4/TIM17/TIM2 a 50 Hz, TIM5 a 330 Hz.
+ * st,prescaler = 169: clock timer 170 MHz -> tick 1 MHz (1 us).
+ * Gli indici servo0..5 mantengono l'ordine storico di servo_control.c
+ * (BASE, SPALLA, GOMITO, YAW, PITCH, ROLL).
+ */
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+	pwm_servos: pwm-servos {
+		compatible = "pwm-leds";
+		status = "okay";
+
+		servo0: servo0 {
+			pwms = <&pwm4 2 20000000 PWM_POLARITY_NORMAL>; /* BASE = PB7 TIM4_CH2 */
+		};
+		servo1: servo1 {
+			pwms = <&pwm17 1 20000000 PWM_POLARITY_NORMAL>; /* SPALLA = PB9 TIM17_CH1 */
+		};
+		servo2: servo2 {
+			pwms = <&pwm3 2 20000000 PWM_POLARITY_NORMAL>; /* GOMITO = PB5 TIM3_CH2 */
+		};
+		servo3: servo3 {
+			pwms = <&pwm4 1 20000000 PWM_POLARITY_NORMAL>; /* YAW = PB6 TIM4_CH1 */
+		};
+		servo4: servo4 {
+			pwms = <&pwm5 4 3030303 PWM_POLARITY_NORMAL>; /* PITCH = PA3 TIM5_CH4 @330Hz */
+		};
+		servo5: servo5 {
+			pwms = <&pwm5 3 3030303 PWM_POLARITY_NORMAL>; /* ROLL = PA2 TIM5_CH3 @330Hz */
+		};
+		servo_aux: servo-aux {
+			pwms = <&pwm2 2 20000000 PWM_POLARITY_NORMAL>; /* AUX = PA1 TIM2_CH2 */
+		};
+	};
+
+	aliases {
+		pwm-servo0 = &servo0;
+		pwm-servo1 = &servo1;
+		pwm-servo2 = &servo2;
+		pwm-servo3 = &servo3;
+		pwm-servo4 = &servo4;
+		pwm-servo5 = &servo5;
+		pwm-aux = &servo_aux;
+	};
+};
+
+&timers3 {
+	st,prescaler = <169>;
+	status = "okay";
+	pwm3: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim3_ch2_pb5>;
+		pinctrl-names = "default";
+	};
+};
+
+&timers4 {
+	st,prescaler = <169>;
+	status = "okay";
+	pwm4: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim4_ch1_pb6 &tim4_ch2_pb7>;
+		pinctrl-names = "default";
+	};
+};
+
+&timers17 {
+	st,prescaler = <169>;
+	status = "okay";
+	pwm17: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim17_ch1_pb9>;
+		pinctrl-names = "default";
+	};
+};
+
+&timers5 {
+	st,prescaler = <169>;
+	status = "okay";
+	pwm5: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim5_ch3_pa2 &tim5_ch4_pa3>;
+		pinctrl-names = "default";
+	};
+};
+
+&timers2 {
+	st,prescaler = <169>;
+	status = "okay";
+	pwm2: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim2_ch2_pa1>;
+		pinctrl-names = "default";
+	};
+};

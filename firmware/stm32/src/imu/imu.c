@@ -21,12 +21,13 @@
 #include <zephyr/sys/atomic.h>
 #include <math.h>
 #include <string.h>
+#include "core/j5_board.h"
 
 LOG_MODULE_REGISTER(imu, LOG_LEVEL_DBG);
 
 /* Serve per poter richiamare PINCTRL_DT_DEV_CONFIG_GET(i2c1) in questo TU */
-#if DT_NODE_EXISTS(DT_NODELABEL(i2c1))
-PINCTRL_DT_DEFINE(DT_NODELABEL(i2c1));
+#if DT_NODE_EXISTS(J5_I2C_NODE)
+PINCTRL_DT_DEFINE(J5_I2C_NODE);
 #endif
 
 /* Stato quaternione IMU (BNO085) — inizialmente identità */
@@ -72,35 +73,36 @@ void imu_i2c_bus_recovery(void)
 	LOG_WRN("[IMU] I2C bus recovery start");
 
 	/* Nucleo-F446RE: I2C1 su PB8(SCL) / PB9(SDA) come da overlay */
-#if DT_NODE_EXISTS(DT_NODELABEL(gpiob)) && DT_NODE_EXISTS(DT_NODELABEL(i2c1))
-	const struct device *gpio_b = DEVICE_DT_GET(DT_NODELABEL(gpiob));
-	if (!device_is_ready(gpio_b))
+#if DT_NODE_EXISTS(J5_I2C_SCL_PORT_NODE) && DT_NODE_EXISTS(J5_I2C_NODE)
+	const struct device *scl_dev = DEVICE_DT_GET(J5_I2C_SCL_PORT_NODE);
+	const struct device *sda_dev = DEVICE_DT_GET(J5_I2C_SDA_PORT_NODE);
+	if (!device_is_ready(scl_dev) || !device_is_ready(sda_dev))
 	{
 		LOG_ERR("[IMU] GPIOB not ready (cannot recover)");
 		return;
 	}
 
 	/* Configura temporaneamente PB8/PB9 come GPIO open-drain */
-	(void)gpio_pin_configure(gpio_b, 8, GPIO_OUTPUT | GPIO_OPEN_DRAIN);
-	(void)gpio_pin_configure(gpio_b, 9, GPIO_OUTPUT | GPIO_OPEN_DRAIN);
+	(void)gpio_pin_configure(scl_dev, J5_I2C_SCL_PIN, GPIO_OUTPUT | GPIO_OPEN_DRAIN);
+	(void)gpio_pin_configure(sda_dev, J5_I2C_SDA_PIN, GPIO_OUTPUT | GPIO_OPEN_DRAIN);
 	/* Rilascia SDA (open-drain high = high-Z) */
-	gpio_pin_set(gpio_b, 9, 1);
+	gpio_pin_set(sda_dev, J5_I2C_SDA_PIN, 1);
 
 	/* Clock pulses — k_usleep invece di k_busy_wait: cede la CPU agli altri thread */
 	for (int i = 0; i < 9; i++)
 	{
-		gpio_pin_set(gpio_b, 8, 1);
+		gpio_pin_set(scl_dev, J5_I2C_SCL_PIN, 1);
 		k_usleep(10);
-		gpio_pin_set(gpio_b, 8, 0);
+		gpio_pin_set(scl_dev, J5_I2C_SCL_PIN, 0);
 		k_usleep(10);
 	}
 
 	/* Termina con SCL alto */
-	gpio_pin_set(gpio_b, 8, 1);
+	gpio_pin_set(scl_dev, J5_I2C_SCL_PIN, 1);
 	k_usleep(10);
 
 	/* Verifica SDA dopo i 9 clock */
-	int sda = gpio_pin_get(gpio_b, 9);
+	int sda = gpio_pin_get(sda_dev, J5_I2C_SDA_PIN);
 	if (sda == 0)
 	{
 		LOG_ERR("[IMU] I2C bus still locked after recovery");
@@ -111,20 +113,20 @@ void imu_i2c_bus_recovery(void)
 	 * sta ancora "aspettando il prossimo byte": serve una transizione
 	 * START (SDA 1->0 con SCL=1) seguita da STOP (SDA 0->1 con SCL=1) per
 	 * riportare entrambi i lati in idle. */
-	gpio_pin_set(gpio_b, 9, 1);
-	gpio_pin_set(gpio_b, 8, 1);
+	gpio_pin_set(sda_dev, J5_I2C_SDA_PIN, 1);
+	gpio_pin_set(scl_dev, J5_I2C_SCL_PIN, 1);
 	k_usleep(10);
-	gpio_pin_set(gpio_b, 9, 0);      /* START: SDA 1->0 mentre SCL=1 */
+	gpio_pin_set(sda_dev, J5_I2C_SDA_PIN, 0);      /* START: SDA 1->0 mentre SCL=1 */
 	k_usleep(10);
-	gpio_pin_set(gpio_b, 8, 0);      /* abbassa SCL dopo START */
+	gpio_pin_set(scl_dev, J5_I2C_SCL_PIN, 0);      /* abbassa SCL dopo START */
 	k_usleep(10);
-	gpio_pin_set(gpio_b, 8, 1);      /* risale SCL con SDA basso */
+	gpio_pin_set(scl_dev, J5_I2C_SCL_PIN, 1);      /* risale SCL con SDA basso */
 	k_usleep(10);
-	gpio_pin_set(gpio_b, 9, 1);      /* STOP: SDA 0->1 mentre SCL=1 */
+	gpio_pin_set(sda_dev, J5_I2C_SDA_PIN, 1);      /* STOP: SDA 0->1 mentre SCL=1 */
 	k_usleep(10);
 
 	/* Ripristina pinctrl I2C1 default */
-	(void)pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(DT_NODELABEL(i2c1)), PINCTRL_STATE_DEFAULT);
+	(void)pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(J5_I2C_NODE), PINCTRL_STATE_DEFAULT);
 #else
 	LOG_WRN("[IMU] I2C bus recovery skipped (missing DT nodes)");
 #endif
@@ -188,8 +190,8 @@ int imu_init(void)
 	/* Diagnostic bus scan. Sets s_bno085_detected when 0x4A/0x4B ACKs.
 	 * Logs every address that responds — valuable when the sensor on the
 	 * bus changes (MPU6050 at 0x68, BNO085 at 0x4A/0x4B, etc.). */
-#if DT_NODE_EXISTS(DT_NODELABEL(i2c1))
-	imu_i2c_scan_bus(DEVICE_DT_GET(DT_NODELABEL(i2c1)), "I2C1");
+#if DT_NODE_EXISTS(J5_I2C_NODE)
+	imu_i2c_scan_bus(DEVICE_DT_GET(J5_I2C_NODE), J5_I2C_BUS_NAME);
 #endif
 
 	/* ============================================================ *

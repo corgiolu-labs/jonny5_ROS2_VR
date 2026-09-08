@@ -1,4 +1,15 @@
 cmake_minimum_required(VERSION 3.13.1)
+# Overlay per board: la SHIELD rev3 (G474) ha pinatura e clock propri.
+if(BOARD MATCHES "nucleo_g474re")
+    set(J5_OVL ${CMAKE_CURRENT_SOURCE_DIR}/overlays_g474)
+    set(DTC_OVERLAY_FILE
+        ${J5_OVL}/board.overlay
+        ${J5_OVL}/uart.overlay
+        ${J5_OVL}/i2c.overlay
+        ${J5_OVL}/pwm.overlay
+        ${J5_OVL}/rt_timer.overlay
+    )
+else()
 set(DTC_OVERLAY_FILE
     ${CMAKE_CURRENT_SOURCE_DIR}/overlays/uart.overlay
     ${CMAKE_CURRENT_SOURCE_DIR}/overlays/i2c.overlay
@@ -10,6 +21,7 @@ set(DTC_OVERLAY_FILE
     # degli overlay applicati al devicetree.
     ${CMAKE_CURRENT_SOURCE_DIR}/overlays/rt_timer.overlay
 )
+endif()
 include($ENV{ZEPHYR_BASE}/cmake/app/boilerplate.cmake NO_POLICY_SCOPE)
 project(JONNY5_3.0)
 

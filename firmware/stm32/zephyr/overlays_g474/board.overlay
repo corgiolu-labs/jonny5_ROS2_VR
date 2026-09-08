@@ -1,0 +1,37 @@
+/*
+ * board.overlay — adattamento nucleo_g474re -> WeAct STM32G474 CoreBoard
+ * su JONNY5 SHIELD rev3.
+ *
+ * Differenze dalla Nucleo:
+ *  - Niente MCO 24 MHz dallo ST-Link: PLL da HSI16 (16/4*85/2 = 170 MHz),
+ *    indipendente dal quarzo 8 MHz della WeAct.
+ *  - Console NON su LPUART1/PA2-PA3: quei pin sono i servi ROLL/PITCH!
+ *    Console su USART1 (PA9/PA10 -> J10 -> VCP dello ST-Link).
+ */
+/ {
+	chosen {
+		zephyr,console = &usart1;
+		zephyr,shell-uart = &usart1;
+	};
+};
+
+&clk_hse {
+	status = "disabled";
+};
+
+&pll {
+	clocks = <&clk_hsi>;
+	div-m = <4>;
+	mul-n = <85>;
+	div-r = <2>;
+};
+
+/* PA2/PA3 = TIM5_CH3/CH4 (servi ROLL/PITCH) — la console Nucleo va spenta */
+&lpuart1 {
+	status = "disabled";
+};
+
+/* Kernel clock CAN della Nucleo = HSE (qui spento). FDCAN in milestone dedicata. */
+&fdcan1 {
+	status = "disabled";
+};

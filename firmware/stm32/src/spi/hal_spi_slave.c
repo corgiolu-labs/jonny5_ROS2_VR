@@ -40,11 +40,19 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/irq.h>
 #include <zephyr/sys/atomic.h>
+#if defined(CONFIG_SOC_SERIES_STM32G4X)
+#include <stm32g4xx.h>
+#include <stm32g4xx_hal.h>
+#include <stm32g4xx_hal_spi.h>
+#include <stm32g4xx_hal_gpio.h>
+#include <stm32g4xx_hal_dma.h>
+#else
 #include <stm32f4xx.h>
 #include <stm32f4xx_hal.h>
 #include <stm32f4xx_hal_spi.h>
 #include <stm32f4xx_hal_gpio.h>
 #include <stm32f4xx_hal_dma.h>
+#endif
 #include <string.h>
 
 /* =========================================================
@@ -160,10 +168,15 @@ static HAL_StatusTypeDef spi_start_dma_circular(void);
  */
 static inline void dma_clear_spi1_flags(void)
 {
+#if defined(CONFIG_SOC_SERIES_STM32G4X)
+    /* G4: DMA1 Channel1 (RX) flags bit[3:0], Channel2 (TX) flags bit[7:4] */
+    DMA1->IFCR = 0x0FU | 0xF0U;
+#else
     /* Stream0 (RX): LIFCR bit[5:0] */
     DMA2->LIFCR  = (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5);
     /* Stream3 (TX): LIFCR bit[27:22] */
     DMA2->LIFCR |= (1u << 22) | (1u << 24) | (1u << 25) | (1u << 26) | (1u << 27);
+#endif
 }
 
 /* =========================================================
@@ -310,7 +323,7 @@ static void spi_clear_peripheral_errors(void)
     if (sr & SPI_SR_OVR)
     {
         /* Clear OVR: lettura DR poi SR */
-        volatile uint8_t dummy = (volatile uint8_t)(SPI1->DR);
+        volatile uint8_t dummy = *(volatile uint8_t *)&SPI1->DR; /* accesso byte: sul G4 la FIFO scala per dimensione accesso */
         (void)dummy;
         (void)(SPI1->SR);
         printk("[SPI] OVR cleared in restart\n");
@@ -512,11 +525,21 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
 {
     if (hspi->Instance != SPI1) { return; }
 
+    #if defined(CONFIG_SOC_SERIES_STM32G4X)
+    __HAL_RCC_DMAMUX1_CLK_ENABLE();
+    __HAL_RCC_DMA1_CLK_ENABLE();
+#else
     __HAL_RCC_DMA2_CLK_ENABLE();
+#endif
 
     /* DMA2 Stream0 Channel3 — SPI1 RX (PERIPH → MEMORY, circular) */
+#if defined(CONFIG_SOC_SERIES_STM32G4X)
+    hdma_spi1_rx.Instance                 = DMA1_Channel1;
+    hdma_spi1_rx.Init.Request             = DMA_REQUEST_SPI1_RX;
+#else
     hdma_spi1_rx.Instance                 = DMA2_Stream0;
     hdma_spi1_rx.Init.Channel             = DMA_CHANNEL_3;
+#endif
     hdma_spi1_rx.Init.Direction           = DMA_PERIPH_TO_MEMORY;
     hdma_spi1_rx.Init.PeriphInc           = DMA_PINC_DISABLE;
     hdma_spi1_rx.Init.MemInc              = DMA_MINC_ENABLE;
@@ -524,7 +547,9 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
     hdma_spi1_rx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
     hdma_spi1_rx.Init.Mode                = DMA_CIRCULAR;
     hdma_spi1_rx.Init.Priority            = DMA_PRIORITY_HIGH;
+#if !defined(CONFIG_SOC_SERIES_STM32G4X)
     hdma_spi1_rx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+#endif
     if (HAL_DMA_Init(&hdma_spi1_rx) != HAL_OK)
     {
         printk("[SPI] ERROR: HAL_DMA_Init RX failed\n");
@@ -533,8 +558,13 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
     __HAL_LINKDMA(hspi, hdmarx, hdma_spi1_rx);
 
     /* DMA2 Stream3 Channel3 — SPI1 TX (MEMORY → PERIPH, circular) */
+#if defined(CONFIG_SOC_SERIES_STM32G4X)
+    hdma_spi1_tx.Instance                 = DMA1_Channel2;
+    hdma_spi1_tx.Init.Request             = DMA_REQUEST_SPI1_TX;
+#else
     hdma_spi1_tx.Instance                 = DMA2_Stream3;
     hdma_spi1_tx.Init.Channel             = DMA_CHANNEL_3;
+#endif
     hdma_spi1_tx.Init.Direction           = DMA_MEMORY_TO_PERIPH;
     hdma_spi1_tx.Init.PeriphInc           = DMA_PINC_DISABLE;
     hdma_spi1_tx.Init.MemInc              = DMA_MINC_ENABLE;
@@ -542,7 +572,9 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
     hdma_spi1_tx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
     hdma_spi1_tx.Init.Mode                = DMA_CIRCULAR;
     hdma_spi1_tx.Init.Priority            = DMA_PRIORITY_HIGH;
+#if !defined(CONFIG_SOC_SERIES_STM32G4X)
     hdma_spi1_tx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+#endif
     if (HAL_DMA_Init(&hdma_spi1_tx) != HAL_OK)
     {
         printk("[SPI] ERROR: HAL_DMA_Init TX failed\n");
@@ -550,10 +582,17 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
     }
     __HAL_LINKDMA(hspi, hdmatx, hdma_spi1_tx);
 
+#if defined(CONFIG_SOC_SERIES_STM32G4X)
+    IRQ_CONNECT(11, 0, dma2_stream0_isr, NULL, 0); /* DMA1_Channel1 (SPI1_RX) */
+    irq_enable(11);
+    IRQ_CONNECT(12, 0, dma2_stream3_isr, NULL, 0); /* DMA1_Channel2 (SPI1_TX) */
+    irq_enable(12);
+#else
     IRQ_CONNECT(56, 0, dma2_stream0_isr, NULL, 0);
     irq_enable(56);
     IRQ_CONNECT(59, 0, dma2_stream3_isr, NULL, 0);
     irq_enable(59);
+#endif
 
     printk("[SPI] MSP Init: DMA configured (RX=Stream0/Ch3, TX=Stream3/Ch3)\n");
 }
@@ -981,7 +1020,7 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
     /* Clear OVR (STM32F4: leggere DR poi SR) */
     if (hspi->ErrorCode & HAL_SPI_ERROR_OVR)
     {
-        volatile uint32_t tmp = hspi->Instance->DR;
+        volatile uint32_t tmp = *(volatile uint8_t *)&hspi->Instance->DR;
         tmp = hspi->Instance->SR;
         (void)tmp;
     }

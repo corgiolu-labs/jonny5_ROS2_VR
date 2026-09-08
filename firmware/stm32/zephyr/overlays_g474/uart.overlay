@@ -1,0 +1,20 @@
+/*
+ * uart.overlay (G474 / SHIELD rev3)
+ *  - USART1 (PA9 TX / PA10 RX -> connettore J10): console/debug Zephyr,
+ *    visibile sulla VCP dello ST-Link (COM8).
+ *  - USART3 (PB10 TX / PB11 RX -> header GPIO Pi, /dev/ttyAMA0): control plane
+ *    dal Raspberry (uart_control.c via J5_UART_NODE).
+ */
+&usart1 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&usart1_tx_pa9 &usart1_rx_pa10>;
+	pinctrl-names = "default";
+};
+
+&usart3 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&usart3_tx_pb10 &usart3_rx_pb11>;
+	pinctrl-names = "default";
+};

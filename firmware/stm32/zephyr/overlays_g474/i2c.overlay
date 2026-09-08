@@ -1,0 +1,12 @@
+/*
+ * i2c.overlay (G474 / SHIELD rev3)
+ * I2C2 in mappatura ALTERNATA: SDA = PA8 (J15.4), SCL = PC4 (J15.3).
+ * IMU BNO085 a 0x4B (verificato al bring-up 08/09/2026).
+ * INT = PB2 (EXTI2), RST = PB0 — gestiti come GPIO dal driver.
+ */
+&i2c2 {
+	status = "okay";
+	clock-frequency = <100000>;
+	pinctrl-0 = <&i2c2_scl_pc4 &i2c2_sda_pa8>;
+	pinctrl-names = "default";
+};

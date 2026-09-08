@@ -18,6 +18,8 @@ LOG_MODULE_REGISTER(pickplace, LOG_LEVEL_INF);
 
 /* Periodo PWM in ns: 50000 ns = 20 kHz. DEVE coincidere con quanto dichiarato
  * negli alias pwm-pp1/pwm-pp2 dell'overlay (period è encoded nel pwm-cell). */
+#if DT_NODE_EXISTS(DT_ALIAS(pwm_pp1)) && DT_NODE_EXISTS(DT_ALIAS(pwm_pp2))
+
 #define PICKPLACE_PERIOD_NS   50000U
 
 static const struct pwm_dt_spec pp_pwms[PICKPLACE_CH_COUNT] = {
@@ -118,3 +120,25 @@ void pickplace_safe_off(void)
 	}
 	LOG_INF("[PP] safe_off — entrambi i canali a 0");
 }
+
+#else /* pick&place assente: hardware rimosso su JONNY5 SHIELD rev3 */
+bool pickplace_init(void)
+{
+	printk("[PP] assente su questa board (rev3): stub attivo\n");
+	return true;
+}
+bool pickplace_set_duty(uint8_t channel, uint8_t duty_0_100)
+{
+	ARG_UNUSED(channel);
+	ARG_UNUSED(duty_0_100);
+	return false;
+}
+uint8_t pickplace_get_duty(uint8_t channel)
+{
+	ARG_UNUSED(channel);
+	return 0U;
+}
+void pickplace_safe_off(void)
+{
+}
+#endif

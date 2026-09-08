@@ -16,6 +16,7 @@
  */
 
 #include "imu/bno085.h"
+#include "core/j5_board.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -196,8 +197,8 @@ static int bno_set_feature(uint8_t sensor_id, uint32_t period_us)
 
 int bno085_init(void)
 {
-#if DT_NODE_EXISTS(DT_NODELABEL(i2c1))
-	s_bus = DEVICE_DT_GET(DT_NODELABEL(i2c1));
+#if DT_NODE_EXISTS(J5_I2C_NODE)
+	s_bus = DEVICE_DT_GET(J5_I2C_NODE);
 #else
 	s_bus = NULL;
 #endif
