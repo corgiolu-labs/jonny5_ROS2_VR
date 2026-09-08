@@ -8,6 +8,7 @@
 #include "spi/boundary_buffers.h"
 #include "spi/hal_spi_slave.h"
 #include "core/state_machine.h"
+#include "core/estop.h"
 #include "core/rt_loop.h"
 #include "uart/uart_control.h"
 #include "imu/imu.h"
@@ -35,6 +36,7 @@ int main(void)
 
     state_machine_init();
     uart_control_init();
+    estop_init();             /* fungo E-STOP PC6 (solo G474; stub sul F446) */
     (void)pickplace_init();   /* PA0/PA1 → MOSFET gate; duty=0 al boot */
 
     /* imu_init() NON viene chiamata qui: il thread IMU in rt_loop aspetta
@@ -49,6 +51,7 @@ int main(void)
 
     while (1) {
         uart_control_process();
+        estop_notify_poll();   /* emette ESTOP/ESTOP_CLEAR pendenti (flag dal RT) */
         k_msleep(10);
     }
     return 0;

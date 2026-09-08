@@ -212,6 +212,22 @@ static bool sp_setup_wakeup_tap(const float *q_target_real)
 }
 
 /* -----------------------------------------------------------------------
+ * j5vr_setpose_abort — annulla la traiettoria in corso (E-STOP / STOP / SAFE)
+ *
+ * Scritture di singoli bool (atomiche su Cortex-M): sicura sia dal thread RT
+ * (estop_engage nel tick) sia dal thread main/UART (rami STOP/SAFE/RESET).
+ * 'active' via puntatore volatile come nei writer j5vr_go_setpose*: il tick
+ * RT successivo la rilegge da memoria e ritorna subito false.
+ * ----------------------------------------------------------------------- */
+void j5vr_setpose_abort(void)
+{
+    volatile bool *pactive = &g_setpose_state.active;
+    *pactive = false;
+    g_setpose_state.warming_up = false;
+    g_setpose_state.relax_digital_on_finish = false;
+}
+
+/* -----------------------------------------------------------------------
  * j5vr_setpose_tick — chiamato dal RT loop a ogni ciclo (1 kHz)
  * ----------------------------------------------------------------------- */
 bool j5vr_setpose_tick(uint32_t rt_tick)

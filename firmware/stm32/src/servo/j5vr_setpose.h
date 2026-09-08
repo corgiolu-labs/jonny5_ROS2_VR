@@ -46,6 +46,17 @@ extern float step_accumulator[SERVO_COUNT];
 bool j5vr_setpose_tick(uint32_t rt_tick);
 
 /**
+ * j5vr_setpose_abort — annulla la traiettoria SETPOSE in corso (se presente).
+ * Azzera active/warming_up: al tick successivo j5vr_setpose_tick() ritorna
+ * false e NESSUN setpoint residuo viene applicato ai servo. desired_positions[]
+ * resta all'ultimo valore interpolato (= posizione fisica corrente del braccio).
+ * Non emette SETPOSE_DONE. Sicura da qualunque thread (scritture bool singole);
+ * usata da E-STOP (estop_engage) e dai rami UART STOP/SAFE/RESET per garantire
+ * che nessuna traiettoria possa auto-riprendere dopo lo stop.
+ */
+void j5vr_setpose_abort(void);
+
+/**
  * Posa assoluta 6-DOF con velocità percentuale e profilo di moto.
  */
 void j5vr_go_setpose(

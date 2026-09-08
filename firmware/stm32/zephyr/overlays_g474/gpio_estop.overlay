@@ -1,0 +1,25 @@
+/*
+ * gpio_estop.overlay — Fungo E-STOP su PC6 (JONNY5 SHIELD rev3, solo G474).
+ *
+ * Elettrica FAIL-SAFE: contatto NC verso GND, pull-up esterno R8 10k a 3V3,
+ * filtro C10 100n. Linea ALTA = STOP ATTIVO (fungo premuto O filo staccato/
+ * tagliato); linea bassa = marcia. GPIO_ACTIVE_HIGH => gpio_pin_get() == 1
+ * quando lo stop e' attivo. Nessun bias interno: il pull-up e' in hardware.
+ * Il LED blu della WeAct e' sulla stessa rete: si accende da solo, zero codice.
+ *
+ * Consumato da src/core/estop.c via DT_ALIAS(estop); sul F446 (nessun overlay,
+ * nessun alias) estop.c compila lo stub no-op.
+ */
+/ {
+	gpio_keys_estop: gpio-keys-estop {
+		compatible = "gpio-keys";
+		estop_button: estop_button {
+			gpios = <&gpioc 6 GPIO_ACTIVE_HIGH>;
+			label = "E-STOP fungo (PC6)";
+		};
+	};
+
+	aliases {
+		estop = &estop_button;
+	};
+};

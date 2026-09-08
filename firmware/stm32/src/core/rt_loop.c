@@ -16,6 +16,7 @@
 
 #include "core/rt_loop.h"
 #include "core/state_machine.h"
+#include "core/estop.h"
 #include "spi/boundary_buffers.h"
 #include "spi/hal_spi_slave.h"
 #include "spi/j5_protocol.h"
@@ -716,6 +717,13 @@ static void rt_thread_fn(void *a, void *b, void *c)
             }
             g_rt_loop_period_us = (uint16_t)(period_us_ewma_x16 >> 4);
         }
+
+        /* E-STOP hardware PC6 (solo G474; no-op sul F446): valutato PRIMA di
+         * rt_loop_step() e FUORI dal suo corpo [Refactor-Phase1], cosi' viene
+         * campionato a OGNI tick — anche quando lo step esce in anticipo per
+         * STATE_STOPPED o SETPOSE attivo. Non-bloccante (~costo di un
+         * gpio_pin_get, come il center button). */
+        estop_poll_tick();
 
         rt_loop_step();
 

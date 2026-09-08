@@ -153,4 +153,23 @@ void j5vr_go_setpose_time(
  */
 bool j5vr_setpose_tick(uint32_t rt_tick);
 
+/**
+ * j5vr_setpose_abort — annulla la traiettoria SETPOSE in corso (se presente).
+ * Vedi j5vr_setpose.h per la semantica completa. Usata da E-STOP e dai rami
+ * UART STOP/SAFE/RESET: nessuna auto-ripresa della traiettoria dopo uno stop.
+ */
+void j5vr_setpose_abort(void);
+
+/**
+ * j5vr_go_setpose_time_f — variante HR (setpoint float sub-degree) di
+ * j5vr_go_setpose_time. Vedi j5vr_setpose.h. Dichiarata anche qui perche'
+ * uart_control.c (SETPOSE_T_HR) include questo header.
+ */
+void j5vr_go_setpose_time_f(
+    const float    *q_target_deg,
+    int             count,
+    uint32_t        time_ms,
+    j5_profile_t    prof
+);
+
 #endif /* J5VR_ACTUATION_H */
