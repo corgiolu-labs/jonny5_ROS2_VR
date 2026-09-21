@@ -20,6 +20,19 @@ This repository places typed ROS 2 control and observation interfaces around the
 
 This is hands-on ROS 2 integration work, but it is **not a claim of deep production ROS 2 or fleet experience**. AI tools assisted parts of the migration; architecture, review and hardware sign-off remain human-owned.
 
+## Firmware hardware targets
+
+The firmware under `firmware/stm32/` builds for two boards from the same source tree; the platform is selected from the devicetree (`src/core/j5_board.h`).
+
+| PlatformIO env | Board | Status |
+|---|---|---|
+| `nucleo_f446re` | STM32 Nucleo-F446RE — the original thesis build | Build unchanged by the port |
+| `weact_g474_shield` | STM32G474 on the **JONNY5 SHIELD rev3** (custom 4-layer carrier: Raspberry Pi 5 + STM32G474) | Verified on hardware: boot, UART and SPI bridges (SPI ≈ 96 Hz), IMU quaternions, servos armed-idle |
+
+**Hardware E-STOP (G474 shield only).** A normally-closed mushroom button on PC6 is polled and debounced inside the 1 kHz real-time tick. The input is read fail-safe: button pressed, cut wire, read error or init failure all mean STOP. On engage the firmware disables all servos, aborts any in-flight trajectory and latches `STOPPED`; motion commands answer `ERR ESTOP_ACTIVE`. Releasing the button only clears the latch — there is no auto-resume, the operator has to re-enable explicitly.
+
+**SPI frame watchdog (both boards).** Checked every 100 ms; if no valid frame has arrived from the Raspberry Pi for more than 500 ms (`SPI_FRAME_TIMEOUT_MS`), the state machine is forced to `SAFE` and the servos are disabled.
+
 ## ROS graph
 
 ```text
