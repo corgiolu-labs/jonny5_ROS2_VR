@@ -13,6 +13,14 @@ jonny5_spi_driver:
     # Path to the dir containing the legacy 'controller' package.
     # Empty = auto-resolve (env JONNY5_LEGACY_ROOT, repo walk-up, Pi fallback).
     legacy_root: ""
+    # Stale-intent watchdog: without a TeleopIntent for this long the driver
+    # streams IDLE frames (no buttons -> firmware deadman released). 0 disables.
+    intent_timeout_s: 0.25
+    # Servo calibration (B S G Y P R), must match
+    # raspberry/config_runtime/robot/j5_settings.json "offsets" / "dirs".
+    # joint_rad = radians((physical_deg - offset) * dir); 0 rad = HOME.
+    servo_offsets_deg: [100.0, 88.0, 93.0, 95.0, 90.0, 95.0]
+    servo_dirs: [1, -1, -1, 1, -1, 1]
     joint_names:
       - base_joint
       - shoulder_joint

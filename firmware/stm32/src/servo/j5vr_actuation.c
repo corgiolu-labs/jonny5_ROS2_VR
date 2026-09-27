@@ -930,7 +930,8 @@ void j5ik_apply_direct_target(const struct j5ik_state *ik)
     }
 
     {
-        struct j5vr_state pseudo = g_j5vr_latest;
+        struct j5vr_state pseudo;
+        j5vr_latest_snapshot(&pseudo);
         pseudo.mode = 5U;
         j5vr_actuation_apply_desired(&pseudo);
     }

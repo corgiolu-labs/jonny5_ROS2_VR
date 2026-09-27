@@ -20,12 +20,14 @@ from __future__ import annotations
 import math
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import rclpy
 from geometry_msgs.msg import Quaternion
 from jonny5_msgs.msg import RobotStatus, SpiTelemetry, TeleopIntent
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, JointState
 
@@ -39,6 +41,27 @@ SERVO_KEYS = [
     "servo_deg_P",
     "servo_deg_R",
 ]
+
+# Runtime calibration of the robot (raspberry/config_runtime/robot/j5_settings.json).
+# Telemetry carries *physical* servo degrees; the joint angle is
+# (physical - offset) * dir, i.e. settings_manager.physical_to_virtual() - 90.
+DEFAULT_SERVO_OFFSETS_DEG = [100.0, 88.0, 93.0, 95.0, 90.0, 95.0]
+DEFAULT_SERVO_DIRS = [1, -1, -1, 1, -1, 1]
+
+# A telemetry / SPI reply older than this marks the link offline in RobotStatus.
+LINK_TIMEOUT_S = 0.5
+
+
+def physical_deg_to_joint_rad(
+    physical_deg: List[float], offsets_deg: List[float], dirs: List[int]
+) -> List[float]:
+    """Physical servo degrees -> URDF joint radians (0 rad = mechanical HOME)."""
+    out: List[float] = []
+    for i, deg in enumerate(physical_deg):
+        offset = float(offsets_deg[i]) if i < len(offsets_deg) else 90.0
+        direction = -1.0 if (i < len(dirs) and int(dirs[i]) < 0) else 1.0
+        out.append(math.radians((float(deg) - offset) * direction))
+    return out
 
 
 def resolve_legacy_root(explicit: str = "") -> Optional[Path]:
@@ -77,16 +100,42 @@ class Ros2StateProvider:
     ROS2 messages.
     """
 
-    def __init__(self, node: "SpiDriverNode") -> None:
+    def __init__(self, node: "SpiDriverNode", intent_timeout_s: float) -> None:
         self._node = node
+        self._intent_timeout_s = float(intent_timeout_s)
         self._latest_intent: Optional[Dict[str, Any]] = None
+        self._intent_rx_mono: float = 0.0
+        self._intent_stale_reported = False
         self._feedback: Optional[Dict[str, Any]] = None
 
     # --- intent (setpoint) path ------------------------------------------
     def set_intent(self, intent: Optional[Dict[str, Any]]) -> None:
         self._latest_intent = intent
+        self._intent_rx_mono = time.monotonic()
+        self._intent_stale_reported = False
+
+    def intent_is_fresh(self) -> bool:
+        if self._latest_intent is None:
+            return False
+        if self._intent_timeout_s <= 0.0:
+            return True
+        return (time.monotonic() - self._intent_rx_mono) <= self._intent_timeout_s
 
     def read_intent_from_file(self) -> Optional[Dict[str, Any]]:
+        """Latest intent, or None once it is older than ``intent_timeout_s``.
+
+        None makes the bridge send an empty (IDLE, no buttons -> no deadman)
+        frame, so a dead headset / WebSocket / bridge node can never keep the
+        last joystick or grip command streaming to the STM32.
+        """
+        if self._latest_intent is not None and not self.intent_is_fresh():
+            if not self._intent_stale_reported:
+                self._intent_stale_reported = True
+                self._node.get_logger().warning(
+                    f"TeleopIntent older than {self._intent_timeout_s:.3f}s: "
+                    "sending IDLE until a new intent arrives"
+                )
+            return None
         return self._latest_intent
 
     # --- telemetry (RX) path ---------------------------------------------
@@ -110,6 +159,11 @@ class SpiDriverNode(Node):
         self.declare_parameter("tx_rate_hz", 100.0)
         self.declare_parameter("status_request_hz", 5.0)
         self.declare_parameter("legacy_root", "")
+        # Stale-intent watchdog: after this many seconds without a TeleopIntent the
+        # driver streams IDLE frames. 0 disables (not recommended on hardware).
+        self.declare_parameter("intent_timeout_s", 0.25)
+        self.declare_parameter("servo_offsets_deg", DEFAULT_SERVO_OFFSETS_DEG)
+        self.declare_parameter("servo_dirs", DEFAULT_SERVO_DIRS)
         self.declare_parameter("joint_names", [
             "base_joint",
             "shoulder_joint",
@@ -121,9 +175,15 @@ class SpiDriverNode(Node):
 
         self.use_mock = bool(self.get_parameter("use_mock_spi").value)
         self.joint_names = [str(x) for x in self.get_parameter("joint_names").value]
+        self.servo_offsets_deg = [float(x) for x in self.get_parameter("servo_offsets_deg").value]
+        self.servo_dirs = [int(x) for x in self.get_parameter("servo_dirs").value]
+        if len(self.servo_offsets_deg) != 6 or len(self.servo_dirs) != 6:
+            raise ValueError("servo_offsets_deg and servo_dirs must have 6 entries (B S G Y P R)")
         self._tick_count = 0
         self._fw_diag: Optional[Dict[str, Any]] = None
         self._imu_ok = False
+        self._last_spi_rx_mono = 0.0
+        self._last_telemetry_mono = 0.0
 
         self.joint_pub = self.create_publisher(JointState, "joint_states", 10)
         self.imu_pub = self.create_publisher(Imu, "imu/data", 10)
@@ -133,7 +193,9 @@ class SpiDriverNode(Node):
             TeleopIntent, "jonny5/teleop/intent", self._on_intent, 10
         )
 
-        self.provider = Ros2StateProvider(self)
+        self.provider = Ros2StateProvider(
+            self, float(self.get_parameter("intent_timeout_s").value)
+        )
         self.bridge = self._build_bridge()
 
         rate = float(self.get_parameter("tx_rate_hz").value)
@@ -189,9 +251,24 @@ class SpiDriverNode(Node):
             if self._status_every and (self._tick_count % self._status_every == 0):
                 self._request_status()
             else:
-                self.bridge.send_setpoint_once()
+                # send_setpoint_once() swallows SPI errors and returns None.
+                if self.bridge.send_setpoint_once():
+                    self._last_spi_rx_mono = time.monotonic()
         except Exception as exc:  # keep the node alive on transient SPI errors
             self.get_logger().warning(f"SPI tick failed: {exc}")
+
+    def safe_stop(self) -> None:
+        """Send a few IDLE frames (no buttons -> no deadman) and close SPI."""
+        try:
+            self.provider.set_intent(None)
+            for _ in range(3):
+                self.bridge.send_setpoint_once()
+        except Exception as exc:
+            self.get_logger().warning(f"IDLE on shutdown failed: {exc}")
+        try:
+            self.bridge.spi_worker.close()
+        except Exception:
+            pass
 
     def _request_status(self) -> None:
         """Poll the STM32 with a 0x03 STATUS frame and parse the firmware diag.
@@ -209,7 +286,10 @@ class SpiDriverNode(Node):
         rx = self.bridge.spi_worker.transfer(tx)
         self.bridge.sequence_counter = (seq + 1) & 0xFFFF
         rxc = self._extract_rx(rx) if rx and len(rx) >= 64 else rx
-        if not rxc or len(rxc) < 64 or rxc[0:2] != b"J5" or rxc[3] != 0x03:
+        if not rxc or len(rxc) < 64 or rxc[0:2] != b"J5":
+            return
+        self._last_spi_rx_mono = time.monotonic()
+        if rxc[3] != 0x03:
             return
         pl = rxc[8:62]
         diag = (pl[50] << 8) | pl[51]
@@ -236,26 +316,38 @@ class SpiDriverNode(Node):
         )
         servo = [float(t.get(k, 90.0)) for k in SERVO_KEYS]
         imu_valid = bool(t.get("imu_valid", False))
+        # The legacy bridge re-emits the last telemetry inside a 0.5 s grace window
+        # when the STM32 answers with a non-telemetry frame: that data is not new.
+        fresh = not bool(t.get("telemetry_heartbeat", False))
+        now_mono = time.monotonic()
+        self._last_spi_rx_mono = now_mono
+        if fresh:
+            self._last_telemetry_mono = now_mono
 
-        joint_msg = JointState()
-        joint_msg.header.stamp = now
-        joint_msg.name = self.joint_names
-        joint_msg.position = [math.radians(deg - 90.0) for deg in servo]
-        self.joint_pub.publish(joint_msg)
+            joint_msg = JointState()
+            joint_msg.header.stamp = now
+            joint_msg.name = self.joint_names
+            joint_msg.position = physical_deg_to_joint_rad(
+                servo, self.servo_offsets_deg, self.servo_dirs
+            )
+            self.joint_pub.publish(joint_msg)
 
-        imu_msg = Imu()
-        imu_msg.header.stamp = now
-        imu_msg.header.frame_id = "imu_link"
-        imu_msg.orientation = q
-        imu_msg.orientation_covariance[0] = 0.0 if imu_valid else -1.0
-        self.imu_pub.publish(imu_msg)
+            imu_msg = Imu()
+            imu_msg.header.stamp = now
+            imu_msg.header.frame_id = "imu_link"
+            imu_msg.orientation = q
+            imu_msg.orientation_covariance[0] = 0.0 if imu_valid else -1.0
+            # Only orientation is published: mark the other fields as unknown.
+            imu_msg.angular_velocity_covariance[0] = -1.0
+            imu_msg.linear_acceleration_covariance[0] = -1.0
+            self.imu_pub.publish(imu_msg)
 
         spi_msg = SpiTelemetry()
         spi_msg.stamp = now
         spi_msg.packet_index = int(t.get("packet_index", 0) or 0) & 0xFFFFFFFF
         spi_msg.frame_type = int(t.get("frame_type", 0) or 0) & 0xFF
         spi_msg.header_ok = True
-        spi_msg.telemetry_fresh = True
+        spi_msg.telemetry_fresh = fresh
         spi_msg.imu_valid = imu_valid
         spi_msg.imu_sample_counter = int(t.get("imu_sample_counter", 0) or 0) & 0xFFFFFFFF
         spi_msg.imu_orientation = q
@@ -280,9 +372,10 @@ class SpiDriverNode(Node):
         d = self._fw_diag
         msg = RobotStatus()
         msg.stamp = now
-        msg.spi_online = True
-        msg.stm32_online = True
-        msg.imu_online = self._imu_ok
+        now_mono = time.monotonic()
+        msg.spi_online = (now_mono - self._last_spi_rx_mono) <= LINK_TIMEOUT_S
+        msg.stm32_online = (now_mono - self._last_telemetry_mono) <= LINK_TIMEOUT_S
+        msg.imu_online = self._imu_ok and msg.stm32_online
         if d is not None:
             msg.deadman_active = bool(d["deadman"])
             msg.input_active = bool(d["input"])
@@ -297,7 +390,8 @@ class SpiDriverNode(Node):
             gr = bool(int(cmd.get("buttons_right", 0) or 0) & (1 << 1))
             msg.deadman_active = gl and gr
             msg.input_active = bool(cmd)
-            msg.movement_allowed = True
+            # Unknown until the firmware diag arrives: never report it as allowed.
+            msg.movement_allowed = False
             msg.state = "TELEMETRY_OK" if self._imu_ok else "NO_IMU"
             msg.detail = "0x01 telemetry; awaiting first 0x03 STATUS for firmware diag"
         self.status_pub.publish(msg)
@@ -342,9 +436,12 @@ def main(args: Optional[List[str]] = None) -> None:
     node = SpiDriverNode()
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
+        node.safe_stop()
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

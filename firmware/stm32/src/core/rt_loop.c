@@ -249,6 +249,11 @@ static bool center_button_debounced_state = false;
 static system_state_t rt_prev_state = STATE_SAFE;
 /* Reset a ogni nuova entry in STATE_SAFE, cosÃƒÆ’Ã‚Â¬ SAFEÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢IDLE puÃƒÆ’Ã‚Â² avvenire piÃƒÆ’Ã‚Â¹ volte */
 static bool auto_transition_done = false;
+/* vr_heartbeat latchato all'ingresso in STATE_SAFE. g_j5vr_latest non viene mai
+ * azzerato: dopo un watchdog SPI conserva l'ultimo intent (mode/heartbeat != 0),
+ * che da solo farebbe scattare subito l'auto SAFE->IDLE. Il re-arm automatico
+ * richiede quindi frame SPI freschi E un heartbeat avanzato rispetto a questo. */
+static uint16_t safe_entry_heartbeat = 0;
 
 static void rt_loop_step(void)
 {
@@ -285,7 +290,14 @@ static void rt_loop_step(void)
      * ÃƒÆ’Ã‚Â¨ in esecuzione: l'intero blocco STATE_IDLE viene saltato per questo
      * ciclo, la pipeline VR resta intatta (desired_positions[] viene
      * aggiornato dalla traiettoria SETPOSE, non dagli stick VR). */
-    if (j5vr_setpose_tick(g_rt_loop_ticks))
+    /* SETPOSE (HOME/PARK/TELEOPPOSE) parte solo da IDLE: se nel frattempo lo
+     * stato e' uscito da IDLE (watchdog SPI -> SAFE) la traiettoria va annullata,
+     * altrimenti continuerebbe a muovere i servo in SAFE. */
+    if (state_machine_get_state() != STATE_IDLE)
+    {
+        j5vr_setpose_abort();
+    }
+    else if (j5vr_setpose_tick(g_rt_loop_ticks))
     {
         return;
     }
@@ -298,6 +310,9 @@ static void rt_loop_step(void)
     if (cur_state == STATE_SAFE && rt_prev_state != STATE_SAFE)
     {
         auto_transition_done = false;
+        struct j5vr_state entry;
+        j5vr_latest_snapshot(&entry);
+        safe_entry_heartbeat = entry.vr_heartbeat;
     }
     rt_prev_state = cur_state;
 
@@ -309,8 +324,13 @@ static void rt_loop_step(void)
             g_rt_loop_stage = 21;
             {
                 struct j5vr_state j5vr_check;
-                j5vr_check = g_j5vr_latest;
-                if (j5vr_check.mode != 0 || j5vr_check.vr_heartbeat > 0)
+                j5vr_latest_snapshot(&j5vr_check);
+                const bool spi_fresh =
+                    hal_spi_last_frame_age_ms() <= SPI_FRAME_TIMEOUT_MS;
+                const bool hb_advanced =
+                    (j5vr_check.vr_heartbeat != safe_entry_heartbeat);
+                if (spi_fresh && hb_advanced &&
+                    (j5vr_check.mode != 0 || j5vr_check.vr_heartbeat > 0))
                 {
                     if (!auto_transition_done)
                     {
@@ -328,7 +348,7 @@ static void rt_loop_step(void)
                 g_rt_loop_stage = 30;
                 bool movement_allowed = state_machine_is_movement_allowed();
                 struct j5vr_state j5vr_current;
-                j5vr_current = g_j5vr_latest;
+                j5vr_latest_snapshot(&j5vr_current);
                 g_rt_loop_stage = 31;
 
                 bool grip_left = false;

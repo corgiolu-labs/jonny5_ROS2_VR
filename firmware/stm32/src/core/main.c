@@ -14,6 +14,7 @@
 #include "imu/imu.h"
 #include "servo/servo_control.h"
 #include "servo/pickplace.h"
+#include "servo/j5vr_setpose.h"
 #include <zephyr/sys/printk.h>
 
 /* Boundary init prima di HAL SPI (POST_KERNEL 50) */
@@ -52,6 +53,7 @@ int main(void)
     while (1) {
         uart_control_process();
         estop_notify_poll();   /* emette ESTOP/ESTOP_CLEAR pendenti (flag dal RT) */
+        j5vr_setpose_notify_poll(); /* SETPOSE_DONE/RELAX_DIGITAL pendenti (flag dal RT) */
         k_msleep(10);
     }
     return 0;

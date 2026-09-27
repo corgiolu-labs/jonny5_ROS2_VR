@@ -17,6 +17,7 @@
 #include "servo/servo_control.h"
 #include "core/rt_loop.h"
 #include <zephyr/sys/printk.h>
+#include <zephyr/spinlock.h>
 
 /* Dump per-frame [VR_RX]/[IK_RX] su console: printk SINCRONI nel thread SPI
  * service (rate-limited 1 ogni 50 frame). Pura diagnostica: a 0 sono compilati
@@ -53,6 +54,26 @@ struct j5vr_state g_j5vr_latest = {
     .mode5_target_id = 0,
     .mode5_arm_target_cdeg = {0, 0, 0},
 };
+
+/* Protegge g_j5vr_latest: writer = thread SPI service, lettori = RT loop / UART. */
+static struct k_spinlock g_j5vr_lock;
+
+void j5vr_latest_snapshot(struct j5vr_state *out)
+{
+    if (out == NULL) { return; }
+    k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
+    *out = g_j5vr_latest;
+    k_spin_unlock(&g_j5vr_lock, key);
+}
+
+void j5vr_latest_set_buttons_xy(uint16_t xy_bits)
+{
+    const uint16_t mask = (uint16_t)((1U << 4) | (1U << 5));
+    k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
+    g_j5vr_latest.buttons_left =
+        (uint16_t)((g_j5vr_latest.buttons_left & ~mask) | (xy_bits & mask));
+    k_spin_unlock(&g_j5vr_lock, key);
+}
 
 struct j5ik_state g_j5ik_latest = {
     .valid         = 0,
@@ -143,38 +164,45 @@ void j5vr_parse_payload(const uint8_t *p)
 {
     if (p == NULL) { return; }
 
-    g_j5vr_latest.mode          = p[0];
-    g_j5vr_latest.joy_x         = be16_to_s16(p +  1);
-    g_j5vr_latest.joy_y         = be16_to_s16(p +  3);
-    g_j5vr_latest.pitch         = be16_to_s16(p +  5);
-    g_j5vr_latest.yaw           = be16_to_s16(p +  7);
-    g_j5vr_latest.intensity     = p[9];
-    g_j5vr_latest.grip          = p[10];
-    g_j5vr_latest.vr_heartbeat  = be16_to_u16(p + 11);
-    g_j5vr_latest.priority      = p[13];
-    g_j5vr_latest.safe_mask     = be16_to_u16(p + 14);
-    g_j5vr_latest.quat_w        = be32_to_float(p + 16);
-    g_j5vr_latest.quat_x        = be32_to_float(p + 20);
-    g_j5vr_latest.quat_y        = be32_to_float(p + 24);
-    g_j5vr_latest.quat_z        = be32_to_float(p + 28);
-    g_j5vr_latest.buttons_left  = be16_to_u16(p + 32);
-    g_j5vr_latest.buttons_right = be16_to_u16(p + 34);
-    g_j5vr_latest.mode5_arm_valid = 0U;
-    g_j5vr_latest.mode5_control_flags = 0U;
-    g_j5vr_latest.mode5_target_id = 0U;
-    g_j5vr_latest.mode5_arm_target_cdeg[0] = 0;
-    g_j5vr_latest.mode5_arm_target_cdeg[1] = 0;
-    g_j5vr_latest.mode5_arm_target_cdeg[2] = 0;
+    struct j5vr_state s;
 
-    if (g_j5vr_latest.mode == 5U && p[36] == (uint8_t)'I')
+    s.mode          = p[0];
+    s.joy_x         = be16_to_s16(p +  1);
+    s.joy_y         = be16_to_s16(p +  3);
+    s.pitch         = be16_to_s16(p +  5);
+    s.yaw           = be16_to_s16(p +  7);
+    s.intensity     = p[9];
+    s.grip          = p[10];
+    s.vr_heartbeat  = be16_to_u16(p + 11);
+    s.priority      = p[13];
+    s.safe_mask     = be16_to_u16(p + 14);
+    s.quat_w        = be32_to_float(p + 16);
+    s.quat_x        = be32_to_float(p + 20);
+    s.quat_y        = be32_to_float(p + 24);
+    s.quat_z        = be32_to_float(p + 28);
+    s.buttons_left  = be16_to_u16(p + 32);
+    s.buttons_right = be16_to_u16(p + 34);
+    s.mode5_arm_valid = 0U;
+    s.mode5_control_flags = 0U;
+    s.mode5_target_id = 0U;
+    s.mode5_arm_target_cdeg[0] = 0;
+    s.mode5_arm_target_cdeg[1] = 0;
+    s.mode5_arm_target_cdeg[2] = 0;
+
+    if (s.mode == 5U && p[36] == (uint8_t)'I')
     {
-        g_j5vr_latest.mode5_control_flags = p[37];
-        g_j5vr_latest.mode5_arm_valid = (uint8_t)((p[37] & (1U << 0)) != 0U);
-        g_j5vr_latest.mode5_target_id = be16_to_u16(p + 38);
-        g_j5vr_latest.mode5_arm_target_cdeg[0] = be16_to_s16(p + 40);
-        g_j5vr_latest.mode5_arm_target_cdeg[1] = be16_to_s16(p + 42);
-        g_j5vr_latest.mode5_arm_target_cdeg[2] = be16_to_s16(p + 44);
+        s.mode5_control_flags = p[37];
+        s.mode5_arm_valid = (uint8_t)((p[37] & (1U << 0)) != 0U);
+        s.mode5_target_id = be16_to_u16(p + 38);
+        s.mode5_arm_target_cdeg[0] = be16_to_s16(p + 40);
+        s.mode5_arm_target_cdeg[1] = be16_to_s16(p + 42);
+        s.mode5_arm_target_cdeg[2] = be16_to_s16(p + 44);
     }
+
+    /* Pubblicazione atomica: il RT loop non vede mai uno stato a meta'. */
+    k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
+    g_j5vr_latest = s;
+    k_spin_unlock(&g_j5vr_lock, key);
 
 #if J5_PROTO_RX_DEBUG
     /* Log rate-limited: conferma parse su STM32 (ogni 50 frame) */
@@ -219,8 +247,12 @@ void j5ik_parse_payload(const uint8_t *p)
     g_j5ik_rx_counter++;
 
     /* Mantieni mode/hb coerenti anche nei diagnostici legacy. */
-    g_j5vr_latest.mode = g_j5ik_latest.mode;
-    g_j5vr_latest.vr_heartbeat = g_j5ik_latest.vr_heartbeat;
+    {
+        k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
+        g_j5vr_latest.mode = g_j5ik_latest.mode;
+        g_j5vr_latest.vr_heartbeat = g_j5ik_latest.vr_heartbeat;
+        k_spin_unlock(&g_j5vr_lock, key);
+    }
 
 #if J5_PROTO_RX_DEBUG
     static uint32_t ik_rx_log = 0;

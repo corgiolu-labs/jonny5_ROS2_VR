@@ -131,6 +131,17 @@ void j5vr_parse_payload(const uint8_t *p);
 void j5ik_parse_payload(const uint8_t *p);
 
 /**
+ * j5vr_latest_snapshot — copia coerente di g_j5vr_latest.
+ * Il writer (thread SPI service, prio 7) puo' essere prelazionato dal RT loop
+ * (prio 4) a meta' aggiornamento: i lettori multi-campo devono usare questa
+ * funzione invece di copiare direttamente la struct.
+ */
+void j5vr_latest_snapshot(struct j5vr_state *out);
+
+/** j5vr_latest_set_buttons_xy — aggiorna in modo atomico i bit X/Y (4,5) di buttons_left. */
+void j5vr_latest_set_buttons_xy(uint16_t xy_bits);
+
+/**
  * j5vr_fill_tx_telemetry — scrive diagnostica nei byte 46-53 del payload TX.
  * Usato da hal_spi_slave per il frame STATUS.
  *

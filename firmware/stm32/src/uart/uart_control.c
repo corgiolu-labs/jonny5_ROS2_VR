@@ -364,7 +364,8 @@ static void uart_process_command(uint32_t seq, const char *cmd)
     /* --- Diagnostica VR --- */
     else if (strncmp(cmd, "VR?", 3) == 0)
     {
-        struct j5vr_state s = g_j5vr_latest;
+        struct j5vr_state s;
+        j5vr_latest_snapshot(&s);
         const bool grip_l  = (s.buttons_left  & (1U << 1)) != 0U;
         const bool grip_r  = (s.buttons_right & (1U << 1)) != 0U;
 

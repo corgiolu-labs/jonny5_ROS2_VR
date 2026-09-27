@@ -65,6 +65,8 @@
 #define SPI_FRAME_LEN          J5_PROTOCOL_FRAME_SIZE  /* 64 */
 #endif
 #define SPI_FRAMES_IN_CIRCULAR 2
+/* Il commit RX copia SPI_FRAME_LEN byte in uno slot boundary da J5_FRAME_SIZE. */
+BUILD_ASSERT(SPI_FRAME_LEN <= J5_FRAME_SIZE, "boundary RX slot smaller than SPI frame");
 #define SPI_BUF_LEN            (SPI_FRAME_LEN * SPI_FRAMES_IN_CIRCULAR)
 
 #define SPI_SERVICE_STACK_SIZE 1024

@@ -102,4 +102,11 @@ void j5vr_go_setpose_time_f(
  */
 void j5vr_setpose_request_relax_digital_on_finish(void);
 
+/**
+ * j5vr_setpose_notify_poll — emette su UART le notifiche di fine traiettoria
+ * (SETPOSE_DONE / RELAX_DIGITAL) latchate dal tick RT. Da chiamare dal main
+ * loop: uart_poll_out e' busy-wait e non deve girare nel thread RT a 1 kHz.
+ */
+void j5vr_setpose_notify_poll(void);
+
 #endif /* J5VR_SETPOSE_H */

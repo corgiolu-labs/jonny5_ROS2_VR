@@ -31,7 +31,9 @@ The firmware under `firmware/stm32/` builds for two boards from the same source 
 
 **Hardware E-STOP (G474 shield only).** A normally-closed mushroom button on PC6 is polled and debounced inside the 1 kHz real-time tick. The input is read fail-safe: button pressed, cut wire, read error or init failure all mean STOP. On engage the firmware disables all servos, aborts any in-flight trajectory and latches `STOPPED`; motion commands answer `ERR ESTOP_ACTIVE`. Releasing the button only clears the latch — there is no auto-resume, the operator has to re-enable explicitly.
 
-**SPI frame watchdog (both boards).** Checked every 100 ms; if no valid frame has arrived from the Raspberry Pi for more than 500 ms (`SPI_FRAME_TIMEOUT_MS`), the state machine is forced to `SAFE` and the servos are disabled.
+**SPI frame watchdog (both boards).** Checked every 100 ms; if no valid frame has arrived from the Raspberry Pi for more than 500 ms (`SPI_FRAME_TIMEOUT_MS`), the state machine is forced to `SAFE` and the servos are disabled. Any HOME/PARK/SETPOSE trajectory in flight is aborted. Leaving `SAFE` automatically requires fresh SPI frames *and* a VR heartbeat that has advanced since `SAFE` was entered, so a stale last intent cannot re-arm the arm.
+
+**Stale-intent watchdog (ROS 2 driver).** `jonny5_spi_driver` streams IDLE frames (no buttons, so the firmware deadman drops) when no `TeleopIntent` has arrived for `intent_timeout_s` (default 0.25 s).
 
 ## ROS graph
 
