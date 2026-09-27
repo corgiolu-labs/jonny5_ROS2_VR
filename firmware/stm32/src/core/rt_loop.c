@@ -17,6 +17,7 @@
 #include "core/rt_loop.h"
 #include "core/state_machine.h"
 #include "core/estop.h"
+#include "core/hw_watchdog.h"
 #include "spi/boundary_buffers.h"
 #include "spi/hal_spi_slave.h"
 #include "spi/j5_protocol.h"
@@ -306,6 +307,7 @@ static void rt_loop_step(void)
 {
     g_rt_loop_ticks++;
     g_rt_loop_stage = 1;
+    hw_watchdog_feed();   /* no-op senza CONFIG_J5_HW_WATCHDOG */
 
     /* SPI frame watchdog: ogni 100 tick (= 100 ms) verifica che il Pi stia
      * ancora inviando frame. Se il timeout scade e il sistema e' in IDLE,

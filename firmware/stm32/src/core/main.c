@@ -9,6 +9,7 @@
 #include "spi/hal_spi_slave.h"
 #include "core/state_machine.h"
 #include "core/estop.h"
+#include "core/hw_watchdog.h"
 #include "core/rt_loop.h"
 #include "uart/uart_control.h"
 #include "imu/imu.h"
@@ -46,6 +47,7 @@ int main(void)
 
     rt_loop_init();
     rt_loop_start();
+    (void)hw_watchdog_init();   /* opt-in: CONFIG_J5_HW_WATCHDOG; dopo il RT loop che lo alimenta */
     uart_send_unsolicited("BOOT_READY");
 
     printk("[BOOT] RT loop 1kHz started\n");

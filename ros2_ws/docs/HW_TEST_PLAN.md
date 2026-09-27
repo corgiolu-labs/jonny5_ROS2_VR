@@ -191,6 +191,17 @@ Da annotare:
 
 **Superata se:** i movimenti sono intuitivi e il deadman funziona sempre.
 
+## 9. (Opzionale) Watchdog hardware IWDG
+
+Attivalo solo dopo che le fasi 1–8 sono andate bene.
+
+1. In `firmware/stm32/zephyr/prj.conf` imposta `CONFIG_WATCHDOG=y` e `CONFIG_J5_HW_WATCHDOG=y`. Il timeout è 250 ms e si cambia con `CONFIG_J5_HW_WATCHDOG_TIMEOUT_MS`.
+2. Ricompila e fai il flash. Al boot la console deve mostrare `[WDT] IWDG armed, timeout 250 ms`.
+3. Lascia il robot acceso 15 minuti in uso normale: VR e UART `VR?` ripetuti. Non devono comparire reboot, cioè `[BOOT]` ripetuti in console.
+
+**Superata se:** l'IWDG si arma e non causa reset spuri.
+Se compaiono reset, riporta `CONFIG_WATCHDOG=n` e segnalalo con il log della console.
+
 ## Criteri di interruzione immediata
 
 Premi l'E-STOP e fermati se succede uno di questi casi:
