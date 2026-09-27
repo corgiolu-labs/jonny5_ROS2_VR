@@ -193,6 +193,10 @@ class SpiDriverNode(Node):
         # SPI protocol: 1 = legacy (works with any firmware), 2 = CRC-16 +
         # TELEMETRY_V2 + J5IK joint streaming (needs firmware with v2 support).
         self.declare_parameter("protocol_version", 1)
+        # Joint streaming consent: the command must be this recent and this close
+        # to the current pose when streaming is enabled (no jumps to old targets).
+        self.declare_parameter("joint_cmd_timeout_s", 0.5)
+        self.declare_parameter("stream_arm_gate_rad", 0.05)
         self.declare_parameter("joint_names", [
             "base_joint",
             "shoulder_joint",
@@ -219,8 +223,13 @@ class SpiDriverNode(Node):
         self._v2_state: Optional[Dict[str, Any]] = None
         # J5IK joint streaming (protocol v2 only)
         self._joint_cmd_cdeg: Optional[List[int]] = None
+        self._joint_cmd_rad: Optional[List[float]] = None
+        self._joint_cmd_mono = 0.0
+        self._joint_pos_rad: Optional[List[float]] = None
         self._stream_enabled = False
         self._stream_heartbeat = 0
+        self._joint_cmd_timeout_s = float(self.get_parameter("joint_cmd_timeout_s").value)
+        self._stream_gate_rad = float(self.get_parameter("stream_arm_gate_rad").value)
 
         self.joint_pub = self.create_publisher(JointState, "joint_states", 10)
         self.imu_pub = self.create_publisher(Imu, "imu/data", 10)
@@ -296,9 +305,11 @@ class SpiDriverNode(Node):
         if len(msg.data) != 6 or not all(math.isfinite(v) for v in msg.data):
             self.get_logger().warning("jonny5/joint_commands needs 6 finite values (rad)")
             return
+        self._joint_cmd_rad = [float(v) for v in msg.data]
         self._joint_cmd_cdeg = joint_rad_to_physical_cdeg(
-            list(msg.data), self.servo_offsets_deg, self.servo_dirs
+            self._joint_cmd_rad, self.servo_offsets_deg, self.servo_dirs
         )
+        self._joint_cmd_mono = time.monotonic()
 
     def _on_stream_enable(self, request: SetBool.Request, response: SetBool.Response):
         if not request.data:
@@ -306,17 +317,40 @@ class SpiDriverNode(Node):
             response.success = True
             response.message = "joint streaming disabled"
             return response
-        if self.protocol_version != 2:
+        refusal = self._stream_enable_refusal()
+        if refusal:
             response.success = False
-            response.message = "joint streaming needs protocol_version=2"
-        elif self._joint_cmd_cdeg is None:
-            response.success = False
-            response.message = "publish a command on jonny5/joint_commands first"
+            response.message = refusal
         else:
             self._stream_enabled = True
             response.success = True
             response.message = "joint streaming enabled"
         return response
+
+    def _stream_enable_refusal(self) -> str:
+        """Why joint streaming cannot be enabled now ('' = it can)."""
+        if self.protocol_version != 2:
+            return "joint streaming needs protocol_version=2"
+        if self._joint_cmd_rad is None:
+            return "publish a command on jonny5/joint_commands first"
+        age = time.monotonic() - self._joint_cmd_mono
+        if age > self._joint_cmd_timeout_s:
+            return f"last joint command is {age:.1f}s old: publish the current target first"
+        v2s = self._v2_state
+        if v2s is None or not self._stm32_link_fresh():
+            return "no TELEMETRY_V2 from the STM32"
+        if v2s.get("estop_active") or v2s.get("fsm_state_name") != "IDLE":
+            return f"STM32 is {v2s.get('fsm_state_name')} (E-STOP {v2s.get('estop_active')}): send UART ENABLE first"
+        if self._joint_pos_rad is None:
+            return "no joint state yet"
+        jump = max(abs(a - b) for a, b in zip(self._joint_cmd_rad, self._joint_pos_rad))
+        if jump > self._stream_gate_rad:
+            return (f"command is {jump:.3f} rad from the current pose "
+                    f"(gate {self._stream_gate_rad}): command the current pose first")
+        return ""
+
+    def _stm32_link_fresh(self) -> bool:
+        return (time.monotonic() - self._last_telemetry_mono) <= LINK_TIMEOUT_S
 
     def _send_joint_stream(self) -> Optional[bytes]:
         """One J5IK frame with the latest command. The last command is held
@@ -334,6 +368,17 @@ class SpiDriverNode(Node):
                 self._request_status()
             else:
                 # send_*_once() swallow SPI errors and return None.
+                if self._stream_enabled:
+                    v2s = self._v2_state or {}
+                    if (v2s.get("estop_active") or v2s.get("fsm_state_name") != "IDLE"
+                            or not self._stm32_link_fresh()):
+                        # Firmware left IDLE (SAFE/STOPPED/E-STOP/link): withdraw consent.
+                        # The operator re-enables after UART ENABLE (never automatic).
+                        self._stream_enabled = False
+                        self.get_logger().warning(
+                            "STM32 left IDLE or E-STOP/link loss: joint streaming disabled; "
+                            "call jonny5/joint_stream/enable again after UART ENABLE"
+                        )
                 if self._stream_enabled and self._joint_cmd_cdeg is not None:
                     rx = self._send_joint_stream()
                 else:
@@ -422,6 +467,7 @@ class SpiDriverNode(Node):
             joint_msg.position = physical_deg_to_joint_rad(
                 servo, self.servo_offsets_deg, self.servo_dirs
             )
+            self._joint_pos_rad = list(joint_msg.position)
             self.joint_pub.publish(joint_msg)
 
             imu_msg = Imu()

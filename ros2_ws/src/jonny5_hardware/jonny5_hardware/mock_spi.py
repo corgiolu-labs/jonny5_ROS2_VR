@@ -27,7 +27,7 @@ parses (see ``j5vr_spi_bridge.py``):
 Protocol v2 requests (frame[2] == 2, CRC-sealed) are answered like the v2
 firmware: TELEMETRY_V2 (0x08) for J5VR/J5IK/TELEMETRY, sealed STATUS for 0x03.
 A J5IK frame in mode JOINT_STREAM with the enable flag moves the synthetic
-joints toward its targets (rate-limited), otherwise they follow a sine pattern.
+joints toward its targets (rate-limited); otherwise they stay still.
 """
 
 from __future__ import annotations
@@ -212,15 +212,10 @@ class MockSpiWorker:
                     diff = max(-max_step, min(max_step, target - self._joint_cdeg[i]))
                     self._joint_cdeg[i] += diff
         else:
+            # Not streaming: the arm stays where it is, like the real robot at rest.
             self._stream_live = False
             if tx_type == v2.FRAME_TYPE_J5VR:
                 self._last_mode = payload[0]
-            t = self._tick / 50.0
-            self._joint_cdeg = [
-                int(100 * (90 + a * math.sin(t * w + ph)))
-                for a, w, ph in ((20, 0.6, 0.0), (15, 0.7, 0.5), (12, 0.8, 1.0),
-                                 (10, 1.2, 0.0), (8, 1.1, 0.3), (7, 1.4, 0.8))
-            ]
         t = self._tick / 50.0
         half = 0.125 * math.sin(t * 0.5)
         self._stm_tx_seq = (self._stm_tx_seq + 1) & 0xFFFF

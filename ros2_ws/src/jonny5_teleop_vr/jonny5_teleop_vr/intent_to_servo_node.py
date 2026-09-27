@@ -78,6 +78,7 @@ class IntentToServoNode(Node):
 
         self._intent: Optional[TeleopIntent] = None
         self._intent_mono = 0.0
+        self._was_moving = False
         self._twist_mode_set = False
 
         self.pub = self.create_publisher(TwistStamped, f"{servo}/delta_twist_cmds", 10)
@@ -108,11 +109,20 @@ class IntentToServoNode(Node):
         self._twist_mode_set = ok
 
     def _tick(self) -> None:
-        if self._intent is None or (time.monotonic() - self._intent_mono) > self.timeout:
-            return
-        twist = intent_to_twist(self._intent, self.limits)
+        twist = None
+        if self._intent is not None and (time.monotonic() - self._intent_mono) <= self.timeout:
+            twist = intent_to_twist(self._intent, self.limits)
         if twist is None:
+            if self._was_moving:
+                # Deadman released / stream lost: one explicit zero twist so Servo
+                # starts decelerating now instead of after incoming_command_timeout.
+                self._publish((0.0,) * 6)
+                self._was_moving = False
             return
+        self._was_moving = True
+        self._publish(twist)
+
+    def _publish(self, twist: Tuple[float, ...]) -> None:
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.frame_id

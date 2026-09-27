@@ -46,6 +46,9 @@
 #define J5IK_FLAG_STREAM_ENABLE (1U << 7)
 /** Oltre questo intervallo senza frame J5IK il braccio resta fermo (hold). */
 #define J5IK_STREAM_TIMEOUT_MS 100U
+/** Velocita' massima [deg/s] nel mode JOINT_STREAM (indipendente dallo stato VR),
+ *  ulteriormente limitata dai cap per-giunto joint_max_vel_deg_s (polso 35). */
+#define J5_STREAM_MAX_VEL_DEG_S 60.0f
 
 /* TELEMETRY_V2 status_flags (payload[9]) */
 #define J5_TLM2_ST_ESTOP        (1U << 0)

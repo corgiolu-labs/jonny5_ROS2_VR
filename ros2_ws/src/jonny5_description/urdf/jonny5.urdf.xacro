@@ -85,7 +85,8 @@
     <child link="wrist_pitch_link" />
     <origin xyz="0 0 ${wrist_stack/3}" rpy="0 0 0" />
     <axis xyz="0 1 0" />
-    <limit lower="-0.959931" upper="0.523599" effort="2.0" velocity="1.5" />
+    <!-- Firmware clamps pitch to 45..135 deg physical (offset 90, dir -1) -> -45..+45 deg. -->
+    <limit lower="-0.785398" upper="0.523599" effort="2.0" velocity="1.5" />
   </joint>
 
   <link name="wrist_roll_link"><visual><origin xyz="0 0 ${wrist_stack/3}" /><geometry><box size="0.030 0.030 ${wrist_stack/3}" /></geometry><material name="jonny5_dark" /></visual></link>
@@ -94,7 +95,8 @@
     <child link="wrist_roll_link" />
     <origin xyz="0 0 ${wrist_stack/3}" rpy="0 0 0" />
     <axis xyz="1 0 0" />
-    <limit lower="-0.785398" upper="0.785398" effort="2.0" velocity="1.5" />
+    <!-- Firmware clamps roll to 45..135 deg physical (offset 95) -> -50..+40 deg. -->
+    <limit lower="-0.785398" upper="0.698132" effort="2.0" velocity="1.5" />
   </joint>
 
   <link name="ee_link"><visual><origin xyz="${tool_x/2} 0 0" /><geometry><box size="${tool_x} 0.025 0.025" /></geometry><material name="jonny5_signal" /></visual></link>

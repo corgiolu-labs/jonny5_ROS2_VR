@@ -115,10 +115,18 @@ Offset e versi vanno corretti **in entrambi** i file:
 Con lo stesso launch della fase 4, E-STOP in mano:
 
 ```bash
+python3 raspberry/tools/j5_uart.py ENABLE HOME          # STM32 in IDLE, braccio in HOME (giunti circa 0 rad)
+ros2 topic echo --once /joint_states                    # leggi la posa attuale
+# pubblica ESATTAMENTE la posa attuale (qui HOME = tutti 0):
 ros2 topic pub -r 50 /jonny5/joint_commands std_msgs/msg/Float64MultiArray "{data: [0.0, 0, 0, 0, 0, 0]}"
 ros2 service call /jonny5/joint_stream/enable std_srvs/srv/SetBool "{data: true}"
 # poi cambia un solo valore alla volta, a passi piccoli: 0.05, 0.1, 0.2 rad
 ```
+
+L'abilitazione viene **rifiutata**, con il motivo nella risposta del servizio, in tre casi:
+- il comando dista più di 0,05 rad dalla posa attuale;
+- il comando è più vecchio di 0,5 s;
+- l'STM32 non è in IDLE, oppure l'E-STOP è attivo.
 
 | # | Prova | Atteso |
 |---|---|---|
@@ -126,7 +134,10 @@ ros2 service call /jonny5/joint_stream/enable std_srvs/srv/SetBool "{data: true}
 | 5.2 | Ferma il `ros2 topic pub` | Il braccio **resta fermo** sull'ultimo comando (il driver continua a inviarlo) |
 | 5.3 | `Ctrl+C` sul launch del driver | Entro 0,1 s il braccio si ferma; dopo 0,5 s SAFE, servo spenti |
 | 5.4 | Chiama `joint_stream/enable` con `false` | Il braccio torna al percorso VR/IDLE e i servo si spengono |
-| 5.5 | Premi il fungo durante lo streaming | Stop immediato; `estop_active: true` in `/jonny5/spi/telemetry` |
+| 5.5 | Premi il fungo durante lo streaming | Stop immediato; `estop_active: true` in `/jonny5/spi/telemetry`; il log dice che lo streaming è disabilitato |
+| 5.6 | Rilascia il fungo, poi `j5_uart.py SAFE ENABLE` | Il braccio **non si muove da solo**: bisogna richiamare `joint_stream/enable` |
+| 5.7 | Durante lo streaming: `j5_uart.py SAFE` | Stop; nessun riarmo automatico anche se lo streaming continua |
+| 5.8 | Pubblica un comando lontano (0,5 rad) e chiama `enable` | Abilitazione rifiutata: "command is ... rad from the current pose" |
 
 **Superata se:** tutte le righe si comportano come atteso, con `crc_errors_*` e `rx_seq_gaps` fermi a 0 o quasi.
 
@@ -138,7 +149,10 @@ Ferma il launch della fase 4/5.
 ros2 launch jonny5_bringup control.launch.py mock_hardware:=false
 ros2 control list_controllers        # tre controller attivi
 ros2 control list_hardware_interfaces
+python3 raspberry/tools/j5_uart.py ENABLE   # l'arm si arma SOLO con questo comando esplicito
 ```
+
+Nel log deve comparire `STM32 IDLE and command at the current pose: joint streaming armed`.
 
 Poi invia un goal piccolo e lento (4 s):
 
@@ -150,14 +164,18 @@ ros2 action send_goal /joint_trajectory_controller/follow_joint_trajectory contr
 
 - All'avvio il braccio **non deve scattare**, perché il comando parte dalla posa attuale.
 - Il goal deve finire con `SUCCEEDED`.
-- Stacca il cavo SPI, oppure ferma il firmware con il fungo e poi SAFE: entro 0,5 s il log deve mostrare `SPI link lost` e l'hardware va in errore.
+- Premi il fungo, oppure `j5_uart.py SAFE`: il log deve mostrare `STM32 left IDLE ... joint streaming paused` e il braccio resta fermo.
+- Dopo il rilascio e `j5_uart.py SAFE ENABLE`: lo streaming si riarma **senza scatti** e il log mostra `armed`.
+- Stacca il connettore SPI (a braccio fermo): entro 0,5 s il log deve mostrare `SPI link lost` e l'hardware va in errore.
+  - Per ripartire: `ros2 control set_hardware_component_state JONNY5 active`, poi riattiva i controller con `ros2 control switch_controllers --activate joint_trajectory_controller`.
 
-**Superata se:** il goal va a buon fine e la disattivazione per link perso funziona.
+**Superata se:** il goal va a buon fine, SAFE/E-STOP mettono in pausa senza riarmo automatico, e il link perso manda l'hardware in errore.
 
 ## 7. MoveIt 2
 
 ```bash
 ros2 launch jonny5_moveit_config move_group.launch.py mock_hardware:=false rviz:=true
+python3 raspberry/tools/j5_uart.py ENABLE   # arma lo streaming (sempre esplicito)
 ```
 
 - Da RViz (pannello MotionPlanning), gruppo `arm`: pianifica verso `ready` con velocità 0,1 e poi esegui.
@@ -169,6 +187,7 @@ ros2 launch jonny5_moveit_config move_group.launch.py mock_hardware:=false rviz:
 
 ```bash
 ros2 launch jonny5_moveit_config servo.launch.py mock_hardware:=false
+python3 raspberry/tools/j5_uart.py ENABLE   # arma lo streaming (sempre esplicito)
 ```
 
 1. Porta il braccio in `ready` (fase 7, oppure un goal alla JTC). Da `home` Servo non si muove, perché quella posa è una singolarità.

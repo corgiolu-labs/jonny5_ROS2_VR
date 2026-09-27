@@ -66,6 +66,7 @@ private:
   std::array<double, kJoints> cmd_min_{};
   std::array<double, kJoints> cmd_max_{};
   std::chrono::milliseconds link_timeout_{500};
+  double arm_gate_rad_ = 0.05;
 
   std::unique_ptr<Transport> transport_;
   std::vector<uint8_t> tx_buf_;
@@ -73,6 +74,10 @@ private:
   uint16_t sequence_ = 0;
   uint16_t heartbeat_ = 0;
   bool streaming_ = false;
+  // Stream consent actually sent to the STM32 (STREAM_ENABLE). Granted only
+  // while the firmware is IDLE without E-STOP and the command is at the
+  // current pose; withdrawn whenever the firmware leaves IDLE.
+  bool stream_armed_ = false;
 
   // Latest telemetry
   bool have_telemetry_ = false;

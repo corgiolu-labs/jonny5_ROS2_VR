@@ -48,9 +48,16 @@ Only one process may drive `/dev/spidev0.0`: never run both launch files on the 
 | Hardware state | Behaviour |
 |---|---|
 | configure | Opens SPI and reads the current pose. Fails if no TELEMETRY_V2 arrives (for example v1 firmware). |
-| activate | Commands are initialised to the measured pose (no jump), then streaming starts with STREAM_ENABLE set. |
+| activate | Commands are initialised to the measured pose (no jump). J5IK frames start, with STREAM_ENABLE governed by the consent gate below. |
 | deactivate | Sends J5IK with STREAM_ENABLE clear: the firmware disables the servos. |
 | `read()` error | No valid telemetry for `link_timeout_ms` (500 ms). The controller_manager then deactivates the hardware. |
+
+**Consent gate.** STREAM_ENABLE is sent only while all of these hold:
+- the STM32 is in IDLE;
+- the E-STOP is not active;
+- when consent is (re)granted, the controller command is within `arm_gate_rad` (0.05 rad) of the current pose.
+
+If the STM32 leaves IDLE (SAFE, STOPPED or E-STOP), consent is withdrawn at once. After the operator's UART ENABLE it comes back only if the command still matches the pose. A trajectory that kept running while the firmware was in SAFE therefore does not make the arm jump when it is re-enabled.
 
 Firmware-side guarantees are independent of the Pi:
 - motion only in FSM IDLE;
@@ -59,7 +66,13 @@ Firmware-side guarantees are independent of the Pi:
 - after 500 ms without SPI frames: SAFE, servos off;
 - per-joint velocity limits.
 
-If the STM32 is in SAFE, the first streamed frames re-arm it automatically, because the heartbeat advances. After an E-STOP the operator must release it and send SAFE → ENABLE.
+The firmware never leaves SAFE on its own in JOINT_STREAM, so arming is always an operator action:
+
+1. Launch `control.launch.py`. The hardware activates while the STM32 may still be in SAFE, and the J5IK frames keep the SPI watchdog alive.
+2. Send `python3 raspberry/tools/j5_uart.py ENABLE`.
+3. The stream arms and the controllers take over from the current pose.
+
+After an E-STOP: release it, send `j5_uart.py SAFE ENABLE`, and streaming resumes through the consent gate.
 
 ## Usage
 

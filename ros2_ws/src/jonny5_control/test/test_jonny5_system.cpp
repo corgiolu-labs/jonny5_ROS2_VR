@@ -94,12 +94,27 @@ TEST(Jonny5System, MockLifecycleTracksCommand)
   EXPECT_NEAR(find(states, "imu_sensor/orientation.w"), 1.0, 1e-3);
 
   ASSERT_EQ(hw.on_activate(state), hardware_interface::CallbackReturn::SUCCESS);
-  // Commands start at the measured pose; request 0.3 rad on the base, 0.9 (clamped to 0.5)
-  // on the elbow.
-  static_cast<void>(commands[0].set_value(0.3));
-  static_cast<void>(commands[2].set_value(0.9));
   const rclcpp::Time t0(0, 0, RCL_STEADY_TIME);
   const rclcpp::Duration dt(0, 10000000);
+
+  // A command far from the current pose must not arm the stream (no jump).
+  static_cast<void>(commands[0].set_value(0.3));
+  for (int k = 0; k < 30; ++k) {
+    hw.read(t0, dt);
+    hw.write(t0, dt);
+    rclcpp::sleep_for(std::chrono::milliseconds(10));
+  }
+  hw.read(t0, dt);
+  EXPECT_NEAR(find(states, "base_joint/position"), 0.0, 1e-3);
+  EXPECT_EQ(find(states, "jonny5_status/fsm_state"), 1.0);
+
+  // Back at the current pose the stream arms; then the controller moves the target:
+  // 0.3 rad on the base, 0.9 (clamped to 0.5) on the elbow.
+  static_cast<void>(commands[0].set_value(0.0));
+  hw.read(t0, dt);
+  hw.write(t0, dt);
+  static_cast<void>(commands[0].set_value(0.3));
+  static_cast<void>(commands[2].set_value(0.9));
   for (int k = 0; k < 150; ++k) {
     ASSERT_EQ(hw.read(t0, dt), hardware_interface::return_type::OK);
     ASSERT_EQ(hw.write(t0, dt), hardware_interface::return_type::OK);

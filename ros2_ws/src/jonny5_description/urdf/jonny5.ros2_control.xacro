@@ -35,8 +35,8 @@
       <xacro:jonny5_joint_interfaces name="shoulder_joint" lower="-1.047198" upper="0.959931" />
       <xacro:jonny5_joint_interfaces name="elbow_joint" lower="-1.047198" upper="0.959931" />
       <xacro:jonny5_joint_interfaces name="wrist_yaw_joint" lower="-0.785398" upper="0.785398" />
-      <xacro:jonny5_joint_interfaces name="wrist_pitch_joint" lower="-0.959931" upper="0.523599" />
-      <xacro:jonny5_joint_interfaces name="wrist_roll_joint" lower="-0.785398" upper="0.785398" />
+      <xacro:jonny5_joint_interfaces name="wrist_pitch_joint" lower="-0.785398" upper="0.523599" />
+      <xacro:jonny5_joint_interfaces name="wrist_roll_joint" lower="-0.785398" upper="0.698132" />
       <sensor name="imu_sensor">
         <state_interface name="orientation.x" />
         <state_interface name="orientation.y" />

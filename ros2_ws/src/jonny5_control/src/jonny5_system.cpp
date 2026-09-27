@@ -87,6 +87,7 @@ hardware_interface::CallbackReturn Jonny5System::on_init(
     spi_speed_hz_ = static_cast<uint32_t>(std::stoul(param(info_, "spi_speed_hz", "1000000")));
     transfer_len_ = std::stoul(param(info_, "transfer_len", "128"));
     link_timeout_ = std::chrono::milliseconds(std::stoul(param(info_, "link_timeout_ms", "500")));
+    arm_gate_rad_ = std::stod(param(info_, "arm_gate_rad", "0.05"));
   } catch (const std::exception & e) {
     RCLCPP_ERROR(kLogger, "Invalid numeric hardware parameter: %s", e.what());
     return hardware_interface::CallbackReturn::ERROR;
@@ -192,12 +193,14 @@ hardware_interface::CallbackReturn Jonny5System::on_activate(const rclcpp_lifecy
   apply_telemetry();
   // Start from where the arm is: no jump on the first write().
   cmd_ = pos_;
+  stream_armed_ = false;
   if (telemetry_.estop()) {
     RCLCPP_WARN(kLogger, "E-STOP is latched: the arm will not move until it is released and "
       "re-enabled (SAFE -> ENABLE)");
   } else if (telemetry_.fsm_state != static_cast<uint8_t>(j5v2::FsmState::kIdle)) {
-    RCLCPP_WARN(kLogger, "STM32 FSM state is %u (not IDLE): joint streaming waits for IDLE "
-      "(auto re-arm from SAFE on the first frames, or UART ENABLE)", telemetry_.fsm_state);
+    RCLCPP_WARN(kLogger, "STM32 FSM state is %u (not IDLE): the arm stays still until an "
+      "explicit UART ENABLE (joint streaming never re-arms the firmware by itself)",
+      telemetry_.fsm_state);
   }
   streaming_ = true;
   RCLCPP_INFO(kLogger, "JONNY5 joint streaming enabled");
@@ -207,6 +210,7 @@ hardware_interface::CallbackReturn Jonny5System::on_activate(const rclcpp_lifecy
 hardware_interface::CallbackReturn Jonny5System::on_deactivate(const rclcpp_lifecycle::State &)
 {
   streaming_ = false;
+  stream_armed_ = false;
   if (transport_) {
     // Withdraw the stream consent: the firmware disables the JOINT_STREAM servos.
     std::array<int16_t, kJoints> hold{};
@@ -284,21 +288,45 @@ hardware_interface::return_type Jonny5System::write(const rclcpp::Time &, const 
   if (!streaming_ || !transport_) {
     return hardware_interface::return_type::OK;
   }
+  std::array<double, kJoints> cmd_rad{};
+  double max_jump = 0.0;
+  for (std::size_t i = 0; i < kJoints; ++i) {
+    double rad = std::isfinite(cmd_[i]) ? cmd_[i] : pos_[i];  // no command yet: hold
+    rad = std::clamp(rad, cmd_min_[i], cmd_max_[i]);
+    cmd_rad[i] = rad;
+    max_jump = std::max(max_jump, std::abs(rad - pos_[i]));
+  }
+
+  // Stream consent gate (see stream_armed_).
+  const bool fw_ready = have_telemetry_ && !telemetry_.estop() &&
+    telemetry_.fsm_state == static_cast<uint8_t>(j5v2::FsmState::kIdle);
+  auto clock = rclcpp::Clock(RCL_STEADY_TIME);
+  if (stream_armed_ && !fw_ready) {
+    stream_armed_ = false;
+    RCLCPP_WARN(kLogger, "STM32 left IDLE (state %u, E-STOP %d): joint streaming paused. "
+      "After UART ENABLE it resumes only once the command is at the current pose.",
+      telemetry_.fsm_state, telemetry_.estop() ? 1 : 0);
+  } else if (!stream_armed_ && fw_ready) {
+    if (max_jump <= arm_gate_rad_) {
+      stream_armed_ = true;
+      RCLCPP_INFO(kLogger, "STM32 IDLE and command at the current pose: joint streaming armed");
+    } else {
+      RCLCPP_WARN_THROTTLE(kLogger, clock, 2000,
+        "Command is %.3f rad away from the current pose: not streaming. Command the current "
+        "pose (or restart the controller) to arm.", max_jump);
+    }
+  }
+
   std::array<int16_t, kJoints> targets{};
   for (std::size_t i = 0; i < kJoints; ++i) {
-    double rad = cmd_[i];
-    if (!std::isfinite(rad)) {
-      rad = pos_[i];   // no command yet: hold the measured pose
-    }
-    rad = std::clamp(rad, cmd_min_[i], cmd_max_[i]);
+    const double rad = stream_armed_ ? cmd_rad[i] : pos_[i];
     targets[i] = joint_rad_to_physical_cdeg(rad, offsets_deg_[i], dirs_[i]);
   }
   heartbeat_ = static_cast<uint16_t>(heartbeat_ + 1);
   if (heartbeat_ == 0) {heartbeat_ = 1;}
-  if (!exchange(j5v2::build_j5ik(targets, sequence_, heartbeat_, true))) {
+  if (!exchange(j5v2::build_j5ik(targets, sequence_, heartbeat_, stream_armed_))) {
     // A single failed transfer is tolerated; read() reports a lost link after link_timeout.
-    RCLCPP_WARN_THROTTLE(kLogger, *rclcpp::Clock::make_shared(RCL_STEADY_TIME), 1000,
-      "SPI exchange failed");
+    RCLCPP_WARN_THROTTLE(kLogger, clock, 1000, "SPI exchange failed");
   }
   return hardware_interface::return_type::OK;
 }

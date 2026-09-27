@@ -103,10 +103,13 @@ class Probe(Node):
         pt.time_from_start.sec = sec
         goal.trajectory.points = [pt]
         f = ac.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, f, timeout_sec=10)
-        r = f.result().get_result_async()
-        rclpy.spin_until_future_complete(self, r, timeout_sec=sec + 20)
-        return r.result().result.error_code
+        rclpy.spin_until_future_complete(self, f, timeout_sec=30)
+        handle = f.result()
+        if handle is None or not handle.accepted:
+            return -998
+        r = handle.get_result_async()
+        rclpy.spin_until_future_complete(self, r, timeout_sec=sec + 30)
+        return r.result().result.error_code if r.result() else -997
 
 
 def check(ok: bool, what: str, results: List[str]) -> bool:
@@ -129,13 +132,21 @@ def scenario_spi_v2(node: Probe, res: List[str]) -> bool:
     ok &= check(tel["msg"].protocol_version == 2 and status["msg"].state == "IDLE"
                 and status["msg"].stm32_online, "telemetry v2, FSM IDLE, stm32 online", res)
     pub = node.create_publisher(Float64MultiArray, "/jonny5/joint_commands", 10)
-    cmd = Float64MultiArray(data=[0.2, 0.0, 0.0, 0.0, 0.0, 0.0])
-    node.spin_for(0.5, lambda: pub.publish(cmd))
     cli = node.create_client(SetBool, "/jonny5/joint_stream/enable")
     cli.wait_for_service(timeout_sec=10)
-    f = cli.call_async(SetBool.Request(data=True))
-    rclpy.spin_until_future_complete(node, f, timeout_sec=10)
-    ok &= check(bool(f.result() and f.result().success), "joint_stream/enable accepted", res)
+
+    def enable() -> bool:
+        f = cli.call_async(SetBool.Request(data=True))
+        rclpy.spin_until_future_complete(node, f, timeout_sec=10)
+        return bool(f.result() and f.result().success)
+
+    far = Float64MultiArray(data=[0.2, 0.0, 0.0, 0.0, 0.0, 0.0])
+    node.spin_for(0.5, lambda: pub.publish(far))
+    ok &= check(not enable(), "enable refused while the command is far from the current pose", res)
+    here = Float64MultiArray(data=node.joints())
+    node.spin_for(0.5, lambda: pub.publish(here))
+    ok &= check(enable(), "enable accepted with the command at the current pose", res)
+    cmd = Float64MultiArray(data=[0.2, 0.0, 0.0, 0.0, 0.0, 0.0])
     node.spin_for(4.0, lambda: pub.publish(cmd))
     ok &= check(abs(node.joints()[0] - 0.2) < 0.02, f"streaming reaches base 0.2 rad (got {node.joints()[0]:.3f})", res)
     t = tel["msg"]
@@ -248,7 +259,7 @@ def main() -> int:
             for ln in lines[-40:]:
                 print("    |", ln.rstrip())
         summary.append(ok)
-        time.sleep(2.0)
+        time.sleep(5.0)  # let the previous stack's nodes leave the graph
     rclpy.shutdown()
     print("ALL PASS" if all(summary) else "SOME SCENARIOS FAILED")
     return 0 if all(summary) else 1

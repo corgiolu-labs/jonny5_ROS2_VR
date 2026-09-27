@@ -108,17 +108,20 @@ Joint positions are the firmware's commanded servo angles, not encoder readings.
 | 0 | valid |
 | 1 | control_flags — bit7 = **STREAM_ENABLE** (bit0 grip, bit1 hold: legacy) |
 | 2-3 | target_id |
-| 4-5 | heartbeat — must advance (also used for SAFE → IDLE auto re-arm) |
+| 4-5 | heartbeat — must advance |
 | 6 | mode = 6 |
 | 8-19 | 6 × i16 target, physical centi-degrees, B S G Y P R |
 
 Firmware behaviour (RT loop, 1 kHz):
 - The frame acts only in FSM **IDLE**. SAFE, STOPPED and E-STOP always win.
+- **No automatic re-arm in mode 6.** In VR modes a SAFE state is left automatically once the heartbeat advances. JOINT_STREAM instead needs an explicit **UART ENABLE**. Otherwise a stream still running after SAFE (UART SAFE/RESET, E-STOP recovery, SPI watchdog) would bring the arm back to its last target on its own.
 - If `valid` is 0, the mode is not 6, or STREAM_ENABLE is clear, the servos are disabled, the same as a VR disarm.
 - If the last J5IK frame is older than **100 ms**, the arm **holds** where it is and no new target is applied.
 - Otherwise:
   - targets are clamped to the runtime joint limits;
-  - the servos move with the per-joint velocity limits of `j5vr_actuation_apply_desired`.
+  - the servos move at a fixed **60°/s**, lowered by the per-joint caps (wrist pitch/roll 35°/s);
+  - the speed does not depend on the VR speed buttons;
+  - the VR low-pass filter is bypassed, so every joint is strictly rate-limited.
 - If SPI frames stop for more than 500 ms, the SPI watchdog forces SAFE and the servos turn off.
 
 ## ROS 2 (`jonny5_spi_driver`)

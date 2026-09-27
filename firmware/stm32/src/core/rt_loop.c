@@ -267,9 +267,10 @@ static uint16_t safe_entry_heartbeat = 0;
  * J5IK_FLAG_STREAM_ENABLE. Senza consenso i servo vengono disabilitati come nel
  * disarm VR; con frame piu' vecchi di J5IK_STREAM_TIMEOUT_MS il braccio resta
  * fermo (nessun nuovo target). Velocita' limitata da j5vr_actuation_apply_desired. */
+static bool stream_servos_off = false;
+
 static void rt_joint_stream_step(void)
 {
-    static bool stream_servos_off = false;
     struct j5ik_state ik;
     j5ik_latest_snapshot(&ik);
 
@@ -378,7 +379,13 @@ static void rt_loop_step(void)
                     hal_spi_last_frame_age_ms() <= SPI_FRAME_TIMEOUT_MS;
                 const bool hb_advanced =
                     (j5vr_check.vr_heartbeat != safe_entry_heartbeat);
-                if (spi_fresh && hb_advanced &&
+                /* JOINT_STREAM (mode 6) non si riarma MAI da solo: dopo SAFE
+                 * (UART SAFE/RESET, recovery E-STOP, watchdog SPI) lo streaming
+                 * dal Pi continua con heartbeat avanzato e riporterebbe il
+                 * braccio all'ultimo target senza un'azione dell'operatore.
+                 * Serve un ENABLE esplicito via UART. */
+                const bool joint_stream = (j5vr_check.mode == J5_MODE_JOINT_STREAM);
+                if (spi_fresh && hb_advanced && !joint_stream &&
                     (j5vr_check.mode != 0 || j5vr_check.vr_heartbeat > 0))
                 {
                     if (!auto_transition_done)
@@ -406,6 +413,7 @@ static void rt_loop_step(void)
                     break;
                 }
                 g_j5ik_stream_active = 0U;
+                stream_servos_off = false;   /* re-armato al prossimo ingresso in mode 6 */
 
                 bool grip_left = false;
                 bool grip_right = false;
