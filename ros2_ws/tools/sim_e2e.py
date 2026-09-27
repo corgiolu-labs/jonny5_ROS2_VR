@@ -54,8 +54,8 @@ class Launch:
 
 
 class Probe(Node):
-    def __init__(self) -> None:
-        super().__init__("j5_sim_e2e")
+    def __init__(self, name: str = "j5_sim_e2e") -> None:
+        super().__init__(name)
         self.js: Dict[str, float] = {}
         self.create_subscription(JointState, "/joint_states",
                                  lambda m: self.js.update(zip(m.name, m.position)), 10)
@@ -74,6 +74,16 @@ class Probe(Node):
                 return True
             rclpy.spin_once(self, timeout_sec=0.05)
         return False
+
+    def wait_controllers(self, timeout: float = 60.0) -> bool:
+        """joint_states flowing and the JTC action server up (controllers active)."""
+        from control_msgs.action import FollowJointTrajectory
+
+        if not self.wait_for(lambda: len(self.js) == 6, timeout):
+            return False
+        ac = ActionClient(self, FollowJointTrajectory,
+                          "/joint_trajectory_controller/follow_joint_trajectory")
+        return ac.wait_for_server(timeout_sec=timeout)
 
     def joints(self) -> List[float]:
         return [self.js.get(j, float("nan")) for j in JOINTS]
@@ -135,7 +145,7 @@ def scenario_spi_v2(node: Probe, res: List[str]) -> bool:
 
 
 def scenario_control(node: Probe, res: List[str]) -> bool:
-    ok = check(node.wait_for(lambda: len(node.js) == 6, 30), "joint_states from joint_state_broadcaster", res)
+    ok = check(node.wait_controllers(), "controllers active (joint_states + JTC)", res)
     target = [0.3, -0.2, 0.2, 0.1, -0.1, 0.0]
     code = node.send_trajectory(target)
     ok &= check(code == 0, f"FollowJointTrajectory SUCCESSFUL (error_code {code})", res)
@@ -149,9 +159,12 @@ def scenario_moveit(node: Probe, res: List[str]) -> bool:
     from moveit_msgs.action import MoveGroup
     from moveit_msgs.msg import Constraints, JointConstraint
 
+    if not check(node.wait_controllers(), "controllers active (joint_states + JTC)", res):
+        return False
     ac = ActionClient(node, MoveGroup, "/move_action")
     if not check(ac.wait_for_server(timeout_sec=60), "move_group /move_action available", res):
         return False
+    node.spin_for(2.0)  # let move_group's current state monitor see the joint states
     goal = MoveGroup.Goal()
     goal.request.group_name = "arm"
     goal.request.num_planning_attempts = 3
@@ -178,7 +191,7 @@ def scenario_moveit(node: Probe, res: List[str]) -> bool:
 def scenario_servo(node: Probe, res: List[str]) -> bool:
     from jonny5_msgs.msg import TeleopIntent
 
-    ok = check(node.wait_for(lambda: len(node.js) == 6, 30), "joint_states available", res)
+    ok = check(node.wait_controllers(), "controllers active (joint_states + JTC)", res)
     ok &= check(node.send_trajectory(READY) == 0, "moved to 'ready' (non-singular start)", res)
     node.spin_for(3.0)  # let Servo switch to TWIST
     pub = node.create_publisher(TeleopIntent, "/jonny5/teleop/intent", 10)
@@ -215,7 +228,7 @@ def main() -> int:
     for name in names:
         args, fn = SCENARIOS[name]
         launch = Launch(*args)
-        node = Probe()
+        node = Probe(f"j5_sim_e2e_{name}")
         results: List[str] = []
         try:
             time.sleep(3.0)
@@ -228,6 +241,12 @@ def main() -> int:
         print(f"[{'PASS' if ok else 'FAIL'}] {name}  (launch log: {launch.log.name})")
         for line in results:
             print("   ", line)
+        if not ok:
+            with open(launch.log.name, errors="replace") as fh:
+                lines = [ln for ln in fh if "WARN" in ln or "ERROR" in ln or "rror" in ln]
+            print("    --- launch log warnings/errors (last 40) ---")
+            for ln in lines[-40:]:
+                print("    |", ln.rstrip())
         summary.append(ok)
         time.sleep(2.0)
     rclpy.shutdown()
