@@ -7,6 +7,9 @@ jonny5_spi_driver:
     spi_device: "/dev/spidev0.0"
     spi_speed_hz: 1000000
     tx_rate_hz: 100.0
+    # SPI protocol: 1 = legacy (any firmware); 2 = CRC-16 + TELEMETRY_V2 +
+    # J5IK joint streaming (flash the v2 firmware first, see docs/SPI_PROTOCOL_V2.md).
+    protocol_version: 1
     # Rate of interleaved 0x03 STATUS requests to read the firmware diag
     # (deadman/armed/freeze/guard). 0 disables (telemetry-only).
     status_request_hz: 5.0

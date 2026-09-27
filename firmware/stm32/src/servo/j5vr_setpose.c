@@ -236,6 +236,11 @@ void j5vr_setpose_abort(void)
     g_setpose_state.relax_digital_on_finish = false;
 }
 
+bool j5vr_setpose_is_active(void)
+{
+    return g_setpose_state.active;
+}
+
 /* -----------------------------------------------------------------------
  * j5vr_setpose_tick — chiamato dal RT loop a ogni ciclo (1 kHz)
  * ----------------------------------------------------------------------- */

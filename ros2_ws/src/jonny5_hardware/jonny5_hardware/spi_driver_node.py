@@ -30,6 +30,8 @@ from jonny5_msgs.msg import RobotStatus, SpiTelemetry, TeleopIntent
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, JointState
+from std_msgs.msg import Float64MultiArray
+from std_srvs.srv import SetBool
 
 from jonny5_hardware.mock_spi import MockSpiWorker
 
@@ -62,6 +64,30 @@ def physical_deg_to_joint_rad(
         direction = -1.0 if (i < len(dirs) and int(dirs[i]) < 0) else 1.0
         out.append(math.radians((float(deg) - offset) * direction))
     return out
+
+
+def joint_rad_to_physical_cdeg(
+    joint_rad: List[float], offsets_deg: List[float], dirs: List[int]
+) -> List[int]:
+    """URDF joint radians -> physical servo centi-degrees (inverse of the above),
+    clamped to the servo range 0..180 deg. The firmware applies its own joint limits."""
+    out: List[int] = []
+    for i, rad in enumerate(joint_rad):
+        offset = float(offsets_deg[i]) if i < len(offsets_deg) else 90.0
+        direction = -1.0 if (i < len(dirs) and int(dirs[i]) < 0) else 1.0
+        deg = offset + direction * math.degrees(float(rad))
+        deg = max(0.0, min(180.0, deg))
+        out.append(int(round(deg * 100.0)))
+    return out
+
+
+def v2_diag_mask(t: Dict[str, Any]) -> int:
+    """TELEMETRY_V2 flags -> legacy 0x03 diag_mask bit layout."""
+    mask = 0
+    for bit, key in enumerate(("deadman_active", "input_active", "armed", "freeze", "guard_seen")):
+        if t.get(key):
+            mask |= 1 << bit
+    return mask
 
 
 def resolve_legacy_root(explicit: str = "") -> Optional[Path]:
@@ -164,6 +190,9 @@ class SpiDriverNode(Node):
         self.declare_parameter("intent_timeout_s", 0.25)
         self.declare_parameter("servo_offsets_deg", DEFAULT_SERVO_OFFSETS_DEG)
         self.declare_parameter("servo_dirs", DEFAULT_SERVO_DIRS)
+        # SPI protocol: 1 = legacy (works with any firmware), 2 = CRC-16 +
+        # TELEMETRY_V2 + J5IK joint streaming (needs firmware with v2 support).
+        self.declare_parameter("protocol_version", 1)
         self.declare_parameter("joint_names", [
             "base_joint",
             "shoulder_joint",
@@ -184,6 +213,14 @@ class SpiDriverNode(Node):
         self._imu_ok = False
         self._last_spi_rx_mono = 0.0
         self._last_telemetry_mono = 0.0
+        self.protocol_version = int(self.get_parameter("protocol_version").value)
+        if self.protocol_version not in (1, 2):
+            raise ValueError("protocol_version must be 1 or 2")
+        self._v2_state: Optional[Dict[str, Any]] = None
+        # J5IK joint streaming (protocol v2 only)
+        self._joint_cmd_cdeg: Optional[List[int]] = None
+        self._stream_enabled = False
+        self._stream_heartbeat = 0
 
         self.joint_pub = self.create_publisher(JointState, "joint_states", 10)
         self.imu_pub = self.create_publisher(Imu, "imu/data", 10)
@@ -192,6 +229,12 @@ class SpiDriverNode(Node):
         self.intent_sub = self.create_subscription(
             TeleopIntent, "jonny5/teleop/intent", self._on_intent, 10
         )
+        # Joint streaming: 6 positions in rad (joint_names order), like the
+        # ros2_controllers forward_position_controller command topic.
+        self.joint_cmd_sub = self.create_subscription(
+            Float64MultiArray, "jonny5/joint_commands", self._on_joint_command, 10
+        )
+        self.create_service(SetBool, "jonny5/joint_stream/enable", self._on_stream_enable)
 
         self.provider = Ros2StateProvider(
             self, float(self.get_parameter("intent_timeout_s").value)
@@ -200,6 +243,8 @@ class SpiDriverNode(Node):
 
         rate = float(self.get_parameter("tx_rate_hz").value)
         status_hz = float(self.get_parameter("status_request_hz").value)
+        if self.protocol_version == 2:
+            status_hz = 0.0  # TELEMETRY_V2 already carries FSM state and diag flags
         # Every Nth tick sends a 0x03 STATUS request instead of a setpoint, to read
         # the firmware diag (deadman/armed/freeze/guard). 0 disables.
         self._status_every = int(round(rate / status_hz)) if status_hz > 0 else 0
@@ -240,10 +285,47 @@ class SpiDriverNode(Node):
                 max_speed_hz=int(self.get_parameter("spi_speed_hz").value),
             )
         spi.open()
-        return J5VRSPIBridge(spi_worker=spi, state_provider=self.provider)
+        return J5VRSPIBridge(
+            spi_worker=spi, state_provider=self.provider, protocol_version=self.protocol_version
+        )
 
     def _on_intent(self, msg: TeleopIntent) -> None:
         self.provider.set_intent(self._intent_to_legacy_dict(msg))
+
+    def _on_joint_command(self, msg: Float64MultiArray) -> None:
+        if len(msg.data) != 6 or not all(math.isfinite(v) for v in msg.data):
+            self.get_logger().warning("jonny5/joint_commands needs 6 finite values (rad)")
+            return
+        self._joint_cmd_cdeg = joint_rad_to_physical_cdeg(
+            list(msg.data), self.servo_offsets_deg, self.servo_dirs
+        )
+
+    def _on_stream_enable(self, request: SetBool.Request, response: SetBool.Response):
+        if not request.data:
+            self._stream_enabled = False
+            response.success = True
+            response.message = "joint streaming disabled"
+            return response
+        if self.protocol_version != 2:
+            response.success = False
+            response.message = "joint streaming needs protocol_version=2"
+        elif self._joint_cmd_cdeg is None:
+            response.success = False
+            response.message = "publish a command on jonny5/joint_commands first"
+        else:
+            self._stream_enabled = True
+            response.success = True
+            response.message = "joint streaming enabled"
+        return response
+
+    def _send_joint_stream(self) -> Optional[bytes]:
+        """One J5IK frame with the latest command. The last command is held
+        (forward_position_controller semantics); if this node dies the SPI
+        frames stop and the firmware holds, then its 500 ms watchdog -> SAFE."""
+        self._stream_heartbeat = ((self._stream_heartbeat + 1) & 0xFFFF) or 1
+        return self.bridge.send_joint_targets_once(
+            self._joint_cmd_cdeg, enable=True, heartbeat=self._stream_heartbeat
+        )
 
     def _tick(self) -> None:
         try:
@@ -251,8 +333,12 @@ class SpiDriverNode(Node):
             if self._status_every and (self._tick_count % self._status_every == 0):
                 self._request_status()
             else:
-                # send_setpoint_once() swallows SPI errors and returns None.
-                if self.bridge.send_setpoint_once():
+                # send_*_once() swallow SPI errors and return None.
+                if self._stream_enabled and self._joint_cmd_cdeg is not None:
+                    rx = self._send_joint_stream()
+                else:
+                    rx = self.bridge.send_setpoint_once()
+                if rx:
                     self._last_spi_rx_mono = time.monotonic()
         except Exception as exc:  # keep the node alive on transient SPI errors
             self.get_logger().warning(f"SPI tick failed: {exc}")
@@ -260,6 +346,7 @@ class SpiDriverNode(Node):
     def safe_stop(self) -> None:
         """Send a few IDLE frames (no buttons -> no deadman) and close SPI."""
         try:
+            self._stream_enabled = False
             self.provider.set_intent(None)
             for _ in range(3):
                 self.bridge.send_setpoint_once()
@@ -279,7 +366,9 @@ class SpiDriverNode(Node):
         not update the setpoint; skipping a few setpoints/sec is negligible.
         """
         seq = int(self.bridge.sequence_counter) & 0xFFFF
-        tx = self._make_frame(sequence_counter=seq, frame_type=0x03).to_bytes()
+        tx = self._make_frame(
+            sequence_counter=seq, frame_type=0x03, protocol_version=self.protocol_version
+        ).to_bytes()
         fl = int(getattr(self.bridge.spi_worker, "_frame_len", 64))
         if len(tx) == 64 and fl != 64:
             tx = tx + b"\x00" * (fl - 64)
@@ -321,8 +410,11 @@ class SpiDriverNode(Node):
         fresh = not bool(t.get("telemetry_heartbeat", False))
         now_mono = time.monotonic()
         self._last_spi_rx_mono = now_mono
+        is_v2 = int(t.get("protocol_version", 1) or 1) == 2
         if fresh:
             self._last_telemetry_mono = now_mono
+            if is_v2:
+                self._v2_state = t
 
             joint_msg = JointState()
             joint_msg.header.stamp = now
@@ -353,11 +445,28 @@ class SpiDriverNode(Node):
         spi_msg.imu_orientation = q
         spi_msg.servo_deg = servo
         spi_msg.rt_loop_period_us = int(t.get("rt_loop_period_us", 0) or 0) & 0xFFFF
-        spi_msg.rt_step_us = 0  # not carried in 0x01 telemetry frames
+        spi_msg.rt_step_us = int(t.get("rt_step_us", 0) or 0) & 0xFFFF  # v2 only
         cmd = self.provider.read_intent_from_file() or {}
-        spi_msg.raw_mode = int(cmd.get("mode", 0) or 0) & 0xFF
         spi_msg.raw_heartbeat = int(cmd.get("heartbeat", 0) or 0) & 0xFFFF
-        spi_msg.diag_mask = (int(self._fw_diag["mask"]) & 0xFFFF) if self._fw_diag else 0
+        if is_v2:
+            spi_msg.raw_mode = int(t.get("mode", 0) or 0) & 0xFF
+            spi_msg.diag_mask = v2_diag_mask(t)
+            spi_msg.protocol_version = 2
+            spi_msg.stm_time_ms = int(t.get("stm_time_ms", 0)) & 0xFFFFFFFF
+            spi_msg.stm_tx_seq = int(t.get("stm_tx_seq", 0)) & 0xFFFF
+            spi_msg.fsm_state = int(t.get("fsm_state", 0)) & 0xFF
+            spi_msg.estop_active = bool(t.get("estop_active"))
+            spi_msg.setpose_active = bool(t.get("setpose_active"))
+            spi_msg.joint_stream_active = bool(t.get("joint_stream_active"))
+            spi_msg.rt_overruns = int(t.get("rt_overruns", 0)) & 0xFFFF
+            spi_msg.rx_seq_gaps = int(t.get("rx_seq_gaps", 0)) & 0xFFFF
+            spi_msg.crc_errors_stm = int(t.get("crc_errors_stm", 0)) & 0xFFFF
+            spi_msg.crc_errors_pi = int(getattr(self.bridge, "v2_rx_crc_errors", 0)) & 0xFFFFFFFF
+            spi_msg.repeated_replies = int(getattr(self.bridge, "v2_rx_repeated", 0)) & 0xFFFFFFFF
+        else:
+            spi_msg.raw_mode = int(cmd.get("mode", 0) or 0) & 0xFF
+            spi_msg.diag_mask = (int(self._fw_diag["mask"]) & 0xFFFF) if self._fw_diag else 0
+            spi_msg.protocol_version = 1
         self.telemetry_pub.publish(spi_msg)
 
         self._imu_ok = imu_valid
@@ -376,7 +485,28 @@ class SpiDriverNode(Node):
         msg.spi_online = (now_mono - self._last_spi_rx_mono) <= LINK_TIMEOUT_S
         msg.stm32_online = (now_mono - self._last_telemetry_mono) <= LINK_TIMEOUT_S
         msg.imu_online = self._imu_ok and msg.stm32_online
-        if d is not None:
+        v2s = self._v2_state
+        if v2s is not None:
+            msg.estop_active = bool(v2s.get("estop_active"))
+            msg.deadman_active = bool(v2s.get("deadman_active"))
+            msg.input_active = bool(v2s.get("input_active"))
+            msg.movement_allowed = (
+                bool(v2s.get("movement_allowed")) and not msg.estop_active and msg.stm32_online
+            )
+            msg.state = str(v2s.get("fsm_state_name", "UNKNOWN"))
+            flags = [
+                name
+                for name, key in (
+                    ("estop", "estop_active"), ("armed", "armed"), ("freeze", "freeze"),
+                    ("guard", "guard_seen"), ("setpose", "setpose_active"),
+                    ("joint_stream", "joint_stream_active"),
+                )
+                if v2s.get(key)
+            ]
+            msg.detail = f"TELEMETRY_V2 mode={v2s.get('mode', 0)}" + (
+                " [" + ",".join(flags) + "]" if flags else ""
+            )
+        elif d is not None:
             msg.deadman_active = bool(d["deadman"])
             msg.input_active = bool(d["input"])
             msg.movement_allowed = bool(d["armed"] and not d["freeze"])

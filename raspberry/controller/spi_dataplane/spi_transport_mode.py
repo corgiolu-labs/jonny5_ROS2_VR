@@ -43,6 +43,11 @@ def _is_valid_canonical_j5_frame_at(rx: bytes, off: int) -> bool:
     frame = rx[off : off + J5_SPI_FRAME_LEN_LEGACY]
     if frame[0:2] != b"J5":
         return False
+    if frame[2] == 0x02:
+        # Protocollo v2: il CRC decide (vedi j5_protocol_v2.py)
+        from .j5_protocol_v2 import crc_ok
+
+        return crc_ok(frame) and frame[3] in (0x01, 0x02, 0x03, 0x04, 0x05, 0x08)
     if frame[2] != 0x01:
         return False
     if frame[6] != J5_SPI_FRAME_LEN_LEGACY:

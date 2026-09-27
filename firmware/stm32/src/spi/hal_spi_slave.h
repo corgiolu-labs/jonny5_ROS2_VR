@@ -28,4 +28,10 @@ uint32_t hal_spi_last_frame_age_ms(void);
  *  porta il sistema in STATE_SAFE. */
 #define SPI_FRAME_TIMEOUT_MS 500U
 
+/** Protocollo v2: frame Pi persi (buchi nella sequenza), saturato a 0xFFFF. */
+uint16_t hal_spi_rx_seq_gaps(void);
+
+/** Protocollo v2: frame con header v2 scartati per CRC errato, saturato a 0xFFFF. */
+uint16_t hal_spi_rx_crc_errors(void);
+
 #endif /* HAL_SPI_SLAVE_H */

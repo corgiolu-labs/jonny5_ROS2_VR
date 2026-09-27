@@ -75,6 +75,11 @@ K_SEM_DEFINE(rt_tick_sem, 0, 1);
  * loop non perde tick. Pubblicato nella riga [RTPERF]. */
 static volatile uint32_t rt_tick_overruns;
 
+uint32_t rt_loop_get_overruns(void)
+{
+    return rt_tick_overruns;
+}
+
 static void rt_tick_isr_cb(const struct device *dev, void *user_data)
 {
     (void)dev; (void)user_data;
@@ -216,6 +221,7 @@ volatile uint8_t g_vr_armed = 0;
 volatile uint8_t g_vr_freeze_active = 0;
 volatile uint32_t g_vr_guard_block_count = 0;
 volatile uint8_t g_vr_input_active = 0;
+volatile uint8_t g_j5ik_stream_active = 0;
 
 volatile uint32_t g_imu_thread_ticks = 0;
 volatile uint8_t g_imu_thread_stage = 0;
@@ -254,6 +260,47 @@ static bool auto_transition_done = false;
  * che da solo farebbe scattare subito l'auto SAFE->IDLE. Il re-arm automatico
  * richiede quindi frame SPI freschi E un heartbeat avanzato rispetto a questo. */
 static uint16_t safe_entry_heartbeat = 0;
+
+/* JOINT_STREAM (mode 6): target articolari J5IK dal Pi (ROS 2 / ros2_control).
+ * Gating: stato IDLE (garantito dal chiamante) + J5IK valid + bit
+ * J5IK_FLAG_STREAM_ENABLE. Senza consenso i servo vengono disabilitati come nel
+ * disarm VR; con frame piu' vecchi di J5IK_STREAM_TIMEOUT_MS il braccio resta
+ * fermo (nessun nuovo target). Velocita' limitata da j5vr_actuation_apply_desired. */
+static void rt_joint_stream_step(void)
+{
+    static bool stream_servos_off = false;
+    struct j5ik_state ik;
+    j5ik_latest_snapshot(&ik);
+
+    g_vr_armed = 0U;
+    g_vr_input_active = 0U;
+    g_vr_freeze_active = 0U;
+
+    const bool enabled = (ik.valid != 0U) &&
+                         (ik.mode == J5_MODE_JOINT_STREAM) &&
+                         ((ik.control_flags & J5IK_FLAG_STREAM_ENABLE) != 0U);
+    if (!enabled)
+    {
+        g_j5ik_stream_active = 0U;
+        if (!stream_servos_off)
+        {
+            servo_disable_all();
+            stream_servos_off = true;
+        }
+        return;
+    }
+
+    const uint32_t age_ms = k_uptime_get_32() - j5ik_last_rx_ms();
+    if (age_ms > J5IK_STREAM_TIMEOUT_MS)
+    {
+        g_j5ik_stream_active = 0U;   /* hold: nessun nuovo target */
+        return;
+    }
+
+    g_j5ik_stream_active = 1U;
+    stream_servos_off = false;
+    j5ik_apply_direct_target(&ik);
+}
 
 static void rt_loop_step(void)
 {
@@ -350,6 +397,13 @@ static void rt_loop_step(void)
                 struct j5vr_state j5vr_current;
                 j5vr_latest_snapshot(&j5vr_current);
                 g_rt_loop_stage = 31;
+
+                if (j5vr_current.mode == J5_MODE_JOINT_STREAM)
+                {
+                    rt_joint_stream_step();
+                    break;
+                }
+                g_j5ik_stream_active = 0U;
 
                 bool grip_left = false;
                 bool grip_right = false;

@@ -33,6 +33,8 @@ The firmware under `firmware/stm32/` builds for two boards from the same source 
 
 **SPI frame watchdog (both boards).** Checked every 100 ms; if no valid frame has arrived from the Raspberry Pi for more than 500 ms (`SPI_FRAME_TIMEOUT_MS`), the state machine is forced to `SAFE` and the servos are disabled. Any HOME/PARK/SETPOSE trajectory in flight is aborted. Leaving `SAFE` automatically requires fresh SPI frames *and* a VR heartbeat that has advanced since `SAFE` was entered, so a stale last intent cannot re-arm the arm.
 
+**SPI protocol v2 (both boards).** Same 64-byte frame plus a CRC-16 on every frame. Every reply is a complete state report: FSM state, E-STOP, joint positions, RT-loop health, sequence gaps and CRC counters. It also adds J5IK joint streaming for ROS 2, rate-limited on the MCU and held if frames stop. v1 stays the default and works unchanged; select v2 with `protocol_version:=2` after flashing. See [SPI_PROTOCOL_V2.md](ros2_ws/docs/SPI_PROTOCOL_V2.md).
+
 **Stale-intent watchdog (ROS 2 driver).** `jonny5_spi_driver` streams IDLE frames (no buttons, so the firmware deadman drops) when no `TeleopIntent` has arrived for `intent_timeout_s` (default 0.25 s).
 
 ## ROS graph

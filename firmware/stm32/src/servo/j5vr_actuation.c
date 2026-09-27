@@ -930,9 +930,11 @@ void j5ik_apply_direct_target(const struct j5ik_state *ik)
     }
 
     {
+        /* Mode JOINT_STREAM: limiti di velocita' per-giunto (non quelli HEAD/mode 5). */
         struct j5vr_state pseudo;
         j5vr_latest_snapshot(&pseudo);
-        pseudo.mode = 5U;
+        pseudo.mode = J5_MODE_JOINT_STREAM;
+        pseudo.mode5_arm_valid = 0U;
         j5vr_actuation_apply_desired(&pseudo);
     }
 }

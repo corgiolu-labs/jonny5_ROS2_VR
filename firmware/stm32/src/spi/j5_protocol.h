@@ -14,6 +14,13 @@
  *   [7]    flags = 0
  *   [8-61] payload[54]
  *   [62-63] reserved = 0
+ *
+ * Protocollo v2 (stesso frame 64 byte, vedi ros2_ws/docs/SPI_PROTOCOL_V2.md):
+ *   [2]     protocol_version = 2
+ *   [7]     flags = J5_FLAG_CRC16
+ *   [62-63] CRC-16/CCITT-FALSE (BE) sui byte 0..61
+ * Il firmware accetta v1 e v2 e risponde con la stessa versione della
+ * richiesta. In v2 le richieste J5VR/J5IK/TELEMETRY ricevono TELEMETRY_V2.
  */
 
 #ifndef J5_PROTOCOL_H
@@ -29,6 +36,33 @@
 #define J5_PROTOCOL_FRAME_SIZE 64   /**< Dimensione frame in byte (fissa) */
 #define J5VR_PAYLOAD_LEN       54   /**< Byte payload disponibili         */
 
+#define J5_PROTOCOL_VERSION_V1 1U
+#define J5_PROTOCOL_VERSION_V2 2U
+#define J5_FLAG_CRC16          0x01U /**< v2: CRC-16 nei byte 62-63        */
+
+/** Mode J5IK: streaming di target articolari dal Pi (ROS 2 / ros2_control). */
+#define J5_MODE_JOINT_STREAM   6U
+/** J5IK control_flags bit7: consenso esplicito al movimento in JOINT_STREAM. */
+#define J5IK_FLAG_STREAM_ENABLE (1U << 7)
+/** Oltre questo intervallo senza frame J5IK il braccio resta fermo (hold). */
+#define J5IK_STREAM_TIMEOUT_MS 100U
+
+/* TELEMETRY_V2 status_flags (payload[9]) */
+#define J5_TLM2_ST_ESTOP        (1U << 0)
+#define J5_TLM2_ST_MOVE_ALLOWED (1U << 1)
+#define J5_TLM2_ST_DEADMAN      (1U << 2)
+#define J5_TLM2_ST_INPUT        (1U << 3)
+#define J5_TLM2_ST_ARMED        (1U << 4)
+#define J5_TLM2_ST_FREEZE       (1U << 5)
+#define J5_TLM2_ST_SETPOSE      (1U << 6)
+#define J5_TLM2_ST_IMU_VALID    (1U << 7)
+
+/* TELEMETRY_V2 diag_flags (payload[11]) */
+#define J5_TLM2_DG_GUARD_SEEN   (1U << 0)
+#define J5_TLM2_DG_IMU_PRESENT  (1U << 1)
+#define J5_TLM2_DG_IMU_ENABLED  (1U << 2)
+#define J5_TLM2_DG_STREAM_LIVE  (1U << 3)
+
 /* =========================================================
  * Tipi
  * ========================================================= */
@@ -41,7 +75,8 @@ typedef enum {
     J5_FRAME_TYPE_J5VR      = 0x04, /**< Payload comandi VR dal master   */
     J5_FRAME_TYPE_J5IK      = 0x05, /**< Payload target IK diretti       */
     J5_FRAME_TYPE_ASSIST_V2_CONTROL   = 0x06, /**< ASSIST v2 CONTROL (RAW / WIRE v1) */
-    J5_FRAME_TYPE_ASSIST_V2_TELEMETRY = 0x07  /**< ASSIST v2 TELEMETRY echo          */
+    J5_FRAME_TYPE_ASSIST_V2_TELEMETRY = 0x07, /**< ASSIST v2 TELEMETRY echo          */
+    J5_FRAME_TYPE_TELEMETRY_V2 = 0x08  /**< v2: telemetria compatta STM -> Pi (solo TX) */
 } j5_frame_type_t;
 
 /** Stato J5VR ricevuto: parsing payload → struttura C. Solo lettura dati, nessuna attuazione. */
@@ -140,6 +175,31 @@ void j5vr_latest_snapshot(struct j5vr_state *out);
 
 /** j5vr_latest_set_buttons_xy — aggiorna in modo atomico i bit X/Y (4,5) di buttons_left. */
 void j5vr_latest_set_buttons_xy(uint16_t xy_bits);
+
+/** j5ik_latest_snapshot — copia coerente di g_j5ik_latest (stesso lock di g_j5vr_latest). */
+void j5ik_latest_snapshot(struct j5ik_state *out);
+
+/** Istante (k_uptime_get_32) dell'ultimo frame J5IK ricevuto; 0 = mai. */
+uint32_t j5ik_last_rx_ms(void);
+
+/* =========================================================
+ * Protocollo v2
+ * ========================================================= */
+
+/** CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflect, xorout 0. */
+uint16_t j5_crc16_ccitt(const uint8_t *data, uint32_t len);
+
+/** true se il frame (64 byte) ha CRC v2 valido nei byte 62-63. */
+bool j5_frame_v2_crc_ok(const uint8_t *frame64);
+
+/** Converte un frame gia' costruito in v2: version=2, flags=CRC16, CRC in 62-63. */
+void j5_frame_seal_v2(j5_frame_t *frame);
+
+/**
+ * j5_build_telemetry_v2 — frame TELEMETRY_V2 (0x08) sigillato con CRC.
+ * Layout payload in ros2_ws/docs/SPI_PROTOCOL_V2.md.
+ */
+void j5_build_telemetry_v2(j5_frame_t *frame, uint16_t seq);
 
 /**
  * j5vr_fill_tx_telemetry — scrive diagnostica nei byte 46-53 del payload TX.
