@@ -1,5 +1,11 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="jonny5">
+  <!-- ros2_control block (off by default: the SPI driver node path does not use it). -->
+  <xacro:arg name="ros2_control" default="false" />
+  <xacro:arg name="mock_hardware" default="true" />
+  <xacro:arg name="spi_device" default="/dev/spidev0.0" />
+  <xacro:arg name="transfer_len" default="128" />
+
   <xacro:property name="base_height" value="0.112" />
   <xacro:property name="upper_arm" value="0.060" />
   <xacro:property name="forearm" value="0.173" />
@@ -118,4 +124,11 @@
     <child link="right_camera_link" />
     <origin xyz="0.045 -0.032 0" rpy="0 0 0" />
   </joint>
+
+  <xacro:if value="$(arg ros2_control)">
+    <xacro:include filename="jonny5.ros2_control.xacro" />
+    <xacro:jonny5_ros2_control mock_hardware="$(arg mock_hardware)"
+                               spi_device="$(arg spi_device)"
+                               transfer_len="$(arg transfer_len)" />
+  </xacro:if>
 </robot>
