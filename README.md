@@ -37,6 +37,12 @@ The firmware under `firmware/stm32/` builds for two boards from the same source 
 
 **ros2_control.** `ros2 launch jonny5_bringup control.launch.py` runs `jonny5_control/Jonny5System` with `joint_trajectory_controller` (or `forward_position_controller`), `joint_state_broadcaster` and `imu_sensor_broadcaster`. It uses mock firmware by default; pass `mock_hardware:=false` on the robot. It is exclusive with `bringup.launch.py`, because only one process may own SPI. See [ROS2_CONTROL.md](ros2_ws/docs/ROS2_CONTROL.md).
 
+**MoveIt 2.**
+- `ros2 launch jonny5_moveit_config move_group.launch.py` starts motion planning on top of ros2_control.
+- `servo.launch.py` runs VR teleoperation through MoveIt Servo: the sticks drive the tool in Cartesian space while the deadman is held.
+
+See [MOVEIT.md](ros2_ws/docs/MOVEIT.md).
+
 **Stale-intent watchdog (ROS 2 driver).** `jonny5_spi_driver` streams IDLE frames (no buttons, so the firmware deadman drops) when no `TeleopIntent` has arrived for `intent_timeout_s` (default 0.25 s).
 
 ## ROS graph
@@ -66,6 +72,7 @@ ros2_ws/src/
   jonny5_description/   URDF/Xacro, camera/IMU frames, joint limits and RViz config
   jonny5_hardware/      Native/mock SPI driver and ROS 2 telemetry publishers
   jonny5_control/       ros2_control hardware interface (C++, SPI protocol v2) + controllers
+  jonny5_moveit_config/ MoveIt 2 (move_group, OMPL + Pilz) and MoveIt Servo for VR teleop
   jonny5_teleop_vr/     WebXR/WebSocket to TeleopIntent bridge
   jonny5_sim/           Hardware-free teleoperation intent simulator
   jonny5_bringup/       Launch files and runtime parameter composition

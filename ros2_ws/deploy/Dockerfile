@@ -10,6 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-jazzy-xacro \
       ros-jazzy-ros2-control \
       ros-jazzy-ros2-controllers \
+      ros-jazzy-moveit-ros-move-group \
+      ros-jazzy-moveit-configs-utils \
+      ros-jazzy-moveit-kinematics \
+      ros-jazzy-moveit-planners-ompl \
+      ros-jazzy-pilz-industrial-motion-planner \
+      ros-jazzy-moveit-simple-controller-manager \
+      ros-jazzy-moveit-servo \
       python3-colcon-common-extensions \
       python3-spidev \
       python3-websockets \
