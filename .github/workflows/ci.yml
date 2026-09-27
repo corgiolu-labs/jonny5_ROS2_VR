@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  firmware:
+    name: Firmware (Zephyr, both boards)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi ninja-build device-tree-compiler
+          pip install west pyelftools pyyaml jsonschema packaging
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/j5-zephyr
+          key: zephyr-v4.2.1-stm32-${{ hashFiles('firmware/stm32/tools/build_zephyr.sh') }}
+      - name: Build nucleo_g474re + nucleo_f446re
+        run: firmware/stm32/tools/build_zephyr.sh
+
+  ros2:
+    name: ROS 2 Jazzy (build, tests, mock end-to-end)
+    runs-on: ubuntu-24.04
+    container: ros:jazzy
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ros-jazzy-ros2-control ros-jazzy-ros2-controllers ros-jazzy-xacro \
+            ros-jazzy-robot-state-publisher ros-jazzy-moveit-ros-move-group \
+            ros-jazzy-moveit-configs-utils ros-jazzy-moveit-kinematics \
+            ros-jazzy-moveit-planners-ompl ros-jazzy-pilz-industrial-motion-planner \
+            ros-jazzy-moveit-simple-controller-manager ros-jazzy-moveit-servo \
+            ros-jazzy-moveit-ros-visualization \
+            python3-pytest python3-websockets python3-numpy python3-colcon-common-extensions
+      - name: Build
+        working-directory: ros2_ws
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build --event-handlers console_cohesion+
+      - name: Unit tests
+        working-directory: ros2_ws
+        run: |
+          source install/setup.bash
+          colcon test --packages-select jonny5_control --event-handlers console_direct+
+          colcon test-result --verbose
+          python3 -m pytest -q -p no:launch_testing -p no:launch_ros \
+            src/jonny5_hardware/test src/jonny5_teleop_vr/test
+          python3 ../raspberry/tools/spi_v2_probe.py --selftest --seconds 1
+      - name: Mock end-to-end (SPI v2, ros2_control, MoveIt, Servo)
+        working-directory: ros2_ws
+        run: |
+          source install/setup.bash
+          export ROS_DOMAIN_ID=77
+          python3 tools/sim_e2e.py

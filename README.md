@@ -43,6 +43,15 @@ The firmware under `firmware/stm32/` builds for two boards from the same source 
 
 See [MOVEIT.md](ros2_ws/docs/MOVEIT.md).
 
+**Validation tooling.**
+- `firmware/stm32/tools/build_zephyr.sh` builds both boards with plain Zephyr 4.2.1 (no PlatformIO).
+- `ros2_ws/tools/sim_e2e.py` runs the mock end-to-end scenarios.
+- `raspberry/tools/spi_v2_probe.py` checks SPI link quality on the Pi.
+- `raspberry/tools/j5_uart.py` sends UART commands without the web stack.
+- CI (`.github/workflows/ci.yml`) runs all of the above on every PR.
+
+The step-by-step procedure for the real robot is [HW_TEST_PLAN.md](ros2_ws/docs/HW_TEST_PLAN.md) (Italian).
+
 **Stale-intent watchdog (ROS 2 driver).** `jonny5_spi_driver` streams IDLE frames (no buttons, so the firmware deadman drops) when no `TeleopIntent` has arrived for `intent_timeout_s` (default 0.25 s).
 
 ## ROS graph
