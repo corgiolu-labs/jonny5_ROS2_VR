@@ -14,6 +14,26 @@ config JONNY5_CUSTOM_SPI_HAL
 	select USE_STM32_HAL_DMA_EX
 	select USE_STM32_HAL_GPIO
 
+# Watchdog hardware (IWDG) alimentato dal RT loop: vedi src/core/hw_watchdog.h
+config J5_HW_WATCHDOG
+	bool "Hardware watchdog (IWDG) fed by the 1 kHz RT loop"
+	default n
+	depends on WATCHDOG
+	# Without this the Zephyr IWDG driver starts the watchdog at boot with
+	# IWDG_STM32_INITIAL_TIMEOUT (100 ms), before main() arms and feeds it.
+	select WDT_DISABLE_AT_BOOT
+	help
+	  Resets the MCU if the RT loop stops running (fatal halt, deadlock).
+	  After the reset the firmware boots in SAFE with the PWM outputs off.
+	  Enable together with CONFIG_WATCHDOG=y. Needs the devicetree alias
+	  "watchdog0" (enabled on nucleo_g474re / SHIELD rev3).
+
+config J5_HW_WATCHDOG_TIMEOUT_MS
+	int "IWDG timeout (ms)"
+	default 250
+	range 10 4000
+	depends on J5_HW_WATCHDOG
+
 # REV2 protocol: cmd channel (payload 40-43), TELEOPPOSE one-shot, ack 52-53
 config J5_PROTOCOL_REV2_EXTENSIONS
 	bool "J5 protocol REV2 extensions (cmd channel, TELEOPPOSE)"

@@ -21,6 +21,7 @@ from typing import Optional, Callable, Union, Any
 
 
 from .j5vr_frame import build_setpoint_frame, J5_FRAME_TYPE_TELEMETRY
+from . import j5_protocol_v2 as v2
 from .spi_worker import SPIWorker
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class J5VRSPIBridge:
         self,
         spi_worker: SPIWorker,
         state_provider: Union[Callable[[], Optional[dict]], ModuleType, Any],
+        protocol_version: int = 1,
     ):
         """
         Inizializza bridge SPI.
@@ -75,9 +77,18 @@ class J5VRSPIBridge:
         Args:
             spi_worker: Worker SPI già configurato
             state_provider: Funzione che ritorna dict con stato (o None se non disponibile)
+            protocol_version: 1 = protocollo storico (default, invariato);
+                2 = CRC-16 + TELEMETRY_V2 (richiede firmware con supporto v2)
         """
+        if int(protocol_version) not in (1, 2):
+            raise ValueError("protocol_version deve essere 1 o 2")
         self.spi_worker = spi_worker
         self.state_provider = state_provider
+        self.protocol_version = int(protocol_version)
+        # Statistiche v2 lato Pi
+        self.v2_rx_crc_errors = 0
+        self.v2_rx_repeated = 0
+        self._v2_last_stm_tx_seq: Optional[int] = None
         self.sequence_counter = 0
         self._frame_count = 0
         self._error_count = 0
@@ -186,7 +197,9 @@ class J5VRSPIBridge:
         try:
             # Mode 5 (HEAD ASSIST): frame J5VR — target B/S/G nell'estensione byte 36-45 (marker 'I').
             sc0 = self.sequence_counter
-            frame = build_setpoint_frame(state, sequence_counter=sc0)
+            frame = build_setpoint_frame(
+                state, sequence_counter=sc0, protocol_version=self.protocol_version
+            )
             frame_bytes = frame.to_bytes()
             try:
                 p = frame_bytes[8:62]
@@ -277,7 +290,9 @@ class J5VRSPIBridge:
             # RX parsing: TELEOPPOSE ACK (payload 52-53) e telemetria IMU (payload 28-44)
             try:
                 ack = False
-                if rx_legacy and len(rx_legacy) >= 64 and rx_legacy[0:2] == b"J5":
+                if rx_legacy and len(rx_legacy) >= 64 and rx_legacy[0:2] == b"J5" and rx_legacy[2] == 2:
+                    ack = self._handle_rx_v2(rx_legacy)
+                elif rx_legacy and len(rx_legacy) >= 64 and rx_legacy[0:2] == b"J5":
                     frame_type_rx = rx_legacy[3]
                     payload = rx_legacy[8:62]
                     # Invariante: il payload deve essere sempre 54 byte (8..61).
@@ -490,3 +505,90 @@ class J5VRSPIBridge:
             logger.error("Errore durante invio frame SPI: %s", e, exc_info=True)
             self._error_count += 1
             return None
+
+    # PROTOCOLLO v2: RX TELEMETRY_V2 / STATUS con CRC
+    def _handle_rx_v2(self, rx: bytes) -> bool:
+        """Gestisce un frame RX v2. Ritorna True se contiene l'ACK TELEOPPOSE.
+
+        Frame con CRC errato vengono scartati (contati in v2_rx_crc_errors).
+        Una TELEMETRY_V2 con lo stesso stm_tx_seq della precedente e' una
+        risposta ripetuta del buffer slave: viene marcata telemetry_heartbeat.
+        """
+        if not v2.crc_ok(rx):
+            self.v2_rx_crc_errors += 1
+            return False
+        ft = rx[3]
+        if ft == v2.FRAME_TYPE_TELEMETRY_V2:
+            out = v2.parse_telemetry_v2(rx)
+            if out is None:
+                return False
+            out["packet_index"] = self._frame_count
+            out["wire_source"] = "v2_0x08"
+            out["crc_errors_pi"] = self.v2_rx_crc_errors
+            repeated = self._v2_last_stm_tx_seq == out["stm_tx_seq"]
+            if repeated:
+                self.v2_rx_repeated += 1
+                out["telemetry_heartbeat"] = True
+            self._v2_last_stm_tx_seq = out["stm_tx_seq"]
+            writer = getattr(self.state_provider, "write_telemetry_to_file", None)
+            if callable(writer):
+                writer(out)
+            if not repeated:
+                self._last_telemetry_out = out
+                self._last_telemetry_wall_t = time.monotonic()
+            return False
+        if ft == v2.FRAME_TYPE_STATUS:
+            payload = rx[8:62]
+            return payload[52] == ord("T") and payload[53] == 1
+        return False
+
+    # PROTOCOLLO v2: streaming target articolari (J5IK, mode JOINT_STREAM)
+    def send_joint_targets_once(
+        self,
+        targets_cdeg,
+        *,
+        enable: bool,
+        heartbeat: int,
+        target_id: int = 0,
+    ) -> Optional[bytes]:
+        """Invia un frame J5IK v2 con 6 target fisici in centi-gradi (B S G Y P R).
+
+        Solo con protocol_version=2. enable=False invia il frame senza consenso:
+        il firmware disabilita i servo del path JOINT_STREAM.
+        """
+        if self.protocol_version != 2:
+            raise RuntimeError("J5IK streaming richiede protocol_version=2")
+        from .spi_transport_mode import (
+            extract_canonical_frame64_from_transport_rx,
+            verify_spi_worker_frame_len,
+        )
+
+        verify_spi_worker_frame_len(self.spi_worker)
+        if not self.spi_worker.is_open:
+            raise RuntimeError("SPI non aperto: aprire spi_worker prima di inviare")
+        sc0 = self.sequence_counter
+        try:
+            tx = v2.build_j5ik_frame(
+                targets_cdeg,
+                sequence=sc0,
+                heartbeat=heartbeat,
+                enable=enable,
+                target_id=target_id,
+            )
+            rx_bytes = self.spi_worker.transfer(self._pad_tx_frame(tx))
+            rx = (
+                extract_canonical_frame64_from_transport_rx(rx_bytes)
+                if rx_bytes and len(rx_bytes) >= 64
+                else rx_bytes
+            )
+            if rx and len(rx) >= 64 and rx[0:2] == b"J5" and rx[2] == 2:
+                self._handle_rx_v2(rx)
+            return rx
+        except Exception as e:
+            logger.error("Errore durante invio J5IK: %s", e, exc_info=True)
+            self._error_count += 1
+            return None
+        finally:
+            self.sequence_counter = (sc0 + 1) & 0xFFFF
+            self._frame_count += 1
+

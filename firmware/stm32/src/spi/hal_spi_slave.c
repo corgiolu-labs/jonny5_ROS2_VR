@@ -65,6 +65,8 @@
 #define SPI_FRAME_LEN          J5_PROTOCOL_FRAME_SIZE  /* 64 */
 #endif
 #define SPI_FRAMES_IN_CIRCULAR 2
+/* Il commit RX copia SPI_FRAME_LEN byte in uno slot boundary da J5_FRAME_SIZE. */
+BUILD_ASSERT(SPI_FRAME_LEN <= J5_FRAME_SIZE, "boundary RX slot smaller than SPI frame");
 #define SPI_BUF_LEN            (SPI_FRAME_LEN * SPI_FRAMES_IN_CIRCULAR)
 
 #define SPI_SERVICE_STACK_SIZE 1024
@@ -106,9 +108,26 @@ static uint8_t spi_rx_buf[SPI_BUF_LEN];
 static bool spi_initialized = false;
 
 /* Timestamp (ms) dell'ultimo frame SPI valido ricevuto dal Pi.
- * Aggiornato atomicamente a ogni boundary_hal_rx_commit().
+ * Aggiornato quando il parser trova un frame J5 valido (header/versione/tipo e,
+ * in v2, CRC): rumore o frame corrotti non tengono vivo il watchdog.
  * Letto dal RT loop per il watchdog timeout. */
 static atomic_t _last_frame_rx_ms = ATOMIC_INIT(0);
+
+/* Statistiche link v2 (scritte solo dal thread SPI service). */
+static uint32_t spi_rx_seq_gaps = 0U;
+static uint32_t spi_rx_crc_errors = 0U;
+static uint16_t spi_rx_v2_last_seq = 0U;
+static bool     spi_rx_v2_seq_valid = false;
+
+uint16_t hal_spi_rx_seq_gaps(void)
+{
+    return (spi_rx_seq_gaps > 0xFFFFU) ? 0xFFFFU : (uint16_t)spi_rx_seq_gaps;
+}
+
+uint16_t hal_spi_rx_crc_errors(void)
+{
+    return (spi_rx_crc_errors > 0xFFFFU) ? 0xFFFFU : (uint16_t)spi_rx_crc_errors;
+}
 
 uint32_t hal_spi_last_frame_age_ms(void)
 {
@@ -250,7 +269,6 @@ static void spi_service_thread_entry(void *a, void *b, void *c)
             {
                 memcpy(rx_write_ptr, rx_ptr, SPI_FRAME_LEN);
                 boundary_hal_rx_commit();
-                atomic_set(&_last_frame_rx_ms, (atomic_val_t)k_uptime_get_32());
             }
 
             /* Finestra estesa tail + current_half per frame che attraversano il boundary DMA. */
@@ -633,6 +651,47 @@ static void spi_mark_j5vr_ik_applied(const uint8_t *rx_norm)
     spi_last_j5vr_ik_valid = true;
 }
 
+/** Risposta TELEMETRY nella versione della richiesta (v1: 0x01, v2: 0x08 + CRC). */
+static void build_telemetry_reply(j5_frame_t *tx, uint16_t seq, uint8_t req_ver)
+{
+    if (req_ver == (uint8_t)J5_PROTOCOL_VERSION_V2) {
+        j5_build_telemetry_v2(tx, seq);
+    } else {
+        j5_build_frame(tx, J5_FRAME_TYPE_TELEMETRY, seq);
+    }
+}
+
+/** true se nella finestra c'e' un header J5 v2 (usato per contare i CRC errati). */
+static bool spi_window_has_v2_header(const uint8_t *rx, size_t len)
+{
+    for (size_t off = 0; off + J5_PROTOCOL_FRAME_SIZE <= len; off++) {
+        if (rx[off] == 'J' && rx[off + 1] == '5' &&
+            rx[off + 2] == (uint8_t)J5_PROTOCOL_VERSION_V2 &&
+            rx[off + 6] == J5_PROTOCOL_FRAME_SIZE &&
+            rx[off + 7] == (uint8_t)J5_FLAG_CRC16) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** v2: conta i frame Pi persi. Il Pi incrementa seq a ogni transfer (tutti i tipi). */
+static void spi_track_v2_sequence(uint16_t seq)
+{
+    if (spi_rx_v2_seq_valid) {
+        const uint16_t expected = (uint16_t)(spi_rx_v2_last_seq + 1U);
+        if (seq != expected && seq != spi_rx_v2_last_seq) {
+            const uint16_t gap = (uint16_t)(seq - expected);
+            /* gap "all'indietro" (riavvio del Pi): non e' una perdita */
+            if (gap < 0x8000U) {
+                spi_rx_seq_gaps += gap;
+            }
+        }
+    }
+    spi_rx_v2_last_seq = seq;
+    spi_rx_v2_seq_valid = true;
+}
+
 /** Risposta TEST_ECHO: frame_type=0x02, payload 0xAA. */
 static void handle_test_echo(const uint8_t *rx, j5_frame_t *tx)
 {
@@ -719,6 +778,12 @@ static void process_spi_command_build_tx(const uint8_t *rx, size_t len,
         j5_build_frame(&tx_frame, J5_FRAME_TYPE_STATUS, 0);
         tx_frame.payload[0] = 0xEE;
         tx_frame.payload[1] = (len > 0) ? rx[0] : 0;
+        if (spi_window_has_v2_header(rx, len)) {
+            /* Frame v2 con CRC errato: scartato, errore 0xEC visibile al Pi. */
+            spi_rx_crc_errors++;
+            tx_frame.payload[0] = 0xEC;
+            j5_frame_seal_v2(&tx_frame);
+        }
         memcpy(out_tx, &tx_frame, sizeof(j5_frame_t));
 #if SPI_FRAME_LEN > J5_PROTOCOL_FRAME_SIZE
         memset(out_tx + sizeof(j5_frame_t), 0, SPI_FRAME_LEN - sizeof(j5_frame_t));
@@ -726,6 +791,11 @@ static void process_spi_command_build_tx(const uint8_t *rx, size_t len,
         return;
     }
     const j5_frame_t *rx_frame = (const j5_frame_t *)rx_norm;
+    const uint8_t req_ver = rx_norm[2];
+    atomic_set(&_last_frame_rx_ms, (atomic_val_t)k_uptime_get_32());
+    if (req_ver == (uint8_t)J5_PROTOCOL_VERSION_V2) {
+        spi_track_v2_sequence(get_rx_sequence(rx_norm));
+    }
     {
         static uint32_t n = 0U, last_fp = 0U;
         static uint16_t last_seq = 0U;
@@ -814,7 +884,7 @@ static void process_spi_command_build_tx(const uint8_t *rx, size_t len,
         switch (frame_type)
         {
             case J5_FRAME_TYPE_TELEMETRY:
-                j5_build_frame(&tx_frame, J5_FRAME_TYPE_TELEMETRY, get_rx_sequence(rx_norm));
+                build_telemetry_reply(&tx_frame, get_rx_sequence(rx_norm), req_ver);
                 break;
 
             case J5_FRAME_TYPE_TEST_ECHO:
@@ -831,7 +901,7 @@ static void process_spi_command_build_tx(const uint8_t *rx, size_t len,
                     j5vr_parse_payload(rx_frame->payload);
                     spi_mark_j5vr_ik_applied(rx_norm);
                 }
-                j5_build_frame(&tx_frame, J5_FRAME_TYPE_TELEMETRY, get_rx_sequence(rx_norm));
+                build_telemetry_reply(&tx_frame, get_rx_sequence(rx_norm), req_ver);
                 break;
 
             case J5_FRAME_TYPE_J5IK:
@@ -839,12 +909,19 @@ static void process_spi_command_build_tx(const uint8_t *rx, size_t len,
                     j5ik_parse_payload(rx_frame->payload);
                     spi_mark_j5vr_ik_applied(rx_norm);
                 }
-                j5_build_frame(&tx_frame, J5_FRAME_TYPE_TELEMETRY, get_rx_sequence(rx_norm));
+                build_telemetry_reply(&tx_frame, get_rx_sequence(rx_norm), req_ver);
                 break;
 
             default:
                 handle_status_error(rx_norm, &tx_frame, 0xEE, frame_type);
                 break;
+        }
+
+        /* v2: STATUS / TEST_ECHO / errori mantengono il payload v1 ma escono
+         * con version=2 e CRC (TELEMETRY_V2 e' gia' sigillato). */
+        if (req_ver == (uint8_t)J5_PROTOCOL_VERSION_V2 &&
+            tx_frame.frame_type != (uint8_t)J5_FRAME_TYPE_TELEMETRY_V2) {
+            j5_frame_seal_v2(&tx_frame);
         }
     }
     else
@@ -865,7 +942,21 @@ static bool spi_is_valid_j5_frame_at(const uint8_t *buf, size_t len, size_t off,
 {
     if (buf == NULL || off + J5_PROTOCOL_FRAME_SIZE > len) { return false; }
     if (buf[off] != 'J' || buf[off + 1] != '5') { return false; }
-    if (buf[off + 2] != 0x01) { return false; } /* protocol_version */
+    const uint8_t ver = buf[off + 2];
+    if (ver == (uint8_t)J5_PROTOCOL_VERSION_V2) {
+        /* v2: frame 64B, flag CRC obbligatorio e CRC valido */
+        if (buf[off + 6] != J5_PROTOCOL_FRAME_SIZE) { return false; }
+        if (buf[off + 7] != (uint8_t)J5_FLAG_CRC16) { return false; }
+        const uint8_t t2 = buf[off + 3];
+        if (t2 != J5_FRAME_TYPE_TELEMETRY && t2 != J5_FRAME_TYPE_TEST_ECHO &&
+            t2 != J5_FRAME_TYPE_STATUS && t2 != J5_FRAME_TYPE_J5VR &&
+            t2 != J5_FRAME_TYPE_J5IK) { return false; }
+        if (!j5_frame_v2_crc_ok(buf + off)) { return false; }
+        if (ft != NULL) { *ft = t2; }
+        if (d6 != NULL) { *d6 = J5_PROTOCOL_FRAME_SIZE; }
+        return true;
+    }
+    if (ver != (uint8_t)J5_PROTOCOL_VERSION_V1) { return false; } /* protocol_version */
     const uint8_t l = buf[off + 6];
 #if IS_ENABLED(CONFIG_ASSIST_V2_RAW_MODE)
     if (l != J5_PROTOCOL_FRAME_SIZE && l != J5_ASSIST_V2_FRAME_SIZE) { return false; }

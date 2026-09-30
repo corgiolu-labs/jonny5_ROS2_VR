@@ -73,3 +73,4 @@ mediamtx-*.tar.gz
 
 # --- Deliverable tesi/difesa: SOLO locale, NON pubblicare online ---
 /TESI/
+firmware/stm32/build-zephyr/

@@ -1,0 +1,45 @@
+# MoveIt Servo for JONNY5 (loaded under the "moveit_servo" namespace).
+# Output goes to the same joint_trajectory_controller used by move_group, so
+# planning and teleoperation need no controller switch.
+move_group_name: arm
+publish_period: 0.01           # 100 Hz, same as the controller_manager
+max_expected_latency: 0.1
+incoming_command_timeout: 0.15 # halt if the VR stream stops
+
+command_in_type: speed_units   # the VR bridge sends m/s and rad/s
+scale:
+  linear: 0.1
+  rotational: 0.6
+  joint: 0.5
+
+command_out_type: trajectory_msgs/JointTrajectory
+command_out_topic: /joint_trajectory_controller/joint_trajectory
+publish_joint_positions: true
+publish_joint_velocities: true
+publish_joint_accelerations: false
+
+use_smoothing: true
+smoothing_filter_plugin_name: online_signal_smoothing::AccelerationLimitedPlugin
+
+# move_group owns the primary planning scene when both run.
+is_primary_planning_scene_monitor: false
+check_octomap_collisions: false
+check_collisions: true
+collision_check_rate: 10.0
+self_collision_proximity_threshold: 0.01
+scene_collision_proximity_threshold: 0.02
+
+# Jacobian condition number thresholds, tuned for this ~0.35 m arm. Mixing m and
+# rad makes the condition number of a small arm large everywhere: over 20k random
+# poses within the joint limits it never drops below ~56 (median ~107, 95th pct
+# ~1170; HOME, arm straight up, is exactly singular). The Servo defaults (10/30)
+# would stop it everywhere.
+lower_singularity_threshold: 150.0
+hard_stop_singularity_threshold: 400.0
+leaving_singularity_threshold_multiplier: 1.5
+joint_limit_margins: [0.1]
+
+cartesian_command_in_topic: ~/delta_twist_cmds
+joint_command_in_topic: ~/delta_joint_cmds
+joint_topic: /joint_states
+status_topic: ~/status

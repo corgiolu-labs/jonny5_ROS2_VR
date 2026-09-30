@@ -368,8 +368,11 @@ void j5vr_actuation_apply_desired(const struct j5vr_state *j5vr)
          * ritardo vs polso (Y/P/R ha alpha=1 da SET_VR_PARAMS). Qui allineiamo il path al polso. */
         const bool mode5_arm_ik = (j5vr != NULL) && (j5vr->mode == 5U) && (j5vr->mode5_arm_valid != 0U) &&
                                   (i <= SERVO_GOMITO);
+        /* JOINT_STREAM (J5IK): sempre rate-limited. Con alpha<1 l'uscita seguirebbe
+         * l'EMA del target e il cap di velocita' non verrebbe applicato (salti sul polso). */
+        const bool joint_stream = (j5vr != NULL) && (j5vr->mode == J5_MODE_JOINT_STREAM);
         float alpha_eff = joint_lpf_alpha[i];
-        if (mode5_arm_ik)
+        if (mode5_arm_ik || joint_stream)
         {
             alpha_eff = 1.0f;
         }
@@ -382,7 +385,16 @@ void j5vr_actuation_apply_desired(const struct j5vr_state *j5vr)
 
         /* 1. Velocità effettiva per-giunto: polso in HEAD/HYBRID usa set dedicato */
         float joint_vel = current_max_velocity_deg_per_sec;
-        if (i == SERVO_YAW || i == SERVO_PITCH || i == SERVO_ROLL)
+        if (joint_stream)
+        {
+            /* Velocita' fissa, non ereditata dallo stato VR (pulsanti A/B, SET_VR_PARAMS). */
+            joint_vel = J5_STREAM_MAX_VEL_DEG_S;
+            if (joint_max_vel_deg_s[i] > 0.0f && joint_vel > joint_max_vel_deg_s[i])
+            {
+                joint_vel = joint_max_vel_deg_s[i];
+            }
+        }
+        else if (i == SERVO_YAW || i == SERVO_PITCH || i == SERVO_ROLL)
         {
             const bool use_head_vel = (j5vr != NULL) && (j5vr->mode == 3U || j5vr->mode == 4U || j5vr->mode == 5U);
             const int  idx          = (i == SERVO_YAW) ? 0 : (i == SERVO_PITCH) ? 1 : 2;
@@ -930,8 +942,11 @@ void j5ik_apply_direct_target(const struct j5ik_state *ik)
     }
 
     {
-        struct j5vr_state pseudo = g_j5vr_latest;
-        pseudo.mode = 5U;
+        /* Mode JOINT_STREAM: limiti di velocita' per-giunto (non quelli HEAD/mode 5). */
+        struct j5vr_state pseudo;
+        j5vr_latest_snapshot(&pseudo);
+        pseudo.mode = J5_MODE_JOINT_STREAM;
+        pseudo.mode5_arm_valid = 0U;
         j5vr_actuation_apply_desired(&pseudo);
     }
 }

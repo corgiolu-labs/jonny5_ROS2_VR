@@ -153,13 +153,21 @@ class SpiShmBridge(Node):
             msg.camctrl_delta = _clamp(cc.get("delta", 0), -32768, 32767)
         m5 = d.get("mode5_arm")
         if isinstance(m5, dict):
-            msg.mode5_arm_valid = bool(m5.get("valid", False))
+            # ws_server writes the B/S/G targets as mode5_arm.physical_deg=[b, s, g]
+            # (physical servo degrees). Without all three targets the extension
+            # must not be marked valid, otherwise the STM32 would get 0 deg targets.
+            phys = m5.get("physical_deg")
+            try:
+                bsg = [float(v) for v in phys[:3]] if isinstance(phys, (list, tuple)) else []
+            except (TypeError, ValueError):
+                bsg = []
+            has_targets = len(bsg) == 3
+            msg.mode5_arm_valid = bool(m5.get("valid", False)) and has_targets
             msg.mode5_grip_active = bool(m5.get("grip_active", False))
             msg.mode5_hold_active = bool(m5.get("hold_active", False))
             msg.mode5_target_id = _clamp(m5.get("target_id", 0), 0, 65535)
-            msg.mode5_base_deg = float(m5.get("base_deg", 0.0) or 0.0)
-            msg.mode5_shoulder_deg = float(m5.get("shoulder_deg", 0.0) or 0.0)
-            msg.mode5_elbow_deg = float(m5.get("elbow_deg", 0.0) or 0.0)
+            if has_targets:
+                msg.mode5_base_deg, msg.mode5_shoulder_deg, msg.mode5_elbow_deg = bsg
         return msg
 
 

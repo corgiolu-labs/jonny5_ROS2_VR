@@ -16,7 +16,13 @@
 #include "imu/imu.h"
 #include "servo/servo_control.h"
 #include "core/rt_loop.h"
+#include "core/state_machine.h"
+#include "core/estop.h"
+#include "spi/hal_spi_slave.h"
+#include "servo/j5vr_setpose.h"
+#include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/spinlock.h>
 
 /* Dump per-frame [VR_RX]/[IK_RX] su console: printk SINCRONI nel thread SPI
  * service (rate-limited 1 ogni 50 frame). Pura diagnostica: a 0 sono compilati
@@ -54,6 +60,26 @@ struct j5vr_state g_j5vr_latest = {
     .mode5_arm_target_cdeg = {0, 0, 0},
 };
 
+/* Protegge g_j5vr_latest: writer = thread SPI service, lettori = RT loop / UART. */
+static struct k_spinlock g_j5vr_lock;
+
+void j5vr_latest_snapshot(struct j5vr_state *out)
+{
+    if (out == NULL) { return; }
+    k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
+    *out = g_j5vr_latest;
+    k_spin_unlock(&g_j5vr_lock, key);
+}
+
+void j5vr_latest_set_buttons_xy(uint16_t xy_bits)
+{
+    const uint16_t mask = (uint16_t)((1U << 4) | (1U << 5));
+    k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
+    g_j5vr_latest.buttons_left =
+        (uint16_t)((g_j5vr_latest.buttons_left & ~mask) | (xy_bits & mask));
+    k_spin_unlock(&g_j5vr_lock, key);
+}
+
 struct j5ik_state g_j5ik_latest = {
     .valid         = 0,
     .control_flags = 0,
@@ -65,6 +91,22 @@ struct j5ik_state g_j5ik_latest = {
 
 volatile uint32_t g_j5ik_rx_counter = 0;
 volatile uint16_t g_j5vr_last_rx_seq = 0;
+
+/* Istante dell'ultimo J5IK (k_uptime_get_32). 0 = mai ricevuto. */
+static atomic_t g_j5ik_last_rx_ms = ATOMIC_INIT(0);
+
+void j5ik_latest_snapshot(struct j5ik_state *out)
+{
+    if (out == NULL) { return; }
+    k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
+    *out = g_j5ik_latest;
+    k_spin_unlock(&g_j5vr_lock, key);
+}
+
+uint32_t j5ik_last_rx_ms(void)
+{
+    return (uint32_t)atomic_get(&g_j5ik_last_rx_ms);
+}
 
 /* =========================================================
  * Codec helpers (endianness)
@@ -143,38 +185,45 @@ void j5vr_parse_payload(const uint8_t *p)
 {
     if (p == NULL) { return; }
 
-    g_j5vr_latest.mode          = p[0];
-    g_j5vr_latest.joy_x         = be16_to_s16(p +  1);
-    g_j5vr_latest.joy_y         = be16_to_s16(p +  3);
-    g_j5vr_latest.pitch         = be16_to_s16(p +  5);
-    g_j5vr_latest.yaw           = be16_to_s16(p +  7);
-    g_j5vr_latest.intensity     = p[9];
-    g_j5vr_latest.grip          = p[10];
-    g_j5vr_latest.vr_heartbeat  = be16_to_u16(p + 11);
-    g_j5vr_latest.priority      = p[13];
-    g_j5vr_latest.safe_mask     = be16_to_u16(p + 14);
-    g_j5vr_latest.quat_w        = be32_to_float(p + 16);
-    g_j5vr_latest.quat_x        = be32_to_float(p + 20);
-    g_j5vr_latest.quat_y        = be32_to_float(p + 24);
-    g_j5vr_latest.quat_z        = be32_to_float(p + 28);
-    g_j5vr_latest.buttons_left  = be16_to_u16(p + 32);
-    g_j5vr_latest.buttons_right = be16_to_u16(p + 34);
-    g_j5vr_latest.mode5_arm_valid = 0U;
-    g_j5vr_latest.mode5_control_flags = 0U;
-    g_j5vr_latest.mode5_target_id = 0U;
-    g_j5vr_latest.mode5_arm_target_cdeg[0] = 0;
-    g_j5vr_latest.mode5_arm_target_cdeg[1] = 0;
-    g_j5vr_latest.mode5_arm_target_cdeg[2] = 0;
+    struct j5vr_state s;
 
-    if (g_j5vr_latest.mode == 5U && p[36] == (uint8_t)'I')
+    s.mode          = p[0];
+    s.joy_x         = be16_to_s16(p +  1);
+    s.joy_y         = be16_to_s16(p +  3);
+    s.pitch         = be16_to_s16(p +  5);
+    s.yaw           = be16_to_s16(p +  7);
+    s.intensity     = p[9];
+    s.grip          = p[10];
+    s.vr_heartbeat  = be16_to_u16(p + 11);
+    s.priority      = p[13];
+    s.safe_mask     = be16_to_u16(p + 14);
+    s.quat_w        = be32_to_float(p + 16);
+    s.quat_x        = be32_to_float(p + 20);
+    s.quat_y        = be32_to_float(p + 24);
+    s.quat_z        = be32_to_float(p + 28);
+    s.buttons_left  = be16_to_u16(p + 32);
+    s.buttons_right = be16_to_u16(p + 34);
+    s.mode5_arm_valid = 0U;
+    s.mode5_control_flags = 0U;
+    s.mode5_target_id = 0U;
+    s.mode5_arm_target_cdeg[0] = 0;
+    s.mode5_arm_target_cdeg[1] = 0;
+    s.mode5_arm_target_cdeg[2] = 0;
+
+    if (s.mode == 5U && p[36] == (uint8_t)'I')
     {
-        g_j5vr_latest.mode5_control_flags = p[37];
-        g_j5vr_latest.mode5_arm_valid = (uint8_t)((p[37] & (1U << 0)) != 0U);
-        g_j5vr_latest.mode5_target_id = be16_to_u16(p + 38);
-        g_j5vr_latest.mode5_arm_target_cdeg[0] = be16_to_s16(p + 40);
-        g_j5vr_latest.mode5_arm_target_cdeg[1] = be16_to_s16(p + 42);
-        g_j5vr_latest.mode5_arm_target_cdeg[2] = be16_to_s16(p + 44);
+        s.mode5_control_flags = p[37];
+        s.mode5_arm_valid = (uint8_t)((p[37] & (1U << 0)) != 0U);
+        s.mode5_target_id = be16_to_u16(p + 38);
+        s.mode5_arm_target_cdeg[0] = be16_to_s16(p + 40);
+        s.mode5_arm_target_cdeg[1] = be16_to_s16(p + 42);
+        s.mode5_arm_target_cdeg[2] = be16_to_s16(p + 44);
     }
+
+    /* Pubblicazione atomica: il RT loop non vede mai uno stato a meta'. */
+    k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
+    g_j5vr_latest = s;
+    k_spin_unlock(&g_j5vr_lock, key);
 
 #if J5_PROTO_RX_DEBUG
     /* Log rate-limited: conferma parse su STM32 (ogni 50 frame) */
@@ -207,20 +256,28 @@ void j5ik_parse_payload(const uint8_t *p)
 {
     if (p == NULL) { return; }
 
-    g_j5ik_latest.valid         = p[0];
-    g_j5ik_latest.control_flags = p[1];
-    g_j5ik_latest.target_id     = be16_to_u16(p + 2);
-    g_j5ik_latest.vr_heartbeat  = be16_to_u16(p + 4);
-    g_j5ik_latest.mode          = p[6];
+    struct j5ik_state ik;
+    ik.valid         = p[0];
+    ik.control_flags = p[1];
+    ik.target_id     = be16_to_u16(p + 2);
+    ik.vr_heartbeat  = be16_to_u16(p + 4);
+    ik.mode          = p[6];
     for (int i = 0; i < 6; i++)
     {
-        g_j5ik_latest.target_cdeg[i] = be16_to_s16(p + 8 + (i * 2));
+        ik.target_cdeg[i] = be16_to_s16(p + 8 + (i * 2));
+    }
+
+    /* Pubblicazione atomica (RT loop legge via j5ik_latest_snapshot) e
+     * mode/hb coerenti anche nei diagnostici legacy. */
+    {
+        k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
+        g_j5ik_latest = ik;
+        g_j5vr_latest.mode = ik.mode;
+        g_j5vr_latest.vr_heartbeat = ik.vr_heartbeat;
+        k_spin_unlock(&g_j5vr_lock, key);
     }
     g_j5ik_rx_counter++;
-
-    /* Mantieni mode/hb coerenti anche nei diagnostici legacy. */
-    g_j5vr_latest.mode = g_j5ik_latest.mode;
-    g_j5vr_latest.vr_heartbeat = g_j5ik_latest.vr_heartbeat;
+    atomic_set(&g_j5ik_last_rx_ms, (atomic_val_t)k_uptime_get_32());
 
 #if J5_PROTO_RX_DEBUG
     static uint32_t ik_rx_log = 0;
@@ -385,4 +442,167 @@ void j5_build_frame(j5_frame_t *frame, j5_frame_type_t type, uint16_t seq)
         frame->reserved[0] = (uint8_t)((period >> 8) & 0xFFu);
         frame->reserved[1] = (uint8_t)(period & 0xFFu);
     }
+}
+
+/* =========================================================
+ * Protocollo v2: CRC + TELEMETRY_V2
+ * ========================================================= */
+
+static void u16_to_be(uint16_t v, uint8_t *p)
+{
+    p[0] = (uint8_t)(v >> 8);
+    p[1] = (uint8_t)(v & 0xFFU);
+}
+
+static void u32_to_be(uint32_t v, uint8_t *p)
+{
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)(v & 0xFFU);
+}
+
+/** float -> int16 con scala e saturazione. */
+static int16_t f_to_i16_scaled(float v, float scale)
+{
+    float x = v * scale;
+    if (!(x == x)) { return 0; }           /* NaN */
+    if (x > 32767.0f)  { return 32767; }
+    if (x < -32768.0f) { return -32768; }
+    return (int16_t)((x >= 0.0f) ? (x + 0.5f) : (x - 0.5f));
+}
+
+static uint16_t sat_u16(uint32_t v)
+{
+    return (v > 0xFFFFU) ? 0xFFFFU : (uint16_t)v;
+}
+
+uint16_t j5_crc16_ccitt(const uint8_t *data, uint32_t len)
+{
+    uint16_t crc = 0xFFFFU;
+    if (data == NULL) { return crc; }
+    for (uint32_t i = 0; i < len; i++)
+    {
+        crc ^= (uint16_t)((uint16_t)data[i] << 8);
+        for (int b = 0; b < 8; b++)
+        {
+            crc = (crc & 0x8000U) ? (uint16_t)((crc << 1) ^ 0x1021U) : (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
+bool j5_frame_v2_crc_ok(const uint8_t *frame64)
+{
+    if (frame64 == NULL) { return false; }
+    const uint16_t want = j5_crc16_ccitt(frame64, J5_PROTOCOL_FRAME_SIZE - 2U);
+    const uint16_t got  = be16_to_u16(frame64 + (J5_PROTOCOL_FRAME_SIZE - 2U));
+    return want == got;
+}
+
+void j5_frame_seal_v2(j5_frame_t *frame)
+{
+    if (frame == NULL) { return; }
+    frame->protocol_version = (uint8_t)J5_PROTOCOL_VERSION_V2;
+    frame->flags            = (uint8_t)J5_FLAG_CRC16;
+    const uint16_t crc = j5_crc16_ccitt((const uint8_t *)frame, J5_PROTOCOL_FRAME_SIZE - 2U);
+    u16_to_be(crc, frame->reserved);
+}
+
+/**
+ * j5_build_telemetry_v2 — layout payload (BE, 54 byte):
+ *   [0-3]   stm_time_ms (k_uptime_get_32)
+ *   [4-5]   stm_tx_seq (contatore risposte TELEMETRY_V2, rileva risposte ripetute)
+ *   [6-7]   rx_seq_gaps (frame Pi persi, saturato)
+ *   [8]     fsm_state (0=SAFE, 1=IDLE, 2=STOPPED)
+ *   [9]     status_flags (J5_TLM2_ST_*)
+ *   [10]    mode attivo
+ *   [11]    diag_flags (J5_TLM2_DG_*)
+ *   [12-23] 6 x int16 posizione comandata fisica, centi-gradi (B S G Y P R)
+ *   [24-31] quaternione IMU W X Y Z, int16 Q15
+ *   [32-37] gyro X Y Z int16, mrad/s
+ *   [38-43] accel X Y Z int16, cm/s^2
+ *   [44-45] imu_sample_counter LSB16
+ *   [46-47] rt_loop_period_us
+ *   [48-49] rt_step_us
+ *   [50-51] rt_overruns (saturato)
+ *   [52-53] crc_errors RX (saturato)
+ */
+void j5_build_telemetry_v2(j5_frame_t *frame, uint16_t seq)
+{
+    static uint16_t stm_tx_seq = 0U;   /* solo thread SPI service */
+
+    if (frame == NULL) { return; }
+    memset(frame, 0, sizeof(j5_frame_t));
+    frame->header[0]        = 'J';
+    frame->header[1]        = '5';
+    frame->frame_type       = (uint8_t)J5_FRAME_TYPE_TELEMETRY_V2;
+    frame->sequence_counter = __builtin_bswap16(seq);
+    frame->payload_len      = J5_PROTOCOL_FRAME_SIZE;
+
+    uint8_t *p = frame->payload;
+    stm_tx_seq++;
+    u32_to_be(k_uptime_get_32(), p + 0);
+    u16_to_be(stm_tx_seq, p + 4);
+    u16_to_be(hal_spi_rx_seq_gaps(), p + 6);
+
+    p[8] = (uint8_t)state_machine_get_state();
+
+    struct j5vr_state vr;
+    j5vr_latest_snapshot(&vr);
+    const bool deadman = ((vr.buttons_left & (1U << 1)) != 0U) &&
+                         ((vr.buttons_right & (1U << 1)) != 0U);
+    uint8_t st = 0U;
+    if (estop_is_active())                   { st |= J5_TLM2_ST_ESTOP; }
+    if (state_machine_is_movement_allowed()) { st |= J5_TLM2_ST_MOVE_ALLOWED; }
+    if (deadman)                             { st |= J5_TLM2_ST_DEADMAN; }
+    if (g_vr_input_active)                   { st |= J5_TLM2_ST_INPUT; }
+    if (g_vr_armed)                          { st |= J5_TLM2_ST_ARMED; }
+    if (g_vr_freeze_active)                  { st |= J5_TLM2_ST_FREEZE; }
+    if (j5vr_setpose_is_active())            { st |= J5_TLM2_ST_SETPOSE; }
+    p[10] = vr.mode;
+
+    uint8_t dg = 0U;
+    if (g_vr_guard_block_count != 0U) { dg |= J5_TLM2_DG_GUARD_SEEN; }
+    if (g_imu_reads_enabled)          { dg |= J5_TLM2_DG_IMU_ENABLED; }
+    if (g_j5ik_stream_active)         { dg |= J5_TLM2_DG_STREAM_LIVE; }
+    if (j5vr_setpose_pose_known())    { dg |= J5_TLM2_DG_POSE_KNOWN; }
+
+    for (int i = 0; i < 6; i++)
+    {
+        const int16_t cdeg = (int16_t)((int16_t)servo_get_angle((servo_joint_t)i) * 100);
+        u16_to_be((uint16_t)cdeg, p + 12 + (i * 2));
+    }
+
+    /* Quaternione identita' di default */
+    u16_to_be((uint16_t)32767, p + 24);
+    if (g_imu_reads_enabled && imu_is_available())
+    {
+        dg |= J5_TLM2_DG_IMU_PRESENT;
+        imu_snapshot_t snap;
+        if (imu_get_snapshot(&snap))
+        {
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.quat_w, 32767.0f), p + 24);
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.quat_x, 32767.0f), p + 26);
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.quat_y, 32767.0f), p + 28);
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.quat_z, 32767.0f), p + 30);
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.gyro_x, 1000.0f), p + 32);
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.gyro_y, 1000.0f), p + 34);
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.gyro_z, 1000.0f), p + 36);
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.accel_x, 100.0f), p + 38);
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.accel_y, 100.0f), p + 40);
+            u16_to_be((uint16_t)f_to_i16_scaled(snap.accel_z, 100.0f), p + 42);
+            u16_to_be((uint16_t)(snap.sample_counter & 0xFFFFU), p + 44);
+            if (imu_is_orientation_valid()) { st |= J5_TLM2_ST_IMU_VALID; }
+        }
+    }
+    p[9]  = st;
+    p[11] = dg;
+
+    u16_to_be(g_rt_loop_period_us, p + 46);
+    u16_to_be(g_rt_step_us, p + 48);
+    u16_to_be(sat_u16(rt_loop_get_overruns()), p + 50);
+    u16_to_be(hal_spi_rx_crc_errors(), p + 52);
+
+    j5_frame_seal_v2(frame);
 }

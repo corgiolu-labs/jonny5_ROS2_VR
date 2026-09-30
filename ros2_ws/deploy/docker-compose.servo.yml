@@ -1,0 +1,7 @@
+# ros2_control (jonny5_control, SPI protocol v2) + MoveIt Servo VR teleoperation.
+# Requires the v2 firmware. Replaces the Python SPI driver (bringup.launch.py).
+#   docker compose -f docker-compose.yml -f docker-compose.servo.yml up
+# For planning instead of teleoperation use move_group.launch.py in `command`.
+services:
+  jonny5:
+    command: ["ros2", "launch", "jonny5_moveit_config", "servo.launch.py", "mock_hardware:=false"]

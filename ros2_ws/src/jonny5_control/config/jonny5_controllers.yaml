@@ -1,0 +1,56 @@
+# ros2_control configuration for JONNY5 (see ros2_ws/docs/ROS2_CONTROL.md).
+controller_manager:
+  ros__parameters:
+    # One SPI exchange per cycle (J5IK command out, TELEMETRY_V2 in).
+    update_rate: 100
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+    forward_position_controller:
+      type: forward_command_controller/ForwardCommandController
+    imu_sensor_broadcaster:
+      type: imu_sensor_broadcaster/IMUSensorBroadcaster
+
+joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - base_joint
+      - shoulder_joint
+      - elbow_joint
+      - wrist_yaw_joint
+      - wrist_pitch_joint
+      - wrist_roll_joint
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    allow_partial_joints_goal: true
+    # MoveIt Servo streams short trajectories whose last point is still moving.
+    # Jazzy rejects them by default: the arm then stood still while the stick was
+    # held and caught up with Servo's integrated pose after the deadman was released.
+    allow_nonzero_velocity_at_trajectory_end: true
+    open_loop_control: false
+    constraints:
+      stopped_velocity_tolerance: 0.05
+      goal_time: 1.0
+
+# Alternative to the trajectory controller (e.g. for MoveIt Servo / teleop):
+# command topic /forward_position_controller/commands (Float64MultiArray, rad).
+forward_position_controller:
+  ros__parameters:
+    joints:
+      - base_joint
+      - shoulder_joint
+      - elbow_joint
+      - wrist_yaw_joint
+      - wrist_pitch_joint
+      - wrist_roll_joint
+    interface_name: position
+
+imu_sensor_broadcaster:
+  ros__parameters:
+    sensor_name: imu_sensor
+    frame_id: imu_link
