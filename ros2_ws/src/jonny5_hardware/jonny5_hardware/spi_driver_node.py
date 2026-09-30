@@ -48,7 +48,7 @@ SERVO_KEYS = [
 # Telemetry carries *physical* servo degrees; the joint angle is
 # (physical - offset) * dir, i.e. settings_manager.physical_to_virtual() - 90.
 DEFAULT_SERVO_OFFSETS_DEG = [100.0, 88.0, 93.0, 95.0, 90.0, 95.0]
-DEFAULT_SERVO_DIRS = [1, -1, -1, 1, -1, 1]
+DEFAULT_SERVO_DIRS = [1, -1, 1, 1, -1, 1]
 
 # A telemetry / SPI reply older than this marks the link offline in RobotStatus.
 LINK_TIMEOUT_S = 0.5

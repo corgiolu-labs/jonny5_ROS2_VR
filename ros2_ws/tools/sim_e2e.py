@@ -112,6 +112,28 @@ class Probe(Node):
         return r.result().result.error_code if r.result() else -997
 
 
+# Nodes of the stacks under test. A fixed pause was not enough on the Pi: the
+# previous scenario's controller_manager / move_group were still in the graph
+# when the next one started, and its JTC goal failed.
+STACK_NODES = {"controller_manager", "move_group", "servo_node", "jonny5_spi_driver",
+               "robot_state_publisher", "joint_trajectory_controller"}
+
+
+def wait_graph_clear(timeout: float = 30.0) -> bool:
+    """Wait until the previous scenario's nodes have left the ROS graph."""
+    probe = rclpy.create_node("j5_sim_e2e_gap")
+    try:
+        time.sleep(2.0)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            rclpy.spin_once(probe, timeout_sec=0.2)
+            if not STACK_NODES & set(probe.get_node_names()):
+                return True
+        return False
+    finally:
+        probe.destroy_node()
+
+
 def check(ok: bool, what: str, results: List[str]) -> bool:
     results.append(("PASS " if ok else "FAIL ") + what)
     return ok
@@ -259,7 +281,8 @@ def main() -> int:
             for ln in lines[-40:]:
                 print("    |", ln.rstrip())
         summary.append(ok)
-        time.sleep(5.0)  # let the previous stack's nodes leave the graph
+        if not wait_graph_clear():
+            print("    (previous stack still in the ROS graph after 30 s)")
     rclpy.shutdown()
     print("ALL PASS" if all(summary) else "SOME SCENARIOS FAILED")
     return 0 if all(summary) else 1

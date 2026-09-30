@@ -98,7 +98,7 @@ hardware_interface::CallbackReturn Jonny5System::on_init(
     return hardware_interface::CallbackReturn::ERROR;
   }
   if (!parse_list(param(info_, "servo_offsets_deg", "100,88,93,95,90,95"), offsets_deg_) ||
-    !parse_list(param(info_, "servo_dirs", "1,-1,-1,1,-1,1"), dirs_))
+    !parse_list(param(info_, "servo_dirs", "1,-1,1,1,-1,1"), dirs_))
   {
     RCLCPP_ERROR(kLogger, "servo_offsets_deg / servo_dirs need 6 comma-separated values");
     return hardware_interface::CallbackReturn::ERROR;

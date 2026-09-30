@@ -16,7 +16,7 @@
   <xacro:macro name="jonny5_ros2_control"
                params="mock_hardware:=true spi_device:=/dev/spidev0.0 spi_speed_hz:=1000000
                        transfer_len:=128 servo_offsets_deg:=100,88,93,95,90,95
-                       servo_dirs:=1,-1,-1,1,-1,1">
+                       servo_dirs:=1,-1,1,1,-1,1">
     <ros2_control name="JONNY5" type="system">
       <hardware>
         <plugin>jonny5_control/Jonny5System</plugin>

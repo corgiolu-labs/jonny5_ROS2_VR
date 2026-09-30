@@ -268,6 +268,11 @@ static uint16_t safe_entry_heartbeat = 0;
  * disarm VR; con frame piu' vecchi di J5IK_STREAM_TIMEOUT_MS il braccio resta
  * fermo (nessun nuovo target). Velocita' limitata da j5vr_actuation_apply_desired. */
 static bool stream_servos_off = false;
+/* true se l'ultimo tick IDLE era in mode 6. Uscendo da mode 6 restando in IDLE
+ * (joint_stream/enable false -> il Pi torna ai frame VR) la pipeline VR non
+ * spegne i servo: il suo latch servos_disabled_latched e' rimasto a true da
+ * prima dello streaming. Li spegniamo qui, una volta, al primo tick fuori. */
+static bool stream_mode_prev = false;
 
 static void rt_joint_stream_step(void)
 {
@@ -332,6 +337,8 @@ static void rt_loop_step(void)
     if (state_machine_get_state() == STATE_STOPPED)
     {
         servo_disable_all();
+        g_j5ik_stream_active = 0U;
+        stream_mode_prev = false;
         return;
     }
 
@@ -346,6 +353,10 @@ static void rt_loop_step(void)
     if (state_machine_get_state() != STATE_IDLE)
     {
         j5vr_setpose_abort();
+        /* Fuori da IDLE i servo sono gia' spenti (SAFE): niente stream attivo
+         * in telemetria e nessuno spegnimento "di uscita" da rifare dopo. */
+        g_j5ik_stream_active = 0U;
+        stream_mode_prev = false;
     }
     else if (j5vr_setpose_tick(g_rt_loop_ticks))
     {
@@ -409,10 +420,16 @@ static void rt_loop_step(void)
 
                 if (j5vr_current.mode == J5_MODE_JOINT_STREAM)
                 {
+                    stream_mode_prev = true;
                     rt_joint_stream_step();
                     break;
                 }
                 g_j5ik_stream_active = 0U;
+                if (stream_mode_prev)
+                {
+                    servo_disable_all();   /* uscita da mode 6 in IDLE: come il disarm VR */
+                    stream_mode_prev = false;
+                }
                 stream_servos_off = false;   /* re-armato al prossimo ingresso in mode 6 */
 
                 bool grip_left = false;

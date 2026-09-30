@@ -23,7 +23,7 @@ jonny5_spi_driver:
     # raspberry/config_runtime/robot/j5_settings.json "offsets" / "dirs".
     # joint_rad = radians((physical_deg - offset) * dir); 0 rad = HOME.
     servo_offsets_deg: [100.0, 88.0, 93.0, 95.0, 90.0, 95.0]
-    servo_dirs: [1, -1, -1, 1, -1, 1]
+    servo_dirs: [1, -1, 1, 1, -1, 1]
     joint_names:
       - base_joint
       - shoulder_joint
