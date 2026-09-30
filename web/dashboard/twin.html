@@ -31,6 +31,28 @@
     .twin-j b { color: #00e5ff; font-weight: 700; margin-left: 0.25rem; }
     .twin-foot { margin-top: 0.55rem; color: #8a93a3; font-size: 0.75rem; }
     .twin-hint { position: absolute; bottom: 12px; right: 14px; color: #6b7688; font-size: 0.72rem; pointer-events: none; }
+    .twin-geom { color: #6b7688; font-size: 0.72rem; margin-top: 0.35rem; }
+    .twin-cmd {
+      margin-top: 0.9rem; padding: 0.8rem 1rem; border-radius: 12px;
+      background: rgba(2, 8, 14, 0.7); border: 1px solid rgba(93, 255, 168, 0.25); color: #cdd6e4;
+    }
+    .twin-cmd h3 { margin: 0; font-size: 0.95rem; font-weight: 600; display: flex; gap: 0.6rem; align-items: center; }
+    .twin-cmd .hint { color: #8a93a3; font-size: 0.8rem; margin: 0.35rem 0 0.7rem; }
+    #tw-sliders { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0.35rem 1.2rem; }
+    .tw-slider { display: grid; grid-template-columns: 4.2rem 1fr 3.6rem; gap: 0.5rem; align-items: center; font-size: 0.85rem; }
+    .tw-slider span { color: #9db1cc; }
+    .tw-slider b { color: #5dffa8; text-align: right; font-variant-numeric: tabular-nums; }
+    .tw-slider input { width: 100%; }
+    .twin-cmd .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.8rem; }
+    .twin-cmd button { padding: 0.45rem 0.9rem; border-radius: 8px; border: 1px solid rgba(157, 177, 204, 0.35);
+      background: #0d1a28; color: #cdd6e4; cursor: pointer; font-size: 0.85rem; }
+    .twin-cmd button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .twin-cmd #tw-exec { border-color: #5dffa8; color: #5dffa8; font-weight: 600; }
+    .twin-cmd #tw-stop { border-color: #ff6b6b; color: #ff8a8a; font-weight: 600; margin-left: auto; }
+    .twin-cmd #tw-follow { border-color: #ffa84d; color: #ffa84d; font-weight: 600; touch-action: none; user-select: none; }
+    .twin-cmd #tw-follow.on { background: #ffa84d; color: #1a0f00; }
+    #tw-plan, #tw-cmd-status { font-size: 0.8rem; color: #9db1cc; }
+    .tw-drag { display: inline-block; margin: 0 0 0.7rem; font-size: 0.85rem; color: #ffd84d; }
   </style>
 </head>
 <body>
@@ -40,7 +62,9 @@
   <h1 class="twin-title">Digital Twin</h1>
   <p class="twin-sub">
     Gemello cinematico 3D di JONNY5 (6 giunti), pilotato in tempo reale dalla telemetria dei servo
-    (~95&nbsp;Hz) con la calibrazione reale del robot (offsets/dirs). Trascina per ruotare, scroll/pinch per zoom.
+    (~95&nbsp;Hz) con la calibrazione reale del robot (offsets/dirs) e le lunghezze del modello POE.
+    Trascina per ruotare, scroll/pinch per zoom. Con la modalità comando il fantasma verde mostra la posa
+    obiettivo: «Esegui» ci porta il robot reale.
   </p>
 
   <div class="twin-wrap">
@@ -56,14 +80,41 @@
         <span>Roll<b id="tw-r">–</b></span>
       </div>
       <div class="twin-foot">stato: <span id="tw-state">–</span> · servo [°]</div>
+      <div class="twin-geom" id="tw-geom">POE: in attesa…</div>
     </div>
     <div class="twin-hint">drag = orbita &middot; scroll = zoom</div>
   </div>
+
+  <section class="twin-cmd">
+    <h3><label><input type="checkbox" id="tw-cmd-toggle" /> Modalità comando</label></h3>
+    <div id="tw-cmd-body" hidden>
+      <p class="hint">
+        Muovi il fantasma con i cursori (angolo del giunto rispetto a HOME, entro i limiti della dashboard),
+        poi «Esegui»: il robot ci va con una traiettoria lenta. Serve lo stato IDLE (ENABLE dalla dashboard).
+        Tieni il fungo a portata di mano.<br />
+        <b>Segui dal vivo:</b> tieni premuto <kbd>SPAZIO</kbd> (o il pulsante arancione) mentre muovi i cursori:
+        il robot insegue il fantasma (≤ 30°/s). Rilascia per fermarlo.<br />
+        <b>Trascina l'utensile:</b> con l'opzione attiva, trascina la maniglia gialla sulla punta del fantasma;
+        l'IK calcola i giunti (rossa = fuori portata). Ruota la vista per cambiare il piano di trascinamento.
+      </p>
+      <label class="tw-drag"><input type="checkbox" id="tw-drag-toggle" /> Trascina l'utensile (IK)</label>
+      <div id="tw-sliders"></div>
+      <div class="row">
+        <button id="tw-copy" type="button">Copia posa reale</button>
+        <button id="tw-home" type="button">HOME</button>
+        <button id="tw-exec" type="button" disabled>Esegui</button>
+        <button id="tw-follow" type="button">Tieni premuto per seguire</button>
+        <span id="tw-plan"></span>
+        <button id="tw-stop" type="button">STOP</button>
+      </div>
+      <div class="row"><span id="tw-cmd-status"></span></div>
+    </div>
+  </section>
 </main>
 
 <script src="../shared/js/vendor/three.min.js"></script>
 <script src="../shared/js/j5_config.js"></script>
-<script type="module" src="js/pages/twin.js?v=3"></script>
+<script type="module" src="js/pages/twin.js?v=6"></script>
 
 <!-- Navbar loader con highlight link attivo -->
 <script>
