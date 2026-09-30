@@ -353,7 +353,8 @@ def _load_global_joint_limits() -> dict:
 
 def _clamp_setpose_cmd_if_needed(uart_cmd: str) -> tuple[str, str]:
     """
-    Clamp globale limiti giunto su SETPOSE/SETPOSE_T (angoli fisici) e ritorna:
+    Clamp globale limiti giunto su SETPOSE/SETPOSE_T/SETPOSE_T_HR (angoli fisici;
+    SETPOSE_T_HR in decimi di grado) e ritorna:
       (comando_clampato, warning_testuale)
     warning vuoto se nessun clamp.
     """
@@ -363,8 +364,9 @@ def _clamp_setpose_cmd_if_needed(uart_cmd: str) -> tuple[str, str]:
     if len(parts) < 8:
         return uart_cmd, ""
     prefix = parts[0].upper()
-    if prefix not in ("SETPOSE", "SETPOSE_T"):
+    if prefix not in ("SETPOSE", "SETPOSE_T", "SETPOSE_T_HR"):
         return uart_cmd, ""
+    scale = 10 if prefix == "SETPOSE_T_HR" else 1
     if len(parts) < 9:
         return uart_cmd, ""
     try:
@@ -375,8 +377,8 @@ def _clamp_setpose_cmd_if_needed(uart_cmd: str) -> tuple[str, str]:
     exceeded = []
     clamped = []
     for i, name in enumerate(_JOINT_LIMITS_ORDER):
-        mn = int(limits[name]["min"])
-        mx = int(limits[name]["max"])
+        mn = int(limits[name]["min"]) * scale
+        mx = int(limits[name]["max"]) * scale
         raw = int(joints[i])
         val = max(mn, min(mx, raw))
         if val != raw:
