@@ -26,6 +26,8 @@ uint8 fsm_state
 bool estop_active
 bool setpose_active
 bool joint_stream_active
+# Joint angles are the real arm pose (a SETPOSE completed since the STM32 booted).
+bool pose_known
 uint16 rt_overruns
 # Pi->STM32 frames lost (sequence gaps) and CRC failures seen by the firmware.
 uint16 rx_seq_gaps

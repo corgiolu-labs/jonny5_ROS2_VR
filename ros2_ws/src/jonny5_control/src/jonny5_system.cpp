@@ -207,6 +207,23 @@ hardware_interface::CallbackReturn Jonny5System::on_activate(const rclcpp_lifecy
   return hardware_interface::CallbackReturn::SUCCESS;
 }
 
+hardware_interface::return_type Jonny5System::perform_command_mode_switch(
+  const std::vector<std::string> & start_interfaces, const std::vector<std::string> &)
+{
+  // A (re)started controller reads the command interfaces first and only
+  // falls back to the state if they are NaN (JTC on_activate). Without this
+  // a restarted JTC would resume the old command, e.g. the pose reported
+  // before HOME, instead of starting from where the arm is now.
+  for (const auto & name : start_interfaces) {
+    for (std::size_t i = 0; i < kJoints; ++i) {
+      if (name == info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION) {
+        cmd_[i] = pos_[i];
+      }
+    }
+  }
+  return hardware_interface::return_type::OK;
+}
+
 hardware_interface::CallbackReturn Jonny5System::on_deactivate(const rclcpp_lifecycle::State &)
 {
   streaming_ = false;
@@ -297,15 +314,30 @@ hardware_interface::return_type Jonny5System::write(const rclcpp::Time &, const 
     max_jump = std::max(max_jump, std::abs(rad - pos_[i]));
   }
 
-  // Stream consent gate (see stream_armed_).
-  const bool fw_ready = have_telemetry_ && !telemetry_.estop() &&
+  // Stream consent gate (see stream_armed_). The servos give no position
+  // feedback: the telemetry angles are the last commanded ones, so they are
+  // the real pose only once a SETPOSE has completed since the STM32 booted
+  // (pose_known). Before that they are init defaults, and "holding the
+  // current pose" would drive the arm there. A running SETPOSE also pauses
+  // the stream: afterwards the old command would pull the arm back.
+  const bool fw_idle = have_telemetry_ && !telemetry_.estop() &&
     telemetry_.fsm_state == static_cast<uint8_t>(j5v2::FsmState::kIdle);
+  const bool fw_ready = fw_idle && telemetry_.pose_known() && !telemetry_.setpose_active();
   auto clock = rclcpp::Clock(RCL_STEADY_TIME);
   if (stream_armed_ && !fw_ready) {
     stream_armed_ = false;
-    RCLCPP_WARN(kLogger, "STM32 left IDLE (state %u, E-STOP %d): joint streaming paused. "
-      "After UART ENABLE it resumes only once the command is at the current pose.",
-      telemetry_.fsm_state, telemetry_.estop() ? 1 : 0);
+    if (!fw_idle) {
+      RCLCPP_WARN(kLogger, "STM32 left IDLE (state %u, E-STOP %d): joint streaming paused. "
+        "After UART ENABLE it resumes only once the command is at the current pose.",
+        telemetry_.fsm_state, telemetry_.estop() ? 1 : 0);
+    } else {
+      RCLCPP_WARN(kLogger, "STM32 SETPOSE running (HOME/PARK/SETPOSE): joint streaming paused. "
+        "It resumes only once the command is at the current pose.");
+    }
+  } else if (!stream_armed_ && fw_idle && !telemetry_.pose_known()) {
+    RCLCPP_WARN_THROTTLE(kLogger, clock, 2000,
+      "STM32 arm pose unknown since boot (no SETPOSE yet): not streaming. Send UART HOME "
+      "first, then restart the controller so it starts from that pose.");
   } else if (!stream_armed_ && fw_ready) {
     if (max_jump <= arm_gate_rad_) {
       stream_armed_ = true;

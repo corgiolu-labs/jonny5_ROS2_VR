@@ -65,6 +65,10 @@
 #define J5_TLM2_DG_IMU_PRESENT  (1U << 1)
 #define J5_TLM2_DG_IMU_ENABLED  (1U << 2)
 #define J5_TLM2_DG_STREAM_LIVE  (1U << 3)
+/* Angoli servo = posa reale: un SETPOSE e' stato completato dal boot. Senza
+ * questo bit gli angoli in telemetria sono i default di init (il Pi non deve
+ * armare lo streaming su quella posa). */
+#define J5_TLM2_DG_POSE_KNOWN   (1U << 4)
 
 /* =========================================================
  * Tipi

@@ -74,9 +74,19 @@ def test_telemetry_v2_round_trip():
     assert t["imu_sample_counter"] == 1  # LSB16
     assert t["rt_step_us"] == 43 and t["rt_overruns"] == 2 and t["crc_errors_stm"] == 1
     assert t["joint_stream_active"] and t["mode"] == 6
+    assert not t["pose_known"]  # no SETPOSE since boot: angles are init defaults
     corrupted = bytearray(f)
     corrupted[30] ^= 0xFF
     assert v2.parse_telemetry_v2(bytes(corrupted)) is None
+
+
+def test_telemetry_v2_pose_known_flag():
+    f = v2.build_telemetry_v2(
+        sequence=1, stm_time_ms=0, stm_tx_seq=1, fsm_state=1, status_flags=0, mode=0,
+        joint_cdeg=[10000, 8800, 9300, 9500, 9000, 9500], diag_flags=v2.DG_POSE_KNOWN,
+    )
+    t = v2.parse_telemetry_v2(f)
+    assert t["pose_known"] and not t["joint_stream_active"]
 
 
 def test_transport_extracts_v2_frame_from_padded_128():

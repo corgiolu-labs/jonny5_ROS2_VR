@@ -60,6 +60,13 @@ void j5vr_setpose_abort(void);
 bool j5vr_setpose_is_active(void);
 
 /**
+ * true dopo il primo SETPOSE/HOME/PARK completato dal boot. Prima di allora
+ * gli angoli servo (e la telemetria) sono i default di init, non la posa
+ * reale del braccio: i servo non danno feedback di posizione.
+ */
+bool j5vr_setpose_pose_known(void);
+
+/**
  * Posa assoluta 6-DOF con velocità percentuale e profilo di moto.
  */
 void j5vr_go_setpose(

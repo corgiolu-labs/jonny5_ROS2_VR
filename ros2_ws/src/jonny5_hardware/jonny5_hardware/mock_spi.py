@@ -220,7 +220,8 @@ class MockSpiWorker:
         half = 0.125 * math.sin(t * 0.5)
         self._stm_tx_seq = (self._stm_tx_seq + 1) & 0xFFFF
         status_flags = v2.ST_MOVE_ALLOWED | v2.ST_IMU_VALID
-        diag_flags = v2.DG_IMU_PRESENT | v2.DG_IMU_ENABLED
+        # The mock arm starts at a known pose, like the real one after HOME.
+        diag_flags = v2.DG_IMU_PRESENT | v2.DG_IMU_ENABLED | v2.DG_POSE_KNOWN
         if self._stream_live:
             diag_flags |= v2.DG_STREAM_LIVE
         return v2.build_telemetry_v2(

@@ -341,6 +341,12 @@ class SpiDriverNode(Node):
             return "no TELEMETRY_V2 from the STM32"
         if v2s.get("estop_active") or v2s.get("fsm_state_name") != "IDLE":
             return f"STM32 is {v2s.get('fsm_state_name')} (E-STOP {v2s.get('estop_active')}): send UART ENABLE first"
+        # The servos give no position feedback: until a SETPOSE has completed since the
+        # STM32 booted, the reported angles are init defaults, not the arm.
+        if not v2s.get("pose_known"):
+            return "STM32 arm pose unknown since boot (no SETPOSE yet): send UART HOME first"
+        if v2s.get("setpose_active"):
+            return "STM32 SETPOSE (HOME/PARK) running: wait for SETPOSE_DONE"
         if self._joint_pos_rad is None:
             return "no joint state yet"
         jump = max(abs(a - b) for a, b in zip(self._joint_cmd_rad, self._joint_pos_rad))
@@ -371,13 +377,14 @@ class SpiDriverNode(Node):
                 if self._stream_enabled:
                     v2s = self._v2_state or {}
                     if (v2s.get("estop_active") or v2s.get("fsm_state_name") != "IDLE"
-                            or not self._stm32_link_fresh()):
-                        # Firmware left IDLE (SAFE/STOPPED/E-STOP/link): withdraw consent.
-                        # The operator re-enables after UART ENABLE (never automatic).
+                            or v2s.get("setpose_active") or not self._stm32_link_fresh()):
+                        # Firmware left IDLE (SAFE/STOPPED/E-STOP/link) or a SETPOSE took
+                        # over (after it the old command would pull the arm back):
+                        # withdraw consent. The operator re-enables (never automatic).
                         self._stream_enabled = False
                         self.get_logger().warning(
-                            "STM32 left IDLE or E-STOP/link loss: joint streaming disabled; "
-                            "call jonny5/joint_stream/enable again after UART ENABLE"
+                            "STM32 left IDLE, SETPOSE started or E-STOP/link loss: joint "
+                            "streaming disabled; call jonny5/joint_stream/enable again"
                         )
                 if self._stream_enabled and self._joint_cmd_cdeg is not None:
                     rx = self._send_joint_stream()
@@ -504,6 +511,7 @@ class SpiDriverNode(Node):
             spi_msg.estop_active = bool(t.get("estop_active"))
             spi_msg.setpose_active = bool(t.get("setpose_active"))
             spi_msg.joint_stream_active = bool(t.get("joint_stream_active"))
+            spi_msg.pose_known = bool(t.get("pose_known"))
             spi_msg.rt_overruns = int(t.get("rt_overruns", 0)) & 0xFFFF
             spi_msg.rx_seq_gaps = int(t.get("rx_seq_gaps", 0)) & 0xFFFF
             spi_msg.crc_errors_stm = int(t.get("crc_errors_stm", 0)) & 0xFFFF
@@ -549,6 +557,8 @@ class SpiDriverNode(Node):
                 )
                 if v2s.get(key)
             ]
+            if not v2s.get("pose_known"):
+                flags.append("pose_unknown")
             msg.detail = f"TELEMETRY_V2 mode={v2s.get('mode', 0)}" + (
                 " [" + ",".join(flags) + "]" if flags else ""
             )

@@ -566,6 +566,7 @@ void j5_build_telemetry_v2(j5_frame_t *frame, uint16_t seq)
     if (g_vr_guard_block_count != 0U) { dg |= J5_TLM2_DG_GUARD_SEEN; }
     if (g_imu_reads_enabled)          { dg |= J5_TLM2_DG_IMU_ENABLED; }
     if (g_j5ik_stream_active)         { dg |= J5_TLM2_DG_STREAM_LIVE; }
+    if (j5vr_setpose_pose_known())    { dg |= J5_TLM2_DG_POSE_KNOWN; }
 
     for (int i = 0; i < 6; i++)
     {

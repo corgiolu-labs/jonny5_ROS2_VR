@@ -62,6 +62,9 @@ DG_GUARD_SEEN = 1 << 0
 DG_IMU_PRESENT = 1 << 1
 DG_IMU_ENABLED = 1 << 2
 DG_STREAM_LIVE = 1 << 3
+# Joint angles are the real arm pose: a SETPOSE completed since the STM32 booted.
+# Without it they are init defaults (the servos give no position feedback).
+DG_POSE_KNOWN = 1 << 4
 
 SERVO_LABELS = ("B", "S", "G", "Y", "P", "R")
 
@@ -244,6 +247,7 @@ def parse_telemetry_v2(frame: bytes) -> Optional[Dict[str, Any]]:
         "imu_present": bool(dg & DG_IMU_PRESENT),
         "imu_enabled": bool(dg & DG_IMU_ENABLED),
         "joint_stream_active": bool(dg & DG_STREAM_LIVE),
+        "pose_known": bool(dg & DG_POSE_KNOWN),
         "joint_cdeg": joints_cdeg,
         "imu_q_w": qw / 32767.0,
         "imu_q_x": qx / 32767.0,

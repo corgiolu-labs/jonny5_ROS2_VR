@@ -77,7 +77,8 @@ MockFirmwareTransport::MockFirmwareTransport(
   }
   telemetry_.fsm_state = static_cast<uint8_t>(j5v2::FsmState::kIdle);
   telemetry_.status_flags = j5v2::kStMoveAllowed | j5v2::kStImuValid;
-  telemetry_.diag_flags = j5v2::kDgImuPresent | j5v2::kDgImuEnabled;
+  // The mock starts at a known pose (HOME), like the real arm after HOME.
+  telemetry_.diag_flags = j5v2::kDgImuPresent | j5v2::kDgImuEnabled | j5v2::kDgPoseKnown;
   telemetry_.rt_loop_period_us = 1000;
   telemetry_.rt_step_us = 45;
 }

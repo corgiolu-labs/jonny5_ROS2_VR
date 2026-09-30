@@ -42,6 +42,9 @@ constexpr uint8_t kDgGuardSeen = 1u << 0;
 constexpr uint8_t kDgImuPresent = 1u << 1;
 constexpr uint8_t kDgImuEnabled = 1u << 2;
 constexpr uint8_t kDgStreamLive = 1u << 3;
+// Joint angles are the real arm pose (a SETPOSE completed since the STM32
+// booted). Without it joint_cdeg are init defaults, not the arm.
+constexpr uint8_t kDgPoseKnown = 1u << 4;
 
 enum class FsmState : uint8_t { kSafe = 0, kIdle = 1, kStopped = 2 };
 
@@ -71,6 +74,8 @@ struct Telemetry
   bool movement_allowed() const {return status_flags & kStMoveAllowed;}
   bool imu_valid() const {return status_flags & kStImuValid;}
   bool stream_live() const {return diag_flags & kDgStreamLive;}
+  bool setpose_active() const {return status_flags & kStSetpose;}
+  bool pose_known() const {return diag_flags & kDgPoseKnown;}
 };
 
 /// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection, xorout 0).

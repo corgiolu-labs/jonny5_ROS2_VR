@@ -67,7 +67,7 @@ class LoopbackLink:
                 stm_tx_seq=self._tx_seq, fsm_state=0, status_flags=v2.ST_IMU_VALID,
                 mode=0, joint_cdeg=[10000, 8800, 9300, 9500, 9000, 9500],
                 rt_loop_period_us=1000, rt_step_us=45,
-                diag_flags=v2.DG_IMU_PRESENT | v2.DG_IMU_ENABLED,
+                diag_flags=v2.DG_IMU_PRESENT | v2.DG_IMU_ENABLED | v2.DG_POSE_KNOWN,
             )
         else:
             f = bytearray(64)

@@ -48,6 +48,10 @@ public:
   hardware_interface::return_type write(
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
+  hardware_interface::return_type perform_command_mode_switch(
+    const std::vector<std::string> & start_interfaces,
+    const std::vector<std::string> & stop_interfaces) override;
+
 private:
   static constexpr std::size_t kJoints = 6;
   using Clock = std::chrono::steady_clock;
@@ -62,7 +66,7 @@ private:
   uint32_t spi_speed_hz_ = 1000000;
   std::size_t transfer_len_ = 128;
   std::array<double, kJoints> offsets_deg_{100.0, 88.0, 93.0, 95.0, 90.0, 95.0};
-  std::array<int, kJoints> dirs_{1, -1, -1, 1, -1, 1};
+  std::array<int, kJoints> dirs_{1, -1, 1, 1, -1, 1};
   std::array<double, kJoints> cmd_min_{};
   std::array<double, kJoints> cmd_max_{};
   std::chrono::milliseconds link_timeout_{500};

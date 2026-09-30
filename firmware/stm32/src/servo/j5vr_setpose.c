@@ -161,6 +161,8 @@ static volatile float    sp_done_vel_max;
 static volatile float    sp_done_acc_max;
 static volatile bool     sp_done_relaxed;
 static volatile bool     sp_done_pending;
+/* Latch: primo SETPOSE completato dal boot (vedi j5vr_setpose_pose_known). */
+static volatile bool     sp_pose_known;
 
 /* Wake-up tap config — DISABILITATO (peggiora reattività globale e
  * non risolve il problema PITCH SDS1601). Codice mantenuto inattivo
@@ -239,6 +241,11 @@ void j5vr_setpose_abort(void)
 bool j5vr_setpose_is_active(void)
 {
     return g_setpose_state.active;
+}
+
+bool j5vr_setpose_pose_known(void)
+{
+    return sp_pose_known;
 }
 
 /* -----------------------------------------------------------------------
@@ -378,6 +385,7 @@ bool j5vr_setpose_tick(uint32_t rt_tick)
         sp_done_vel_max    = g_setpose_state.max_velocity_deg_s;
         sp_done_acc_max    = g_setpose_state.max_accel_deg_s2;
         sp_done_relaxed    = relaxed;
+        sp_pose_known      = true;
         sp_done_pending    = true;
     }
 
