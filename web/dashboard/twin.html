@@ -49,6 +49,8 @@
     .twin-cmd button:disabled { opacity: 0.45; cursor: not-allowed; }
     .twin-cmd #tw-exec { border-color: #5dffa8; color: #5dffa8; font-weight: 600; }
     .twin-cmd #tw-stop { border-color: #ff6b6b; color: #ff8a8a; font-weight: 600; margin-left: auto; }
+    .twin-cmd #tw-follow { border-color: #ffa84d; color: #ffa84d; font-weight: 600; touch-action: none; user-select: none; }
+    .twin-cmd #tw-follow.on { background: #ffa84d; color: #1a0f00; }
     #tw-plan, #tw-cmd-status { font-size: 0.8rem; color: #9db1cc; }
   </style>
 </head>
@@ -88,13 +90,16 @@
       <p class="hint">
         Muovi il fantasma con i cursori (angolo del giunto rispetto a HOME, entro i limiti della dashboard),
         poi «Esegui»: il robot ci va con una traiettoria lenta. Serve lo stato IDLE (ENABLE dalla dashboard).
-        Tieni il fungo a portata di mano.
+        Tieni il fungo a portata di mano.<br />
+        <b>Segui dal vivo:</b> tieni premuto <kbd>SPAZIO</kbd> (o il pulsante arancione) mentre muovi i cursori:
+        il robot insegue il fantasma (≤ 30°/s). Rilascia per fermarlo.
       </p>
       <div id="tw-sliders"></div>
       <div class="row">
         <button id="tw-copy" type="button">Copia posa reale</button>
         <button id="tw-home" type="button">HOME</button>
         <button id="tw-exec" type="button" disabled>Esegui</button>
+        <button id="tw-follow" type="button">Tieni premuto per seguire</button>
         <span id="tw-plan"></span>
         <button id="tw-stop" type="button">STOP</button>
       </div>
@@ -105,7 +110,7 @@
 
 <script src="../shared/js/vendor/three.min.js"></script>
 <script src="../shared/js/j5_config.js"></script>
-<script type="module" src="js/pages/twin.js?v=4"></script>
+<script type="module" src="js/pages/twin.js?v=5"></script>
 
 <!-- Navbar loader con highlight link attivo -->
 <script>

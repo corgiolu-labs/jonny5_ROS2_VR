@@ -18,6 +18,13 @@
  * obiettivo scelta con i cursori; "Esegui" invia un solo SETPOSE_T_HR (angoli
  * virtuali x10, il backend converte in fisici e applica i limiti giunto) con
  * una durata che non supera MAX_SPEED_DEG_S.
+ *
+ * Segui dal vivo (passo 2): finché il deadman è premuto (SPAZIO, o il pulsante
+ * "Tieni premuto per seguire") il robot insegue il fantasma: un SETPOSE_T_HR
+ * al massimo ogni FOLLOW_PERIOD_MS quando il fantasma si sposta. Il firmware
+ * interrompe la traiettoria in corso e riparte dal punto raggiunto. Al rilascio
+ * (o se la pagina perde il focus, la telemetria o lo stato IDLE) parte un
+ * comando di tenuta sulla posa attuale.
  */
 import {
   connectJ5Dashboard,
@@ -56,6 +63,12 @@ const MAX_SPEED_DEG_S = 30;     // velocità massima del giunto che si muove di 
 const MIN_DURATION_MS = 1500;
 const MAX_DURATION_MS = 12000;
 const PROFILE = "RTR5";
+// Segui dal vivo
+const FOLLOW_PERIOD_MS = 150;     // al massimo un comando ogni 150 ms
+const FOLLOW_MIN_MS = 250;        // durata minima di ogni tratto
+const FOLLOW_MIN_STEP_DEG = 0.5;  // non reinviare per spostamenti più piccoli
+const FOLLOW_PROFILE = "RTR3";    // cubico: riparte più deciso dopo ogni interruzione
+const HOLD_MS = 200;              // tenuta al rilascio del deadman
 
 const S = {
   scene: null, camera: null, renderer: null,
@@ -67,6 +80,7 @@ const S = {
   realVirtual: null,          // ultima posa reale (gradi virtuali, senza EMA)
   robotState: "–",
   cmd: { enabled: false, target: [90, 90, 90, 90, 90, 90], busyUntil: 0 },
+  follow: { active: false, lastSent: null, lastSentAt: 0, sentAny: false },
 };
 let lastTelem = 0;
 
@@ -417,6 +431,26 @@ function buildCommandPanel() {
     clampTarget(); refreshSliders(); onTargetChanged();
   });
   document.getElementById("tw-exec")?.addEventListener("click", executeTarget);
+  // Deadman "Segui dal vivo": SPAZIO (tastiera) o pulsante tenuto premuto (touch).
+  window.addEventListener("keydown", (e) => {
+    if (e.code !== "Space" || !S.cmd.enabled) return;
+    e.preventDefault();
+    if (!e.repeat) setFollow(true);
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.code !== "Space") return;
+    if (S.cmd.enabled) e.preventDefault();   // niente "click" sul pulsante a fuoco
+    setFollow(false);
+  });
+  window.addEventListener("blur", () => setFollow(false));
+  document.addEventListener("visibilitychange", () => { if (document.hidden) setFollow(false); });
+  const fb = document.getElementById("tw-follow");
+  if (fb) {
+    fb.addEventListener("pointerdown", (e) => { e.preventDefault(); fb.setPointerCapture?.(e.pointerId); setFollow(true); });
+    for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) fb.addEventListener(ev, () => setFollow(false));
+  }
+  setInterval(followTick, 50);
+
   document.getElementById("tw-stop")?.addEventListener("click", () => {
     sendCommand("uart", { cmd: "STOP" });
     S.cmd.busyUntil = 0;
@@ -477,6 +511,7 @@ function refreshCommandState() {
   if (!S.cmd.enabled) why = "modalità comando spenta";
   else if (!isLive()) why = "nessuna telemetria";
   else if (S.robotState !== "IDLE") why = `robot in ${S.robotState}: serve IDLE (ENABLE dalla dashboard)`;
+  else if (S.follow.active) why = "segui dal vivo attivo";
   else if (busy) why = "movimento in corso…";
   else if (delta < 0.5) why = "il fantasma coincide con il robot";
   btn.disabled = Boolean(why);
@@ -509,6 +544,11 @@ function executeTarget() {
 
 registerUartResponseHandler((msg) => {
   if (!msg || !String(msg.cmd || "").toUpperCase().startsWith("SETPOSE_T_HR")) return;
+  if (!msg.ok && S.follow.active) {
+    stopFollow(false);
+    setCmdStatus(`Segui interrotto, comando rifiutato: ${msg.response || "errore"}`, true);
+    return;
+  }
   if (!msg.ok) {
     S.cmd.busyUntil = 0;
     setCmdStatus(`Rifiutato: ${msg.response || "errore"}`, true);
@@ -525,6 +565,83 @@ registerSetposeDoneHandler(() => {
     refreshCommandState();
   }
 });
+
+// --------------------------------------------------------------------------
+// Segui dal vivo (passo 2)
+// --------------------------------------------------------------------------
+function followBlockReason() {
+  if (!S.cmd.enabled) return "modalità comando spenta";
+  if (!isLive()) return "nessuna telemetria";
+  if (S.robotState !== "IDLE") return `robot in ${S.robotState}`;
+  if (performance.now() < S.cmd.busyUntil) return "movimento «Esegui» in corso";
+  return "";
+}
+
+function setGhostFollowing(on) {
+  if (!S.ghost) return;
+  S.ghost.root.traverse((o) => {
+    if (o.material && o.material.transparent) {
+      o.material.color.setHex(on ? 0xffa84d : 0x5dffa8);
+      o.material.emissive.setHex(on ? 0x5a3a10 : 0x1d5a3a);
+    }
+  });
+}
+
+function setFollow(on) {
+  if (on === S.follow.active) return;
+  if (on) {
+    const why = followBlockReason();
+    if (why) { setCmdStatus(`Segui non disponibile: ${why}.`, true); return; }
+    S.follow.active = true;
+    S.follow.sentAny = false;
+    S.follow.lastSent = null;
+    S.follow.lastSentAt = 0;
+    setGhostFollowing(true);
+    document.getElementById("tw-follow")?.classList.add("on");
+    setCmdStatus("Segui dal vivo: il robot insegue il fantasma finché tieni premuto.");
+  } else {
+    stopFollow(true);
+  }
+  refreshCommandState();
+}
+
+// sendHold: al rilascio, tenuta sulla posa comandata attuale (telemetria).
+function stopFollow(sendHold) {
+  if (!S.follow.active) return;
+  S.follow.active = false;
+  setGhostFollowing(false);
+  document.getElementById("tw-follow")?.classList.remove("on");
+  if (sendHold && S.follow.sentAny && S.realVirtual && isLive()) {
+    const x10 = S.realVirtual.map((v) => Math.round(v * 10));
+    sendCommand("uart", { cmd: `SETPOSE_T_HR ${x10.join(" ")} ${HOLD_MS} ${FOLLOW_PROFILE}` });
+    setCmdStatus("Rilasciato: il robot si ferma sulla posa attuale.");
+  }
+  refreshCommandState();
+}
+
+function followTick() {
+  if (!S.follow.active) return;
+  const why = followBlockReason();
+  if (why) {
+    stopFollow(true);
+    setCmdStatus(`Segui interrotto: ${why}.`, true);
+    return;
+  }
+  const now = performance.now();
+  if (now - S.follow.lastSentAt < FOLLOW_PERIOD_MS) return;
+  clampTarget();
+  const tgt = S.cmd.target;
+  const moved = S.follow.lastSent
+    ? Math.max(...tgt.map((v, i) => Math.abs(v - S.follow.lastSent[i])))
+    : maxDelta();
+  if (moved < FOLLOW_MIN_STEP_DEG) return;
+  const t = Math.round(Math.max(FOLLOW_MIN_MS, Math.min(MAX_DURATION_MS, maxDelta() / MAX_SPEED_DEG_S * 1000)));
+  const x10 = tgt.map((v) => Math.round(v * 10));
+  sendCommand("uart", { cmd: `SETPOSE_T_HR ${x10.join(" ")} ${t} ${FOLLOW_PROFILE}` });
+  S.follow.lastSent = tgt.slice();
+  S.follow.lastSentAt = now;
+  S.follow.sentAny = true;
+}
 
 // --------------------------------------------------------------------------
 // Avvio
