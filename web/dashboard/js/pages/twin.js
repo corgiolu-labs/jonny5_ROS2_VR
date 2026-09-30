@@ -25,6 +25,12 @@
  * interrompe la traiettoria in corso e riparte dal punto raggiunto. Al rilascio
  * (o se la pagina perde il focus, la telemetria o lo stato IDLE) parte un
  * comando di tenuta sulla posa attuale.
+ *
+ * Trascina l'utensile (passo 3): una maniglia sulla punta del fantasma si
+ * trascina nel piano della vista; la posizione va all'IK POE del Raspberry
+ * (IK_SOLVE, una richiesta alla volta, orientamento dell'utensile tenuto quello
+ * di inizio trascinamento) e, se raggiungibile, il fantasma prende gli angoli
+ * risultanti. Funziona con "Esegui" e con "Segui dal vivo".
  */
 import {
   connectJ5Dashboard,
@@ -33,6 +39,7 @@ import {
   registerPoeParamsHandler,
   registerSetposeDoneHandler,
   registerUartResponseHandler,
+  registerIkResultHandler,
   loadRoutingConfig,
   sendCommand,
 } from "../../../shared/js/j5_common.js";
@@ -81,6 +88,10 @@ const S = {
   robotState: "–",
   cmd: { enabled: false, target: [90, 90, 90, 90, 90, 90], busyUntil: 0 },
   follow: { active: false, lastSent: null, lastSentAt: 0, sentAny: false },
+  drag: {
+    enabled: false, active: false, handle: null, plane: null, offset: null,
+    rpy: [0, 0, 0], pending: null, inFlight: false, sentAt: 0, lastOk: true,
+  },
 };
 let lastTelem = 0;
 
@@ -187,7 +198,7 @@ function buildRobot(ghost = false) {
   }
 
   S.scene.add(root);
-  return { root, pivots };
+  return { root, pivots, tcp };
 }
 
 function disposeRobot(robot) {
@@ -199,6 +210,36 @@ function disposeRobot(robot) {
   });
 }
 
+function ensureHandle() {
+  if (S.drag.handle || !S.scene) return;
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(16, 24, 16),
+    new THREE.MeshStandardMaterial({ color: 0xffd84d, emissive: 0x6a5200, emissiveIntensity: 0.7,
+      transparent: true, opacity: 0.85, depthTest: false }));
+  m.renderOrder = 10;
+  m.visible = false;
+  S.scene.add(m);
+  S.drag.handle = m;
+}
+
+// Maniglia sulla punta del fantasma (quando non la si sta trascinando).
+function placeHandle() {
+  ensureHandle();
+  const hd = S.drag.handle;
+  if (!hd) return;
+  hd.visible = S.cmd.enabled && S.drag.enabled && Boolean(S.ghost);
+  if (!hd.visible || S.drag.active) return;
+  S.ghost.root.updateMatrixWorld(true);
+  S.ghost.tcp.getWorldPosition(hd.position);
+}
+
+function setHandleOk(ok) {
+  S.drag.lastOk = ok;
+  if (!S.drag.handle) return;
+  S.drag.handle.material.color.setHex(ok ? 0xffd84d : 0xff4d4d);
+  S.drag.handle.material.emissive.setHex(ok ? 0x6a5200 : 0x5a0000);
+}
+
 function rebuildRobots() {
   disposeRobot(S.real);
   disposeRobot(S.ghost);
@@ -207,6 +248,7 @@ function rebuildRobots() {
   S.ghost.root.visible = S.cmd.enabled;
   updateRobotPose(S.real, S.viz.jointAngles);
   updateRobotPose(S.ghost, S.cmd.target);
+  placeHandle();
 }
 
 // Lunghezze dai parametri POE (metri): assi di vite S (omega, v) e M.
@@ -270,9 +312,13 @@ function attachMouseOrbit(canvas) {
     S.camera.up.set(0, 0, 1);
     S.camera.lookAt(0, 0, 200);
   };
-  canvas.addEventListener("mousedown", (e) => { dragging = true; lx = e.clientX; ly = e.clientY; });
-  window.addEventListener("mouseup", () => { dragging = false; });
+  canvas.addEventListener("mousedown", (e) => {
+    if (tryStartHandleDrag(e, canvas)) return;
+    dragging = true; lx = e.clientX; ly = e.clientY;
+  });
+  window.addEventListener("mouseup", () => { dragging = false; endHandleDrag(); });
   window.addEventListener("mousemove", (e) => {
+    if (S.drag.active) { moveHandleDrag(e, canvas); return; }
     if (!dragging) return;
     const dx = e.clientX - lx, dy = e.clientY - ly;
     az -= dx * 0.008;
@@ -423,9 +469,14 @@ function buildCommandPanel() {
     document.getElementById("tw-cmd-body").hidden = !S.cmd.enabled;
     if (S.cmd.enabled) copyRealToTarget();
     if (S.ghost) S.ghost.root.visible = S.cmd.enabled;
+    placeHandle();
     refreshCommandState();
   });
   document.getElementById("tw-copy")?.addEventListener("click", copyRealToTarget);
+  document.getElementById("tw-drag-toggle")?.addEventListener("change", (e) => {
+    S.drag.enabled = e.target.checked;
+    placeHandle();
+  });
   document.getElementById("tw-home")?.addEventListener("click", () => {
     S.cmd.target = [90, 90, 90, 90, 90, 90];
     clampTarget(); refreshSliders(); onTargetChanged();
@@ -494,6 +545,7 @@ function durationMs() {
 
 function onTargetChanged() {
   updateRobotPose(S.ghost, S.cmd.target);
+  placeHandle();
   for (let i = 0; i < 6; i++) {
     const v = document.getElementById(`tw-sv-${i}`);
     if (v) v.textContent = `${(S.cmd.target[i] - 90).toFixed(1)}°`;
@@ -564,6 +616,91 @@ registerSetposeDoneHandler(() => {
     setCmdStatus("Arrivato (SETPOSE_DONE).");
     refreshCommandState();
   }
+});
+
+// --------------------------------------------------------------------------
+// Trascina l'utensile con IK (passo 3)
+// --------------------------------------------------------------------------
+const _ray = THREE ? new THREE.Raycaster() : null;
+
+function pointerRay(e, canvas) {
+  const r = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  _ray.setFromCamera(ndc, S.camera);
+  return _ray;
+}
+
+function tryStartHandleDrag(e, canvas) {
+  const hd = S.drag.handle;
+  if (!hd || !hd.visible) return false;
+  const ray = pointerRay(e, canvas);
+  if (ray.intersectObject(hd).length === 0) return false;
+  // Piano di trascinamento: passa per la maniglia, perpendicolare alla vista.
+  const n = new THREE.Vector3();
+  S.camera.getWorldDirection(n);
+  S.drag.plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, hd.position);
+  const hit = new THREE.Vector3();
+  ray.ray.intersectPlane(S.drag.plane, hit);
+  S.drag.offset = hd.position.clone().sub(hit);
+  // Orientamento dell'utensile tenuto fisso: quello del fantasma a inizio trascinamento.
+  S.ghost.root.updateMatrixWorld(true);
+  const q = new THREE.Quaternion();
+  S.ghost.tcp.getWorldQuaternion(q);
+  const eu = new THREE.Euler().setFromQuaternion(q, "ZYX");   // R = Rz(yaw) Ry(pitch) Rx(roll)
+  S.drag.rpy = [eu.x, eu.y, eu.z].map((a) => THREE.MathUtils.radToDeg(a));
+  S.drag.active = true;
+  setCmdStatus("Trascinamento: l'IK calcola i giunti (maniglia rossa = fuori portata).");
+  return true;
+}
+
+function moveHandleDrag(e, canvas) {
+  const ray = pointerRay(e, canvas);
+  const hit = new THREE.Vector3();
+  if (!ray.ray.intersectPlane(S.drag.plane, hit)) return;
+  hit.add(S.drag.offset);
+  S.drag.handle.position.copy(hit);
+  S.drag.pending = hit.clone();
+  requestIk();
+}
+
+function endHandleDrag() {
+  if (!S.drag.active) return;
+  S.drag.active = false;
+  S.drag.pending = null;
+  placeHandle();   // torna sulla punta dell'ultima posa valida
+  setHandleOk(true);
+}
+
+function requestIk() {
+  const now = performance.now();
+  // Una richiesta alla volta (sblocco dopo 1 s se la risposta non arriva).
+  if (S.drag.inFlight && now - S.drag.sentAt < 1000) return;
+  const p = S.drag.pending;
+  if (!p) return;
+  S.drag.pending = null;
+  S.drag.inFlight = true;
+  S.drag.sentAt = now;
+  const [roll, pitch, yaw] = S.drag.rpy;
+  const f = (v) => v.toFixed(2);
+  sendCommand("uart", { cmd: `IK_SOLVE ${f(p.x)} ${f(p.y)} ${f(p.z)} ${f(roll)} ${f(pitch)} ${f(yaw)}` });
+}
+
+const IK_ACCEPT_MM = 5.0;
+
+registerIkResultHandler((msg) => {
+  if (!S.drag.inFlight) return;
+  S.drag.inFlight = false;
+  const ang = Array.isArray(msg.angles_deg) ? msg.angles_deg.map(Number) : [];
+  const ok = Boolean(msg.reachable) && ang.length === 6 && ang.every(Number.isFinite)
+    && Number(msg.error_pos) <= IK_ACCEPT_MM;
+  setHandleOk(ok);
+  if (ok) {
+    S.cmd.target = ang;
+    clampTarget();
+    refreshSliders();
+    onTargetChanged();
+  }
+  if (S.drag.active) requestIk();   // posizione più recente, se nel frattempo è cambiata
 });
 
 // --------------------------------------------------------------------------

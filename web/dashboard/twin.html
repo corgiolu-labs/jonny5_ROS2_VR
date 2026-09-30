@@ -52,6 +52,7 @@
     .twin-cmd #tw-follow { border-color: #ffa84d; color: #ffa84d; font-weight: 600; touch-action: none; user-select: none; }
     .twin-cmd #tw-follow.on { background: #ffa84d; color: #1a0f00; }
     #tw-plan, #tw-cmd-status { font-size: 0.8rem; color: #9db1cc; }
+    .tw-drag { display: inline-block; margin: 0 0 0.7rem; font-size: 0.85rem; color: #ffd84d; }
   </style>
 </head>
 <body>
@@ -92,8 +93,11 @@
         poi «Esegui»: il robot ci va con una traiettoria lenta. Serve lo stato IDLE (ENABLE dalla dashboard).
         Tieni il fungo a portata di mano.<br />
         <b>Segui dal vivo:</b> tieni premuto <kbd>SPAZIO</kbd> (o il pulsante arancione) mentre muovi i cursori:
-        il robot insegue il fantasma (≤ 30°/s). Rilascia per fermarlo.
+        il robot insegue il fantasma (≤ 30°/s). Rilascia per fermarlo.<br />
+        <b>Trascina l'utensile:</b> con l'opzione attiva, trascina la maniglia gialla sulla punta del fantasma;
+        l'IK calcola i giunti (rossa = fuori portata). Ruota la vista per cambiare il piano di trascinamento.
       </p>
+      <label class="tw-drag"><input type="checkbox" id="tw-drag-toggle" /> Trascina l'utensile (IK)</label>
       <div id="tw-sliders"></div>
       <div class="row">
         <button id="tw-copy" type="button">Copia posa reale</button>
@@ -110,7 +114,7 @@
 
 <script src="../shared/js/vendor/three.min.js"></script>
 <script src="../shared/js/j5_config.js"></script>
-<script type="module" src="js/pages/twin.js?v=5"></script>
+<script type="module" src="js/pages/twin.js?v=6"></script>
 
 <!-- Navbar loader con highlight link attivo -->
 <script>

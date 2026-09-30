@@ -18,6 +18,7 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 from controller.web_services import poe_params_manager as _poe_mgr
+from controller.web_services import settings_manager as _settings_mgr
 from controller.web_services import runtime_config_paths as rcfg
 
 logger = logging.getLogger("ik_solver")
@@ -174,13 +175,32 @@ def _merge_limits(limits, mn, mx):
             mx[i] = hi
 
 
+def _physical_to_virtual_limits(mn, mx):
+    """routing_config limits are physical servo degrees; the solver works in
+    virtual degrees (HOME = 90). Convert with the settings offsets/dirs:
+    virtual = (physical - offset) * dir + 90 (dir = -1 swaps min and max)."""
+    try:
+        cfg = _settings_mgr.load()
+        offs = [float(v) for v in cfg.get("offsets", [90] * 6)]
+        dirs = [-1 if float(v) < 0 else 1 for v in cfg.get("dirs", [1] * 6)]
+    except Exception as e:
+        logger.warning("[IK] settings not available, joint limits used as virtual: %s", e)
+        return mn, mx
+    for i in range(6):
+        a = (mn[i] - offs[i]) * dirs[i] + 90.0
+        b = (mx[i] - offs[i]) * dirs[i] + 90.0
+        mn[i], mx[i] = min(a, b), max(a, b)
+    return mn, mx
+
+
 def _load_joint_limits():
+    """Joint limits for the solver, in virtual degrees."""
     mn = [JOINT_MIN_DEG] * 6
     mx = [JOINT_MAX_DEG] * 6
     try:
         cfg = rcfg.load_routing_config_strict()
         _merge_limits(cfg.get("limits"), mn, mx)
-        return mn, mx
+        return _physical_to_virtual_limits(mn, mx)
     except Exception:
         pass
     try:
@@ -189,7 +209,7 @@ def _load_joint_limits():
             _merge_limits(cfg.get("limits"), mn, mx)
     except Exception:
         pass
-    return mn, mx
+    return _physical_to_virtual_limits(mn, mx)
 
 
 def _bounds(joint_min=None, joint_max=None):
