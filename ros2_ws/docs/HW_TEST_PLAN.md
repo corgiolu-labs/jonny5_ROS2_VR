@@ -186,27 +186,36 @@ python3 raspberry/tools/j5_uart.py ENABLE   # arma lo streaming (sempre esplicit
 ## 8. Teleoperazione VR con MoveIt Servo
 
 ```bash
-ros2 launch jonny5_moveit_config servo.launch.py mock_hardware:=false
+sudo systemctl stop jonny5-ws-teleop      # la pagina VR usa il proxy /ws -> porta 8557
+ros2 launch jonny5_moveit_config servo.launch.py mock_hardware:=false vr_port:=8557
 python3 raspberry/tools/j5_uart.py ENABLE   # arma lo streaming (sempre esplicito)
 ```
 
-1. Porta il braccio in `ready` (fase 7, oppure un goal alla JTC). Da `home` Servo non si muove, perché quella posa è una singolarità.
-2. Collega il visore al bridge ROS 2 (porta 8567, vedi ADR-001).
-3. Con entrambi i grip premuti, stick a metà corsa:
+1. Porta il braccio in `ready` (fase 7, oppure un goal alla JTC).
+2. Apri sul visore la solita pagina VR: il suo `/ws` arriva al bridge ROS 2 sulla 8557.
+3. Con entrambi i grip premuti, stick a metà corsa (modalità `joint`, default):
 
 | Input | Movimento atteso |
 |---|---|
-| stick sinistro avanti | utensile avanti |
-| stick sinistro di lato | utensile di lato |
-| stick destro su/giù | utensile su/giù |
-| stick destro di lato | rotazione |
+| stick sinistro a destra / sinistra | base gira a destra / sinistra |
+| stick sinistro avanti / indietro | spalla in avanti / indietro |
+| stick destro su / giù | avambraccio su (l'utensile sale) / giù |
+| stick destro a destra / sinistra | polso yaw gira a destra / sinistra |
+
+La modalità cartesiana (`teleop_mode:=twist`) è sperimentale: su questo braccio è mal
+condizionata quasi ovunque (vedi MOVEIT.md).
 
 4. Rilascia un grip: il braccio si ferma entro 0,15 s.
 5. Chiudi il visore o spegni il Wi-Fi: il braccio si ferma.
 
 Da annotare:
 - se Servo si ferma troppo presto o troppo tardi vicino alle singolarità, vanno ritarate le soglie in `jonny5_moveit_config/config/servo.yaml` (ora 150/400);
-- se le velocità sono troppo alte o troppo basse, il parametro è `max_linear` del nodo `jonny5_intent_to_servo`.
+- se le velocità sono troppo alte o troppo basse, il parametro è `max_joint_vel` del nodo `jonny5_intent_to_servo` (`max_linear` in modalità `twist`).
+
+Esito del 30/09/2026, senza visore (messaggi del visore simulati da script sul bridge 8557):
+i quattro versi sono corretti, il rilascio di un grip ferma il braccio (1–3° di coda con la
+telemetria a gradi interi), il flusso interrotto lo ferma in circa 0,35 s. Resta da fare
+con il visore vero: sensazione, velocità, intuitività.
 
 **Superata se:** i movimenti sono intuitivi e il deadman funziona sempre.
 

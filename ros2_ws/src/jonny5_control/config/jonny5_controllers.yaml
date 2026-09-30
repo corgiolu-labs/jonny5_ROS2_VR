@@ -28,6 +28,10 @@ joint_trajectory_controller:
       - position
       - velocity
     allow_partial_joints_goal: true
+    # MoveIt Servo streams short trajectories whose last point is still moving.
+    # Jazzy rejects them by default: the arm then stood still while the stick was
+    # held and caught up with Servo's integrated pose after the deadman was released.
+    allow_nonzero_velocity_at_trajectory_end: true
     open_loop_control: false
     constraints:
       stopped_velocity_tolerance: 0.05

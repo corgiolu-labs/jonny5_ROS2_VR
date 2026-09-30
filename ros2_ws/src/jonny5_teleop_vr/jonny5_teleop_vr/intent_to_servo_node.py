@@ -1,8 +1,18 @@
-"""VR TeleopIntent -> MoveIt Servo twist (VR teleoperation on ros2_control).
+"""VR TeleopIntent -> MoveIt Servo (VR teleoperation on ros2_control).
 
-Sticks drive the tool in Cartesian space:
+command_mode "joint" (default): each stick axis drives one joint (Servo JOINT_JOG):
+  left stick  X (joy_x) -> base_joint       (stick right: base turns right)
+  left stick  Y (joy_y) -> shoulder_joint   (stick forward: shoulder forward)
+  right stick Y (pitch) -> elbow_joint      (stick up: forearm up, tool rises)
+  right stick X (yaw)   -> wrist_yaw_joint  (stick right: wrist turns right)
+  Mapping and signs are parameters (joint_axes, joint_signs).
+
+command_mode "twist" (experimental): sticks drive the tool in Cartesian space:
   left stick  (joy_y, joy_x) -> linear x (forward) / linear y (left)
   right stick (pitch, yaw)   -> linear z (up)      / angular z (turn left)
+  On JONNY5 this is ill-conditioned almost everywhere (60 mm between the
+  shoulder and elbow axes): Servo scales and bends the commanded direction and
+  joints move a lot for small tool motions. Hardware test, phase 8.
 
 Motion requires the deadman (both grips, buttons bit1), a non-IDLE mode and an
 intent younger than ``intent_timeout_s``. Otherwise nothing is published and
@@ -13,9 +23,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 import rclpy
+from control_msgs.msg import JointJog
 from geometry_msgs.msg import TwistStamped
 from jonny5_msgs.msg import TeleopIntent
 from moveit_msgs.srv import ServoCommandType
@@ -23,6 +34,9 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 GRIP_BIT = 1 << 1
+# Stick axes in TeleopIntent order (joy_x, joy_y, pitch, yaw) -> joint, sign.
+DEFAULT_JOINT_AXES = ["base_joint", "shoulder_joint", "elbow_joint", "wrist_yaw_joint"]
+DEFAULT_JOINT_SIGNS = [-1.0, 1.0, -1.0, -1.0]
 
 
 @dataclass
@@ -56,6 +70,16 @@ def intent_to_twist(msg: TeleopIntent, limits: TwistLimits) -> Optional[Tuple[fl
     return (vx, vy, vz, 0.0, 0.0, wz)
 
 
+def intent_to_joint_velocities(msg: TeleopIntent, signs: Sequence[float], max_vel: float,
+                               deadzone: float) -> Optional[Tuple[float, ...]]:
+    """Joint velocities (rad/s) for (joy_x, joy_y, pitch, yaw), or None when the
+    intent must not move the arm."""
+    if msg.mode == TeleopIntent.MODE_IDLE or not deadman_active(msg):
+        return None
+    axes = (msg.joy_x, msg.joy_y, msg.pitch, msg.yaw)
+    return tuple(float(s) * _axis(a, deadzone) * max_vel for a, s in zip(axes, signs))
+
+
 class IntentToServoNode(Node):
     def __init__(self) -> None:
         super().__init__("jonny5_intent_to_servo")
@@ -66,6 +90,10 @@ class IntentToServoNode(Node):
         self.declare_parameter("frame_id", "base_link")
         self.declare_parameter("rate_hz", 50.0)
         self.declare_parameter("servo_node", "/servo_node")
+        self.declare_parameter("command_mode", "joint")
+        self.declare_parameter("joint_axes", DEFAULT_JOINT_AXES)
+        self.declare_parameter("joint_signs", DEFAULT_JOINT_SIGNS)
+        self.declare_parameter("max_joint_vel", 0.35)   # rad/s at full stick
 
         self.limits = TwistLimits(
             float(self.get_parameter("max_linear").value),
@@ -79,9 +107,17 @@ class IntentToServoNode(Node):
         self._intent: Optional[TeleopIntent] = None
         self._intent_mono = 0.0
         self._was_moving = False
-        self._twist_mode_set = False
-
+        self.mode = str(self.get_parameter("command_mode").value).lower()
+        if self.mode not in ("joint", "twist"):
+            raise ValueError(f"command_mode must be 'joint' or 'twist', got {self.mode!r}")
+        self.joint_axes = list(self.get_parameter("joint_axes").value)
+        self.joint_signs = [float(v) for v in self.get_parameter("joint_signs").value]
+        if len(self.joint_axes) != 4 or len(self.joint_signs) != 4:
+            raise ValueError("joint_axes and joint_signs need 4 entries (joy_x, joy_y, pitch, yaw)")
+        self.max_joint_vel = float(self.get_parameter("max_joint_vel").value)
+        self._mode_set = False
         self.pub = self.create_publisher(TwistStamped, f"{servo}/delta_twist_cmds", 10)
+        self.jog_pub = self.create_publisher(JointJog, f"{servo}/delta_joint_cmds", 10)
         self.create_subscription(TeleopIntent, "jonny5/teleop/intent", self._on_intent, 10)
         self._switch_cli = self.create_client(ServoCommandType, f"{servo}/switch_command_type")
         rate = max(1.0, float(self.get_parameter("rate_hz").value))
@@ -93,10 +129,11 @@ class IntentToServoNode(Node):
         self._intent_mono = time.monotonic()
 
     def _ensure_twist_mode(self) -> None:
-        if self._twist_mode_set or not self._switch_cli.service_is_ready():
+        if self._mode_set or not self._switch_cli.service_is_ready():
             return
         req = ServoCommandType.Request()
-        req.command_type = ServoCommandType.Request.TWIST
+        req.command_type = (ServoCommandType.Request.JOINT_JOG if self.mode == "joint"
+                            else ServoCommandType.Request.TWIST)
         self._switch_cli.call_async(req).add_done_callback(self._on_switched)
 
     def _on_switched(self, future) -> None:
@@ -104,23 +141,38 @@ class IntentToServoNode(Node):
             ok = bool(future.result().success)
         except Exception:  # service went away: retry on the next timer tick
             ok = False
-        if ok and not self._twist_mode_set:
-            self.get_logger().info("MoveIt Servo switched to TWIST commands")
-        self._twist_mode_set = ok
+        if ok and not self._mode_set:
+            self.get_logger().info("MoveIt Servo switched to %s commands"
+                                   % ("JOINT_JOG" if self.mode == "joint" else "TWIST"))
+        self._mode_set = ok
 
     def _tick(self) -> None:
-        twist = None
+        cmd = None
         if self._intent is not None and (time.monotonic() - self._intent_mono) <= self.timeout:
-            twist = intent_to_twist(self._intent, self.limits)
-        if twist is None:
+            if self.mode == "joint":
+                cmd = intent_to_joint_velocities(self._intent, self.joint_signs,
+                                                 self.max_joint_vel, self.limits.deadzone)
+            else:
+                cmd = intent_to_twist(self._intent, self.limits)
+        if cmd is None:
             if self._was_moving:
-                # Deadman released / stream lost: one explicit zero twist so Servo
+                # Deadman released / stream lost: one explicit zero command so Servo
                 # starts decelerating now instead of after incoming_command_timeout.
-                self._publish((0.0,) * 6)
+                self._send((0.0,) * (4 if self.mode == "joint" else 6))
                 self._was_moving = False
             return
         self._was_moving = True
-        self._publish(twist)
+        self._send(cmd)
+
+    def _send(self, cmd: Tuple[float, ...]) -> None:
+        if self.mode == "joint":
+            msg = JointJog()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.joint_names = self.joint_axes
+            msg.velocities = list(cmd)
+            self.jog_pub.publish(msg)
+        else:
+            self._publish(cmd)
 
     def _publish(self, twist: Tuple[float, ...]) -> None:
         msg = TwistStamped()
