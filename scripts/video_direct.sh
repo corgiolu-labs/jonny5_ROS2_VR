@@ -1,6 +1,8 @@
 #!/bin/bash
 # JONNY5 — DIRECT video path for the headset: rpicam-vid -> RTP/UDP -> viewer, no MediaMTX.
 #
+# --low-latency: rpicam-apps libx264 low-latency preset. MEASURED 2026-10-13 (per-frame anchors, A16):
+# default encoder 104 ms ISP-out->display, --low-latency 48 ms, manual preset/tune opts 89 ms.
 # Same cameras, same software H.264 encoder and same profile as mediamtx_lowlatency.yml
 # (800x450 @ 120 fps, 3 Mbit/s, IDR every 20 frames, denoise off, continuous AF); the only
 # difference is the relay: MediaMTX is stopped and each camera is packetized by
@@ -98,7 +100,7 @@ start_cam() {
   # gets whole frames without waiting for a quiet gap.
   $STDBUF rpicam-vid --camera "$cam" -t 0 -n \
       --width "$W" --height "$H" --framerate "$FPS" \
-      --codec h264 --libav-format h264 --profile baseline --level 4.2 \
+      --codec h264 --libav-format h264 --profile baseline --level 4.2 --low-latency \
       --bitrate "$BITRATE" --intra "$INTRA" --inline --flush \
       --denoise off $MANUAL_ARGS ${SYNC_ARGS[$cam]:-} \
       ${CAM_EXTRA[$cam]:-} \

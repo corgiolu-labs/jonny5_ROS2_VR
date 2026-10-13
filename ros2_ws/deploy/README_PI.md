@@ -216,3 +216,24 @@ Do not touch the encoder options on this receiver: every CPU saving measured cos
 decoder of the A16 handles the multi-slice / custom-option streams worse). Re-check on the Quest 2 only
 if its decoder behaves differently. Packetizer: `rtp_push.c` (1 % CPU) replaced the Python one (20-25 %).
 Untested: `performance` governor + SCHED_FIFO for encoder/packetizer (the sudo/chrt test run aborted).
+
+### CORRECTION: encoder options re-measured with per-frame anchors (2026-10-13, late)
+
+The "Video start timestamp" anchor used above is biased per run (the first frame can sit tens of ms in
+the startup pipeline), so the table "Encoder options and CPU" is WRONG. Valid method: `rpicam-vid -v 2`
+prints one line per frame when it leaves libcamera; pipe stderr through `raspberry/tools/stamp_lines.py`
+to get a wall-clock per frame, then `jonny5-quest-viewer/tools/frame_latency2.py`. Same conditions
+(800x450 @ 120 fps, A16, 6 samples each), ISP-out -> display:
+
+| rpicam-vid encoder options | x264 CPU | latency |
+|----------------------------|----------|---------|
+| defaults | 70 % | 104 ms |
+| `--low-latency` | 63 % | **48 ms** |
+| `--libav-video-codec-opts preset=ultrafast;tune=zerolatency` | 56 % | 89 ms |
+| defaults + `performance` governor | 70 % | 104 ms (no change) |
+
+`video_direct.sh` now passes `--low-latency`. The rpicam-vid default encoder alone costs ~55 ms of
+latency (frame-level threading / lookahead in x264); the rpicam-apps low-latency preset removes it at
+the price of multi-slice frames (~590 pkt/s instead of 360), which the A16 decoder handles fine.
+Open point: MediaMTX's own rpiCamera encoder settings are unknown; its production path may carry the
+same penalty and should be measured with the app before choosing it for teleop.
