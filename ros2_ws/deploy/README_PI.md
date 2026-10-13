@@ -146,3 +146,19 @@ python3 raspberry/controller/web_services/stamped_h264_source.py 800 450 30 3M r
 
 Read the result from a phone screenshot with `jonny5-quest-viewer/tools/read_stamp.py` (block stamp = Pi
 epoch ms, phone clock drawn by the app; pass the Pi-minus-phone clock offset).
+
+Measured 2026-10-13 (Pi 5 + Galaxy A16 on the 5 GHz hotspot, 800x450, 4 samples each):
+
+| Path | capture -> display |
+|------|--------------------|
+| A: stamped source -> MediaMTX -> RTSP/UDP -> app | 59-70 ms |
+| B: stamped source -> rtp:// direct -> app | 62-75 ms |
+| C: `video_direct.sh` (rpicam-vid + rtp_push), production profile | 2x 120 fps, 3.1 Mbit/s, 0 packet loss (no stamp) |
+
+The relay is not where the latency is: A and B are equal within the +-5 ms clock-offset error. Open point
+for C: the app reports ~10 dropped frames/s with zero packet loss (bursty delivery from rtp_push's
+coalescing hitting the decoder backlog policy); the MediaMTX path shows ~4 drops in total.
+
+Phone notes: Android treats the hotspot as "no internet" and routes app sockets to mobile data, so the
+app binds itself to the Wi-Fi network (`CHANGE_NETWORK_STATE`). Join from adb:
+`adb shell cmd wifi connect-network JONNY5_HOTSPOT wpa2 <psk>`.
