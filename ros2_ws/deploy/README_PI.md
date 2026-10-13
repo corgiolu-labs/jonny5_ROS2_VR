@@ -203,3 +203,16 @@ independent loops, `ROI=x,y,w,h` for an identical crop). Verified on the A16: be
 visibly brighter and warmer; after, both eyes match. Example of a converged set indoors at night:
 `--shutter 7882 --gain 16.000 --awbgains 1.426,2.724 --lens-position 3.39` (shutter and gain at the
 120 fps maximum: low light costs noise, not latency).
+
+### Encoder options and CPU (rpicam-vid, 800x450 @ 120 fps, measured 2026-10-13)
+
+| rpicam-vid encoder options | x264 CPU (one core) | capture -> display (A16, frame-counter method) |
+|----------------------------|---------------------|------------------------------------------------|
+| defaults (what video_direct.sh uses) | 70 % | 50 ms |
+| `--low-latency` (rpicam-apps libx264 low-latency preset, multi-slice: 590 pkt/s) | 63 % | 61 ms |
+| `--libav-video-codec-opts preset=ultrafast;tune=zerolatency` (replaces the internal defaults) | 56 % | 105 ms |
+
+Do not touch the encoder options on this receiver: every CPU saving measured cost latency (the MediaTek
+decoder of the A16 handles the multi-slice / custom-option streams worse). Re-check on the Quest 2 only
+if its decoder behaves differently. Packetizer: `rtp_push.c` (1 % CPU) replaced the Python one (20-25 %).
+Untested: `performance` governor + SCHED_FIFO for encoder/packetizer (the sudo/chrt test run aborted).
