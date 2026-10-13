@@ -71,6 +71,12 @@ if [ "$SYNC" = "1" ]; then SYNC_ARGS[0]="--sync server"; SYNC_ARGS[1]="--sync cl
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PUSH="$REPO_ROOT/raspberry/tools/rtp_push.py"
 [ -f "$PUSH" ] || { echo "ERR: $PUSH not found" >&2; exit 1; }
+# C packetizer (same behaviour, ~10x less CPU): built on demand from rtp_push.c, python fallback.
+PUSH_BIN="$REPO_ROOT/raspberry/tools/rtp_push"
+if [ -f "$REPO_ROOT/raspberry/tools/rtp_push.c" ] && { [ ! -x "$PUSH_BIN" ] || [ "$REPO_ROOT/raspberry/tools/rtp_push.c" -nt "$PUSH_BIN" ]; }; then
+  gcc -O2 -o "$PUSH_BIN" "$REPO_ROOT/raspberry/tools/rtp_push.c" 2>/tmp/rtp_push_build.log || echo "WARN: rtp_push.c build failed (see /tmp/rtp_push_build.log), using python"
+fi
+if [ -x "$PUSH_BIN" ]; then PUSH_CMD=("$PUSH_BIN"); else PUSH_CMD=(python3 "$PUSH"); fi
 command -v rpicam-vid >/dev/null || { echo "ERR: rpicam-vid not found" >&2; exit 1; }
 STDBUF=""; command -v stdbuf >/dev/null && STDBUF="stdbuf -o0"
 
@@ -78,7 +84,7 @@ PIDS=()
 cleanup() {
   echo "video_direct: stopping cameras, restoring jonny5-mediamtx"
   for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done
-  pkill -f "rtp_push.py --host $VIEWER_IP" 2>/dev/null
+  pkill -f "rtp_push(.py)? --host $VIEWER_IP" 2>/dev/null
   sleep 1
   sudo -n systemctl start jonny5-mediamtx 2>/dev/null || true
 }
@@ -97,7 +103,7 @@ start_cam() {
       --denoise off $MANUAL_ARGS ${SYNC_ARGS[$cam]:-} \
       ${CAM_EXTRA[$cam]:-} \
       -o - 2>"/tmp/video_direct_cam$cam.log" \
-    | python3 "$PUSH" --host "$VIEWER_IP" --port "$port" &
+    | "${PUSH_CMD[@]}" --host "$VIEWER_IP" --port "$port" &
   PIDS+=($!)
   echo "cam$cam -> udp://$VIEWER_IP:$port  (${W}x${H} @ ${FPS} fps, $BITRATE bit/s, IDR every $INTRA)"
 }
