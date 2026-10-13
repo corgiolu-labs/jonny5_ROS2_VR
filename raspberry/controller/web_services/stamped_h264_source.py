@@ -64,7 +64,7 @@ def main():
     if url.startswith("rtp://"):
         out_args = ["-f", "rtp", "-payload_type", "96", url]           # diretto al viewer, no server
     else:
-        out_args = ["-f", "rtsp", "-rtsp_transport", "tcp", url]       # publish su MediaMTX
+        out_args = ["-f", "rtsp", "-rtsp_transport", "udp", url]       # publish su MediaMTX (rtspTransports: [udp])
 
     _picam = Picamera2()
     cfg = _picam.create_video_configuration(

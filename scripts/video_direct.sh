@@ -40,7 +40,7 @@ start_cam() {
   # --inline: SPS/PPS before every IDR; --flush: one write per frame (rtp_push relies on it)
   rpicam-vid --camera "$cam" -t 0 -n \
       --width "$W" --height "$H" --framerate "$FPS" \
-      --codec h264 --profile baseline --level 4.2 \
+      --codec h264 --libav-format h264 --profile baseline --level 4.2 \
       --bitrate "$BITRATE" --intra "$INTRA" --inline --flush \
       --denoise off --autofocus-mode continuous --autofocus-range normal \
       -o - 2>"/tmp/video_direct_cam$cam.log" \
