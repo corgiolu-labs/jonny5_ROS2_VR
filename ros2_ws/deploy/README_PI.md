@@ -237,3 +237,22 @@ latency (frame-level threading / lookahead in x264); the rpicam-apps low-latency
 the price of multi-slice frames (~590 pkt/s instead of 360), which the A16 decoder handles fine.
 Open point: MediaMTX's own rpiCamera encoder settings are unknown; its production path may carry the
 same penalty and should be measured with the app before choosing it for teleop.
+
+### True glass-to-glass, scene clock method (2026-10-13, late)
+
+cam0 films the PC monitor (240 Hz) showing the PC time in 10 ms units; the phone clock row gives the
+display time. Includes sensor exposure/readout, ISP and the monitor's own latency (a constant bias,
+identical for every leg). 800x450 @ 120 fps, A16, 6 samples, scene -> display:
+
+| Path | samples (ms) | median |
+|------|--------------|--------|
+| direct, rpicam-vid `--low-latency` + rtp_push | 96 90 98 80 91 94 | 92 |
+| direct, rpicam-vid default encoder | 158 155 153 164 152 156 | 155 |
+| MediaMTX production (rpiCamera source, lowlatency profile) | 93 96 178 89 94 93 | 94 |
+
+MediaMTX's built-in encoder is as fast as rpicam-vid `--low-latency`: the relay really costs nothing,
+and the 55 ms penalty of rpicam-vid's default x264 setup is confirmed by an independent method.
+The direct path therefore buys frame sync and matched exposure, not latency. Monitor + sensor bias
+~45 ms: the Pi-side numbers "ISP-out -> display 48 ms" and "scene -> display 92 ms" are consistent.
+Also learned: the two "Pi blackouts" of the evening were the PC's Ethernet link dropping (Pi stayed
+up on the hotspot), not the Pi.
