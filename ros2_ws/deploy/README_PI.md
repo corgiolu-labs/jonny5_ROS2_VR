@@ -173,3 +173,19 @@ stamped picamera2 pipeline (43-53 ms over runs). Add exposure + readout + ISP (~
 7.9 ms at 120 fps) for true sensor-to-display: about 60 ms on the A16. Recipe:
 `rpicam-vid ... -v 2 --post-process-file /tmp/annotate.json -o /tmp/cam0.fifo` with
 `python3 raspberry/tools/rtp_push.py ... < /tmp/cam0.fifo`, phone clock via `read_stamp.py --phone-only`.
+
+### Browser vs native app, same phone, same source (2026-10-13)
+
+Stamped source 800x450 @ 120 fps on the g2g MediaMTX; Galaxy A16 on the 5 GHz / 80 MHz hotspot;
+same decoding method (`read_stamp.py`, phone clock drawn as a block row by both the app and the test
+page `jonny5-quest-viewer/tools/g2g_browser.html`). Capture -> display, 6 samples each:
+
+| Receiver | samples (ms) | median |
+|----------|--------------|--------|
+| Chrome, WebRTC/WHEP like the original viewer (default jitter buffer, Chrome reported jb 11 ms) | 93 78 74 77 77 72 | 77 |
+| Chrome, WebRTC with playoutDelayHint = 0 | 78 67 68 77 77 80 | 77 |
+| Native app, RTSP/RTP UDP, MediaCodec low latency | 64 52 52 47 50 47 | 51 |
+
+The native app is ~25 ms faster than the browser on the same device; the browser's jitter buffer is
+only part of it (11 ms), the rest is Chrome's video/compositor path. Note: Chrome needs mobile data
+off on the A16 to reach the hotspot (no-internet network); the app binds itself to Wi-Fi.
