@@ -74,12 +74,20 @@ def main():
     _picam.configure(cfg)
     _picam.start()
 
+    # Encoder knobs for latency sweeps (env): STAMP_GOP (default 30), STAMP_X264 (x264-params string,
+    # e.g. "intra-refresh=1:sliced-threads=1"), STAMP_PRESET (default ultrafast).
+    import os as _os
+    gop = _os.environ.get("STAMP_GOP", "30")
+    preset = _os.environ.get("STAMP_PRESET", "ultrafast")
+    x264 = _os.environ.get("STAMP_X264", "")
+    enc = ["-c:v", "libx264", "-preset", preset, "-tune", "zerolatency",
+           "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", "200k", "-pix_fmt", "yuv420p", "-g", gop]
+    if x264:
+        enc += ["-x264-params", x264]
     _ff = subprocess.Popen(
         ["ffmpeg", "-hide_banner", "-loglevel", "error",
          "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}", "-r", str(int(FPS)), "-i", "-",
-         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-         "-b:v", bitrate, "-pix_fmt", "yuv420p", "-g", "30",
-         *out_args],
+         *enc, *out_args],
         stdin=subprocess.PIPE,
     )
     signal.signal(signal.SIGTERM, _cleanup)

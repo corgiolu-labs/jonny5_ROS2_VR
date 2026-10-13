@@ -15,6 +15,9 @@ set -u
 VIEWER_IP="${1:?viewer ip required (the headset / phone)}"
 W="${2:-800}"; H="${3:-450}"; FPS="${4:-120}"; BITRATE="${5:-3000000}"
 INTRA="${INTRA:-20}"
+# Optional per-camera extra rpicam-vid args (latency measurement: frame-number overlay + metadata):
+#   CAM0_EXTRA="--post-process-file /tmp/annotate.json --metadata /tmp/meta_cam0.json"
+declare -A CAM_EXTRA=([0]="${CAM0_EXTRA:-}" [1]="${CAM1_EXTRA:-}")
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PUSH="$REPO_ROOT/raspberry/tools/rtp_push.py"
 [ -f "$PUSH" ] || { echo "ERR: $PUSH not found" >&2; exit 1; }
@@ -46,6 +49,7 @@ start_cam() {
       --codec h264 --libav-format h264 --profile baseline --level 4.2 \
       --bitrate "$BITRATE" --intra "$INTRA" --inline --flush \
       --denoise off --autofocus-mode continuous --autofocus-range normal \
+      ${CAM_EXTRA[$cam]:-} \
       -o - 2>"/tmp/video_direct_cam$cam.log" \
     | python3 "$PUSH" --host "$VIEWER_IP" --port "$port" &
   PIDS+=($!)
