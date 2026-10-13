@@ -93,12 +93,26 @@ def main():
     signal.signal(signal.SIGTERM, _cleanup)
     signal.signal(signal.SIGINT, _cleanup)
 
+    # STAMP_SENSOR=1: stamp the libcamera SensorTimestamp (start of sensor readout, CLOCK_BOOTTIME)
+    # converted to wall time, instead of the capture-callback time. The difference between the two
+    # modes is the sensor+ISP+queue delay, identical for rpicam-vid (same libcamera stack).
+    use_sensor = _os.environ.get("STAMP_SENSOR", "0") == "1"
+    boot_epoch = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
     try:
         while True:
-            arr = _picam.capture_array("main")
+            if use_sensor:
+                req = _picam.capture_request()
+                arr = req.make_array("main")
+                sensor_ns = req.get_metadata().get("SensorTimestamp")
+                req.release()
+                if sensor_ns is None:
+                    continue
+                ts = round((boot_epoch + sensor_ns / 1e9) * 1000) & 0xFFFFFF
+            else:
+                arr = _picam.capture_array("main")
+                ts = round(time.time() * 1000) & 0xFFFFFF
             if arr is None or arr.ndim != 3 or arr.shape[1] < (BITS + GUARD) * BS:
                 continue
-            ts = round(time.time() * 1000) & 0xFFFFFF
             _draw_stamp(arr, ts)
             try:
                 _ff.stdin.write(np.ascontiguousarray(arr).tobytes())
