@@ -8,7 +8,10 @@ encoder H264 HW, quindi anche MediaMTX usa software: libx264 è rappresentativo)
 **pubblica in RTSP** su una path MediaMTX di test (cam_g2g), che MediaMTX serve in
 WebRTC/WHEP. Il browser legge il timbro dai frame del <video> e calcola la latenza.
 
-Uso: python3 stamped_h264_source.py WIDTH HEIGHT FPS [BITRATE] [RTSP_URL]
+Uso: python3 stamped_h264_source.py WIDTH HEIGHT FPS [BITRATE] [URL]
+  URL rtsp://...  -> publish su MediaMTX (default rtsp://127.0.0.1:8554/cam_g2g)
+  URL rtp://IP:P  -> RTP/UDP diretto al viewer (jonny5-quest-viewer in modo udp), senza MediaMTX:
+                     stessa cattura e stesso encoder, cambia solo il relay -> A/B pulito sulla latenza.
 """
 import signal
 import subprocess
@@ -57,7 +60,11 @@ def main():
     global _picam, _ff
     W = int(sys.argv[1]); H = int(sys.argv[2]); FPS = float(sys.argv[3])
     bitrate = sys.argv[4] if len(sys.argv) > 4 else "3M"
-    rtsp = sys.argv[5] if len(sys.argv) > 5 else "rtsp://127.0.0.1:8554/cam_g2g"
+    url = sys.argv[5] if len(sys.argv) > 5 else "rtsp://127.0.0.1:8554/cam_g2g"
+    if url.startswith("rtp://"):
+        out_args = ["-f", "rtp", "-payload_type", "96", url]           # diretto al viewer, no server
+    else:
+        out_args = ["-f", "rtsp", "-rtsp_transport", "tcp", url]       # publish su MediaMTX
 
     _picam = Picamera2()
     cfg = _picam.create_video_configuration(
@@ -72,7 +79,7 @@ def main():
          "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}", "-r", str(int(FPS)), "-i", "-",
          "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
          "-b:v", bitrate, "-pix_fmt", "yuv420p", "-g", "30",
-         "-f", "rtsp", "-rtsp_transport", "tcp", rtsp],
+         *out_args],
         stdin=subprocess.PIPE,
     )
     signal.signal(signal.SIGTERM, _cleanup)

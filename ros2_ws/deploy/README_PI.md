@@ -28,7 +28,7 @@ through host networking (DDS + the VR WebSocket on 8567). The STM32 firmware and
 ```bash
 git clone <repo> ~/JONNY5_ROS2          # must contain ros2_ws/ and raspberry/
 cd ~/JONNY5_ROS2/ros2_ws/deploy
-bash host_setup_pi.sh                    # enables SPI + cameras + UART, installs Docker
+J5_HOTSPOT_PSK='choose-a-password' bash host_setup_pi.sh   # SPI + cameras + UART, eth0 profiles, wlan0 hotspot, Docker
 sudo reboot
 ```
 
@@ -39,7 +39,34 @@ ls -l /dev/spidev0.0          # SPI device present
 rpicam-hello --list-cameras   # 2x imx708
 ls -l /dev/serial0            # STM32 UART -> ttyAMA0
 groups | grep docker          # docker group active
+nmcli -f NAME,DEVICE,STATE con show --active   # jonny5-hotspot on wlan0
+iw dev wlan0 info             # type AP, 5 GHz channel 36
 ```
+
+### Network layout
+
+| Interface | Address | Peer | Traffic |
+|-----------|---------|------|---------|
+| `wlan0` hotspot `JONNY5` (5 GHz, power save off) | `10.42.0.1/24` | headset / phone viewer app, only client | RTSP 8554 (native app), HTTPS 443 + WHEP (web viewer), ws-teleop 8557, captive portal 80 |
+| `eth0` | `192.168.137.221` on the ICS bench, DHCP at home (autoswitch) | PC | dashboard, SSH, deploy, RViz / DDS |
+
+The headset talks to the robot over a single radio hop; the home router is never in the video path.
+The link is firewalled (`j5-wlan0.nft`, loaded by `j5-wlan0-firewall.service`) so that it carries
+**only video Pi → headset and commands headset → Pi**:
+
+| Allowed on wlan0 | Purpose |
+|------------------|---------|
+| TCP 8554, UDP 8000-8001 | RTSP session (UDP transport only, MediaMTX `rtspTransports: [udp]`) + RTCP; RTP video flows Pi → headset |
+| TCP 8557 | ws-teleop WebSocket: commands in, telemetry back on the same socket |
+| TCP 80/443, UDP 53/8189 | legacy WebXR viewer + captive portal; WebRTC media UDP only (dropped with `J5_WLAN_ALLOW_WEB=0`) |
+| UDP 67, ICMP | DHCP lease and ping |
+
+Everything else is dropped (SSH, ROS 2 DDS, Docker, MediaMTX on other ports) and **no traffic is
+forwarded** between wlan0 and eth0: the headset gets no internet through the robot and cannot reach the
+PC LAN. The headset will report "no internet" on this network: accept "stay connected" once.
+Hotspot SSID / password / channel can be overridden with `J5_HOTSPOT_SSID`, `J5_HOTSPOT_PSK`,
+`J5_HOTSPOT_CHANNEL` when running the setup script. Inspect the live rules with
+`sudo nft list table inet j5wlan` (the `counter drop` lines show what was blocked).
 
 ## 2. Build the image and the workspace
 
@@ -98,3 +125,24 @@ sudo systemctl enable --now jonny5-ros2
   (`JONNY5_LEGACY_ROOT`, set in the compose file). No `/dev/shm` IPC is used.
 - FSM state fields (`deadman`, mode echo, `diag_mask`) come from STATUS (0x03) frames and
   are wired in a follow-up (telemetry task); 0x01 telemetry (IMU + servo) is complete.
+
+### Direct video path (A/B against MediaMTX)
+
+`scripts/video_direct.sh <viewer-ip>` stops `jonny5-mediamtx` and runs the two cameras through
+`rpicam-vid --inline --flush -o - | raspberry/tools/rtp_push.py`, i.e. RTP/UDP pushed straight to the
+viewer (ports 5000 / 5002), same lowlatency profile, no server in the loop. The viewer app must be in
+`udp` mode (host field = `udp`). Ctrl+C restores MediaMTX. On the hotspot the viewer is the only DHCP
+client, so its address is stable (check with `nmcli -f IP4 dev show wlan0` / dnsmasq leases).
+
+Clean latency A/B with the stamped source (same capture + encoder, only the relay changes):
+
+```bash
+# A: via MediaMTX (publish cam_g2g, app reads rtsp://<pi>:8554/cam_g2g)
+sudo systemctl stop jonny5-mediamtx; ~/mediamtx raspberry/config_runtime/video/mediamtx_g2g.yml &
+python3 raspberry/controller/web_services/stamped_h264_source.py 800 450 30 3M rtsp://127.0.0.1:8554/cam_g2g
+# B: direct (app in udp mode, viewer at 10.42.0.10)
+python3 raspberry/controller/web_services/stamped_h264_source.py 800 450 30 3M rtp://10.42.0.10:5000
+```
+
+Read the result from a phone screenshot with `jonny5-quest-viewer/tools/read_stamp.py` (block stamp = Pi
+epoch ms, phone clock drawn by the app; pass the Pi-minus-phone clock offset).

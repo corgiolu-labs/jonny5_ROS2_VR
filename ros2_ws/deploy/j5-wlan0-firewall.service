@@ -1,0 +1,13 @@
+[Unit]
+Description=JONNY5 wlan0 hotspot firewall (video out, commands in, nothing else)
+After=network-pre.target NetworkManager.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/j5-wlan0.nft
+ExecStop=/usr/sbin/nft delete table inet j5wlan
+
+[Install]
+WantedBy=multi-user.target

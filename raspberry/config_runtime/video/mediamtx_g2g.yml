@@ -13,7 +13,9 @@ rtspAddress: :8554
 webrtc: yes
 webrtcAddress: :8889
 webrtcEncryption: no
-webrtcLocalTCPAddress: ":8189"
+webrtcLocalUDPAddress: ":8189"
+# Video is UDP-only: no RTSP interleaved-TCP sessions, no WebRTC ICE-TCP fallback.
+rtspTransports: [udp]
 webrtcHandshakeTimeout: 5s
 webrtcTrackGatherTimeout: 2s
 
