@@ -162,3 +162,14 @@ coalescing hitting the decoder backlog policy); the MediaMTX path shows ~4 drops
 Phone notes: Android treats the hotspot as "no internet" and routes app sockets to mobile data, so the
 app binds itself to the Wi-Fi network (`CHANGE_NETWORK_STATE`). Join from adb:
 `adb shell cmd wifi connect-network JONNY5_HOTSPOT wpa2 <psk>`.
+
+**Production path measured (2026-10-13, rpicam-vid + rtp_push, 800x450 @ 120 fps, one eye, A16):**
+`--metadata` and `--save-pts` do not work with the libav (software) encoder (empty file / "incompatible
+options"), but `-v 2` prints `Video start timestamp : <epoch us>` for the first encoded frame and the
+sensor period is exactly FrameDuration (8324 us at 120 fps), so with the frame number burned in by
+annotate_cv (`%frame`) the capture time of frame F is start + F * 8.324 ms. Six screenshots:
+53 / 50 / 50 / 51 / 49 / 58 ms (median 50.5) from first-frame-at-encoder to display, the same as the
+stamped picamera2 pipeline (43-53 ms over runs). Add exposure + readout + ISP (~10 ms; exposure is
+7.9 ms at 120 fps) for true sensor-to-display: about 60 ms on the A16. Recipe:
+`rpicam-vid ... -v 2 --post-process-file /tmp/annotate.json -o /tmp/cam0.fifo` with
+`python3 raspberry/tools/rtp_push.py ... < /tmp/cam0.fifo`, phone clock via `read_stamp.py --phone-only`.
