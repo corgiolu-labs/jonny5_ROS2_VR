@@ -247,7 +247,7 @@ identical for every leg). 800x450 @ 120 fps, A16, 6 samples, scene -> display:
 | Path | samples (ms) | median |
 |------|--------------|--------|
 | direct, rpicam-vid `--low-latency` + rtp_push | 96 90 98 80 91 94 | 92 |
-| direct, rpicam-vid default encoder | 158 155 153 164 152 156 | 155 |
+| direct, rpicam-vid default encoder | 143 149 155 149 152 156 | 150 |
 | MediaMTX production (rpiCamera source, lowlatency profile) | 93 96 178 89 94 93 | 94 |
 
 MediaMTX's built-in encoder is as fast as rpicam-vid `--low-latency`: the relay really costs nothing,
