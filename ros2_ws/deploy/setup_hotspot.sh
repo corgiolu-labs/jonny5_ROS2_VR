@@ -18,7 +18,7 @@ fi
 echo "Configuring wlan0 as the headset hotspot (5 GHz, 10.42.0.1)..."
 # The headset (Quest / Android viewer app) connects straight to the robot: one radio hop,
 # no home router in the path. eth0 stays the PC/dashboard/SSH side.
-# Latency-relevant choices: 5 GHz non-DFS channel 36 (legal in IT with the country code set),
+# Latency-relevant choices: 5 GHz non-DFS channel 36 (legal in IT with the country code set), 80 MHz width,
 # Wi-Fi power save OFF on the Pi (wifi.powersave 2), WPA2 only, IPv6 off.
 # NetworkManager "shared" mode runs dnsmasq on 10.42.0.1 (DHCP + DNS for the client) and NATs
 # towards eth0; the captive-portal dnsmasq snippet makes Quest/Android connectivity probes land
@@ -32,7 +32,7 @@ sudo raspi-config nonint do_wifi_country IT 2>/dev/null || sudo iw reg set IT ||
 sudo rfkill unblock wlan 2>/dev/null || true
 sudo nmcli con delete "jonny5-hotspot" 2>/dev/null || true
 sudo nmcli con add type wifi ifname wlan0 con-name "jonny5-hotspot" ssid "$HOTSPOT_SSID" \
-  wifi.mode ap wifi.band a wifi.channel "$HOTSPOT_CHANNEL" wifi.powersave 2 \
+  wifi.mode ap wifi.band a wifi.channel "$HOTSPOT_CHANNEL" wifi.channel-width 80mhz wifi.powersave 2 \
   wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pairwise ccmp wifi-sec.psk "$HOTSPOT_PSK" \
   ipv4.method shared ipv4.addresses "10.42.0.1/24" ipv6.method disabled \
   connection.autoconnect yes connection.autoconnect-priority 100
