@@ -26,7 +26,8 @@ import struct
 import sys
 import time
 
-COALESCE_S = 0.0015          # quiet time that closes a frame read from the pipe
+COALESCE_S = 0.0004          # quiet time that closes a frame read from the pipe (writer uses stdbuf -o0:
+                             # one write per frame, so this only catches the rare split write)
 MAX_COALESCE_ROUNDS = 8
 F_SETPIPE_SZ = 1031          # Linux fcntl: enlarge the stdin pipe so a frame never blocks the writer
 
@@ -127,6 +128,7 @@ def main():
     sps = pps = None
     frames = 0
     splits = 0
+    tails = 0
     t_stats = time.monotonic()
     pending_nonvcl = []   # SPS/PPS/SEI seen before the next slice
 
@@ -154,6 +156,8 @@ def main():
             data += more
             rounds += 1
 
+        if not (data.startswith(b"\x00\x00\x01") or data.startswith(b"\x00\x00\x00\x01")):
+            tails += 1   # continuation of a NAL already sent: previous frame went out truncated
         au = list(pending_nonvcl)
         pending_nonvcl = []
         au_has_slice = any((n[0] & 0x1F) in (1, 5) for n in au)
@@ -178,8 +182,8 @@ def main():
 
         if a.stats and time.monotonic() - t_stats >= a.stats:
             dt = time.monotonic() - t_stats
-            sys.stderr.write("rtp_push %s:%d  %.1f fps  %d pkt/s  %.0f kbit/s  au-splits %d\n" % (
-                a.host, a.port, frames / dt, sender.packets / dt, sender.bytes * 8 / dt / 1000, splits))
+            sys.stderr.write("rtp_push %s:%d  %.1f fps  %d pkt/s  %.0f kbit/s  au-splits %d  split-tails %d\n" % (
+                a.host, a.port, frames / dt, sender.packets / dt, sender.bytes * 8 / dt / 1000, splits, tails))
             sys.stderr.flush()
             frames = 0
             sender.packets = 0

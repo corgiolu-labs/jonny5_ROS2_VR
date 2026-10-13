@@ -19,6 +19,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PUSH="$REPO_ROOT/raspberry/tools/rtp_push.py"
 [ -f "$PUSH" ] || { echo "ERR: $PUSH not found" >&2; exit 1; }
 command -v rpicam-vid >/dev/null || { echo "ERR: rpicam-vid not found" >&2; exit 1; }
+STDBUF=""; command -v stdbuf >/dev/null && STDBUF="stdbuf -o0"
 
 PIDS=()
 cleanup() {
@@ -38,7 +39,9 @@ sleep 1
 start_cam() {
   local cam="$1" port="$2"
   # --inline: SPS/PPS before every IDR; --flush: one write per frame (rtp_push relies on it)
-  rpicam-vid --camera "$cam" -t 0 -n \
+  # stdbuf -o0: one write() per encoded frame on the pipe (no stdio 8 KB chunking), so rtp_push
+  # gets whole frames without waiting for a quiet gap.
+  $STDBUF rpicam-vid --camera "$cam" -t 0 -n \
       --width "$W" --height "$H" --framerate "$FPS" \
       --codec h264 --libav-format h264 --profile baseline --level 4.2 \
       --bitrate "$BITRATE" --intra "$INTRA" --inline --flush \
