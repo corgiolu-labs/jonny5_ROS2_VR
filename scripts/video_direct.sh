@@ -18,6 +18,56 @@ INTRA="${INTRA:-20}"
 # Optional per-camera extra rpicam-vid args (latency measurement: frame-number overlay + metadata):
 #   CAM0_EXTRA="--post-process-file /tmp/annotate.json --metadata /tmp/meta_cam0.json"
 declare -A CAM_EXTRA=([0]="${CAM0_EXTRA:-}" [1]="${CAM1_EXTRA:-}")
+
+# MediaMTX owns the CSI cameras while it runs.
+sudo -n systemctl stop jonny5-mediamtx 2>/dev/null || true
+pkill -f "mediamtx.*mediamtx" 2>/dev/null || true
+sleep 1
+
+# Stereo consistency (note: rpicam-vid writes --metadata entries only together with --save-pts and a file output):
+#   SYNC=1 (default)  libcamera frame sync: cam0 = server, cam1 = client (exposures aligned to ~us).
+#   MATCH=cam0 (default) probe cam0 in auto mode for a few seconds, then run BOTH cameras with the
+#                     converged exposure / gain / AWB gains / lens position as fixed manual values.
+#   MATCH=manual      use SHUTTER (us) GAIN AWBGAINS ("r,b") LENSPOS (dioptres) from the environment.
+#   MATCH=auto        leave every camera on its own auto loops (old behaviour).
+#   ROI="x,y,w,h"     identical sensor crop (zoom) on both cameras, fractions 0..1.
+SYNC="${SYNC:-1}"
+MATCH="${MATCH:-cam0}"
+PROBE_S="${PROBE_S:-4}"
+MANUAL_ARGS=""
+case "$MATCH" in
+  cam0)
+    echo "probing cam0 auto exposure / AWB / AF for ${PROBE_S}s..."
+    rm -f /tmp/probe_cam0.json
+    rpicam-vid --camera 0 -t "$((PROBE_S * 1000))" -n --width "$W" --height "$H" --framerate "$FPS" \
+        --codec h264 --libav-format h264 --bitrate 1000000 --denoise off \
+        --autofocus-mode continuous --autofocus-range normal \
+        --metadata /tmp/probe_cam0.json --save-pts /tmp/probe_cam0_pts.txt -o /tmp/probe_cam0.h264 2>/dev/null
+    MANUAL_ARGS="$(python3 - <<'PY'
+import json
+raw = open("/tmp/probe_cam0.json").read().strip()
+if not raw.endswith("]"):
+    raw = raw.rstrip(",") + "]"
+entries = json.loads(raw)
+e = entries[-1]
+cg = e.get("ColourGains", [1.0, 1.0])
+print("--shutter %d --gain %.3f --awbgains %.3f,%.3f --autofocus-mode manual --lens-position %.2f" % (
+    int(e["ExposureTime"]), float(e["AnalogueGain"]) * float(e.get("DigitalGain", 1.0)), cg[0], cg[1],
+    float(e.get("LensPosition", 1.0))))
+PY
+)"
+    echo "cam0 converged to: $MANUAL_ARGS"
+    ;;
+  manual)
+    MANUAL_ARGS="--shutter ${SHUTTER:?} --gain ${GAIN:?} --awbgains ${AWBGAINS:?} --autofocus-mode manual --lens-position ${LENSPOS:?}"
+    ;;
+  auto)
+    MANUAL_ARGS="--autofocus-mode continuous --autofocus-range normal"
+    ;;
+esac
+[ -n "${ROI:-}" ] && MANUAL_ARGS="$MANUAL_ARGS --roi $ROI"
+declare -A SYNC_ARGS=([0]="" [1]="")
+if [ "$SYNC" = "1" ]; then SYNC_ARGS[0]="--sync server"; SYNC_ARGS[1]="--sync client"; fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PUSH="$REPO_ROOT/raspberry/tools/rtp_push.py"
 [ -f "$PUSH" ] || { echo "ERR: $PUSH not found" >&2; exit 1; }
@@ -34,10 +84,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# MediaMTX owns the CSI cameras while it runs.
-sudo -n systemctl stop jonny5-mediamtx 2>/dev/null || true
-pkill -f "mediamtx.*mediamtx" 2>/dev/null || true
-sleep 1
 
 start_cam() {
   local cam="$1" port="$2"
@@ -48,7 +94,7 @@ start_cam() {
       --width "$W" --height "$H" --framerate "$FPS" \
       --codec h264 --libav-format h264 --profile baseline --level 4.2 \
       --bitrate "$BITRATE" --intra "$INTRA" --inline --flush \
-      --denoise off --autofocus-mode continuous --autofocus-range normal \
+      --denoise off $MANUAL_ARGS ${SYNC_ARGS[$cam]:-} \
       ${CAM_EXTRA[$cam]:-} \
       -o - 2>"/tmp/video_direct_cam$cam.log" \
     | python3 "$PUSH" --host "$VIEWER_IP" --port "$port" &
@@ -56,7 +102,9 @@ start_cam() {
   echo "cam$cam -> udp://$VIEWER_IP:$port  (${W}x${H} @ ${FPS} fps, $BITRATE bit/s, IDR every $INTRA)"
 }
 
-start_cam 0 5000
+# with SYNC the client (cam1) must be up before the server (cam0) starts broadcasting
 start_cam 1 5002
+sleep 1
+start_cam 0 5000
 echo "video_direct running. Logs: /tmp/video_direct_cam0.log, /tmp/video_direct_cam1.log. Ctrl+C to stop."
 wait

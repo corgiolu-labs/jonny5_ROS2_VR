@@ -189,3 +189,17 @@ page `jonny5-quest-viewer/tools/g2g_browser.html`). Capture -> display, 6 sample
 The native app is ~25 ms faster than the browser on the same device; the browser's jitter buffer is
 only part of it (11 ms), the rest is Chrome's video/compositor path. Note: Chrome needs mobile data
 off on the A16 to reach the hotspot (no-internet network); the app binds itself to Wi-Fi.
+
+### Stereo sync + matched exposure (video_direct.sh, 2026-10-13)
+
+`scripts/video_direct.sh` now runs cam0 as libcamera sync server and cam1 as sync client (`SYNC=1`,
+default): rpicam-vid logs `Sync achieved! Difference -322us`, i.e. the two sensors expose within a
+fraction of a frame. Start order matters (client first), the script does it. With `MATCH=cam0`
+(default) it first probes cam0 in auto for `PROBE_S` seconds (needs `--metadata` + `--save-pts` + a
+file output, otherwise rpicam-vid writes no metadata), then runs BOTH cameras with the converged
+shutter / gain / AWB gains / lens position as fixed values, so the two eyes have identical exposure,
+colour and focus (`MATCH=manual` with SHUTTER GAIN AWBGAINS LENSPOS, `MATCH=auto` for the old
+independent loops, `ROI=x,y,w,h` for an identical crop). Verified on the A16: before, the right eye was
+visibly brighter and warmer; after, both eyes match. Example of a converged set indoors at night:
+`--shutter 7882 --gain 16.000 --awbgains 1.426,2.724 --lens-position 3.39` (shutter and gain at the
+120 fps maximum: low light costs noise, not latency).
