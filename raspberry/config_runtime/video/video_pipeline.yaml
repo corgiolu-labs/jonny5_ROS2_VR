@@ -1,2 +1,2 @@
 video_pipeline: webrtc
-video_profile: lowlatency
+video_profile: relay

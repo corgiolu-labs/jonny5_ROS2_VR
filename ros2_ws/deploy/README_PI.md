@@ -273,3 +273,25 @@ only because the night scene happened to stay near 3 Mbit/s. For teleop in norma
 path is the production path; MediaMTX stays for the browser viewer and the dashboard.
 Also installed today: `jonny5-captive-portal.service` (port 80) for this Pi's paths/user, so a headset
 joining the hotspot is redirected to the viewer page.
+
+### Production video architecture since 2026-10-14 ("variant 3")
+
+```
+rpicam-vid cam1 --sync client ─┐  RTSP publish            ┌─ RTSP/UDP  -> native app (Quest / phone)
+rpicam-vid cam0 --sync server ─┴─> MediaMTX (profile relay) ┤
+   x264 --low-latency, 3 Mbit/s CBR, matched exposure       └─ WebRTC/WHEP -> browser viewer, dashboard
+```
+
+- `scripts/video_capture.sh`, run by `jonny5-video-capture.service` (Requires/PartOf `jonny5-mediamtx`,
+  Restart=always, both cameras restarted together so they re-sync): libcamera frame sync, exposure /
+  gain / AWB / focus matched from a 4 s cam0 probe, x264 low-latency with enforced bitrate.
+- MediaMTX profile `relay` (`video_profile: relay` in `config_runtime/video/video_pipeline.yaml`):
+  `cam0` / `cam1` are publisher paths; MediaMTX opens no camera. RTMP/HLS/SRT off.
+- Measured on the A16 over the hotspot, daylight: 2x 118-120 fps, 3.2 + 3.2 Mbit/s, decoder 11 ms,
+  0 packet loss (vs MediaMTX's own rpiCamera encoder: 12.6 Mbit/s and losses). rpicam-vid x2 at ~55-60 %
+  of a core each, MediaMTX ~0-9 %.
+- `scripts/video_direct.sh` stays as a test tool (push to a viewer with no relay); MediaMTX's old
+  rpiCamera profiles stay selectable via `video_profile` if ever needed.
+- Known: MediaMTX logs "RTP packets are too big (1460 > 1440), remuxing" for the rpicam-vid publisher
+  (harmless). Exposure values are fixed at service start: restart `jonny5-video-capture` after a big
+  light change (continuous matching is the next step).

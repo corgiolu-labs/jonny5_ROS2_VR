@@ -5,6 +5,7 @@
 # Selezione profilo:
 #   video_pipeline.yaml --> "video_profile: <name>" (default: lowlatency)
 #   Profili disponibili (file mediamtx_<name>.yml accanto a video_pipeline.yaml):
+#     relay           cameras published by scripts/video_capture.sh (PRODUCTION, sync + matched exposure)
 #     lowlatency      800x450  @ 120 FPS  ~3 Mbps   (baseline VR teleop)
 #     zoomfriendly   1280x720  @  60 FPS  ~6 Mbps   (compromesso latenza/zoom)
 #     inspection     1920x1080 @  30 FPS  ~8 Mbps   (ispezione, no VR teleop)
@@ -53,7 +54,7 @@ VIDEO_PROFILE="$(grep -E '^[[:space:]]*video_profile:' "$CONFIG" \
                  | sed -E 's/^[[:space:]]*video_profile:[[:space:]]*//; s/[[:space:]]+$//' \
                  | head -1)"
 case "$VIDEO_PROFILE" in
-  lowlatency|zoomfriendly|inspection|maxres|initial) ;;  # ok
+  relay|lowlatency|zoomfriendly|inspection|maxres|initial) ;;  # ok
   "") VIDEO_PROFILE="lowlatency" ;;               # default
   *)
     echo "WARN: video_profile='$VIDEO_PROFILE' non riconosciuto, fallback a lowlatency." >&2

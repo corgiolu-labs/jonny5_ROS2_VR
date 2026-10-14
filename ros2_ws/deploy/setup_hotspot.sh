@@ -74,6 +74,13 @@ if [ -f "$NET_DIR/jonny5-mediamtx-network-online.conf" ]; then
   sudo systemctl daemon-reload
   echo "    jonny5-mediamtx: network-online drop-in installed."
 fi
+# Production capture: rpicam-vid (sync + matched exposure) publishing into MediaMTX (profile "relay").
+if [ -f "$REPO_ROOT/raspberry/systemd/jonny5-video-capture.service" ]; then
+  sudo install -m 644 "$REPO_ROOT/raspberry/systemd/jonny5-video-capture.service" /etc/systemd/system/jonny5-video-capture.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable jonny5-video-capture.service >/dev/null 2>&1
+  echo "    jonny5-video-capture enabled (needs video_profile: relay in config_runtime/video/video_pipeline.yaml)."
+fi
 # Bring it up now if the radio is free; otherwise it starts at boot (autoconnect).
 sudo nmcli con up "jonny5-hotspot" >/dev/null 2>&1 \
   && echo "    Hotspot '$HOTSPOT_SSID' up on 10.42.0.1 (5 GHz ch $HOTSPOT_CHANNEL)." \

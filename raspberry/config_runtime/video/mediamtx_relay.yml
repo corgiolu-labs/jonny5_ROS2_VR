@@ -1,0 +1,34 @@
+# MediaMTX — profilo RELAY (production since 2026-10-14)
+# MediaMTX no longer opens the cameras: scripts/video_capture.sh (rpicam-vid, libcamera frame sync,
+# matched exposure/AWB/focus, x264 --low-latency 3 Mbit/s CBR) publishes cam0/cam1 here over RTSP,
+# MediaMTX relays them to the native app (RTSP/UDP) and to the browser viewer (WebRTC/WHEP).
+# Relay cost measured: ~0 ms. Rate control is enforced by x264 (MediaMTX's own OpenH264 is not).
+
+logLevel: info
+writeQueueSize: 64
+readTimeout: 5s
+writeTimeout: 5s
+
+# only what the robot uses: RTSP (app) + WebRTC (browser)
+rtmp: no
+hls: no
+srt: no
+rtsp: true
+rtspAddress: :8554
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcLocalUDPAddress: ":8189"
+# ICE candidates are gathered at startup: after a reboot MediaMTX can start before eth0/wlan0
+# have an address and then advertises only 127.0.0.1 (WebRTC "deadline exceeded while waiting
+# connection" in the dashboard/viewer). Always advertise the robot addresses explicitly.
+webrtcAdditionalHosts: [10.42.0.1, 192.168.137.221]
+# Video is UDP-only: no RTSP interleaved-TCP sessions, no WebRTC ICE-TCP fallback.
+rtspTransports: [udp]
+webrtcHandshakeTimeout: 5s
+webrtcTrackGatherTimeout: 2s
+
+paths:
+  cam0:
+  cam1:
+  cam_g2g:
