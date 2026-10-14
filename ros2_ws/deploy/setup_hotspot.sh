@@ -67,6 +67,13 @@ if [ -f "$NET_DIR/j5-wlan0.nft" ] && [ -f "$NET_DIR/j5-wlan0-firewall.service" ]
 else
   echo "    WARN: j5-wlan0.nft / j5-wlan0-firewall.service not found next to this script — hotspot left OPEN."
 fi
+# MediaMTX must start after the network is online (ICE candidates are gathered once at startup).
+if [ -f "$NET_DIR/jonny5-mediamtx-network-online.conf" ]; then
+  sudo install -d /etc/systemd/system/jonny5-mediamtx.service.d
+  sudo install -m 644 "$NET_DIR/jonny5-mediamtx-network-online.conf" /etc/systemd/system/jonny5-mediamtx.service.d/10-network-online.conf
+  sudo systemctl daemon-reload
+  echo "    jonny5-mediamtx: network-online drop-in installed."
+fi
 # Bring it up now if the radio is free; otherwise it starts at boot (autoconnect).
 sudo nmcli con up "jonny5-hotspot" >/dev/null 2>&1 \
   && echo "    Hotspot '$HOTSPOT_SSID' up on 10.42.0.1 (5 GHz ch $HOTSPOT_CHANNEL)." \

@@ -13,6 +13,10 @@ webrtc: true
 webrtcAddress: :8889
 webrtcEncryption: false
 webrtcLocalUDPAddress: ":8189"
+# ICE candidates are gathered at startup: after a reboot MediaMTX can start before eth0/wlan0
+# have an address and then advertises only 127.0.0.1 (WebRTC "deadline exceeded while waiting
+# connection" in the dashboard/viewer). Always advertise the robot addresses explicitly.
+webrtcAdditionalHosts: [10.42.0.1, 192.168.137.221]
 # Video is UDP-only: no RTSP interleaved-TCP sessions, no WebRTC ICE-TCP fallback.
 rtspTransports: [udp]
 webrtcHandshakeTimeout: 5s
