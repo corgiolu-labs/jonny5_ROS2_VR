@@ -305,3 +305,14 @@ cam0 3.88 dioptres, cam1 1.02 dioptres for the same scene (delta -2.86), both Af
 is logged at every start; `LENS_DELTA=<d>` forces cam1 = cam0 + d so the two lenses move in unison if
 cam0's focus is driven later (e.g. focus following the gripper distance); `FOCUS=shared` is the old
 behaviour. After the change both eyes are sharp on the A16 (2x120 fps, 2.6-2.7 Mbit/s, 0 loss).
+
+### Stereo sync verified with the scene clock (2026-10-14)
+
+Both cameras aimed at the PC clock (10 ms digits), production path (video_capture -> MediaMTX relay ->
+app on the A16), six screenshots: left / right digits 8935976/8935976, 8936273/8936272, 8936572/8936571,
+893687x/893687x (both mid-transition), 8937170/8937170, 8937469/8937469. The two eyes are within one
+10 ms digit of each other in every shot, i.e. the frames shown together were exposed within <= 1 frame
+(8.3 ms); the two "off by one" cases are the clock digit changing during the 8 ms exposure window.
+Note for the app: on reconnect MediaMTX refuses the RTSP SETUP ("UDP ports 5000 and 5001 are already
+assigned to another reader with the same IP") until the previous session times out (~60 s) — the app
+should TEARDOWN cleanly or pick fresh client ports per session.
