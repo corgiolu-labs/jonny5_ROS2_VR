@@ -256,3 +256,20 @@ The direct path therefore buys frame sync and matched exposure, not latency. Mon
 ~45 ms: the Pi-side numbers "ISP-out -> display 48 ms" and "scene -> display 92 ms" are consistent.
 Also learned: the two "Pi blackouts" of the evening were the PC's Ethernet link dropping (Pi stayed
 up on the hotspot), not the Pi.
+
+### Daylight test, 2026-10-14: MediaMTX encoder ignores the bitrate cap
+
+Same bench in daylight (bright scene), A16 on the hotspot:
+
+| Path | per-eye bitrate | fps | decoder | packet loss |
+|------|-----------------|-----|---------|-------------|
+| MediaMTX production (rpiCamera, `rpiCameraBitrate: 3000000`) | **12.6 Mbit/s** (one cam alone), 5.7 + 4.6 with two | 59 / 72 | 47-97 ms | 2435 in 15 s |
+| direct `video_direct.sh` (rpicam-vid x264 `--low-latency`, 3 Mbit/s CBR, sync, matched exposure) | 3.0 / 2.7 Mbit/s | 121 / 121 | 12 ms | 0 |
+
+MediaMTX's rpiCamera on Pi 5 encodes with OpenH264 and logs "bitrate can't be controlled ... without
+enabling frame skip": the configured bitrate is not enforced, so in daylight the stream grows 4x,
+overloads the 1x1 Wi-Fi and the receiver's decoder. Yesterday's "MediaMTX == direct" equality held
+only because the night scene happened to stay near 3 Mbit/s. For teleop in normal light the direct
+path is the production path; MediaMTX stays for the browser viewer and the dashboard.
+Also installed today: `jonny5-captive-portal.service` (port 80) for this Pi's paths/user, so a headset
+joining the hotspot is redirected to the viewer page.
