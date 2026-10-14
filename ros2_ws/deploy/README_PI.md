@@ -295,3 +295,13 @@ rpicam-vid cam0 --sync server ─┴─> MediaMTX (profile relay) ┤
 - Known: MediaMTX logs "RTP packets are too big (1460 > 1440), remuxing" for the rpicam-vid publisher
   (harmless). Exposure values are fixed at service start: restart `jonny5-video-capture` after a big
   light change (continuous matching is the next step).
+
+### Focus: per-camera calibration (2026-10-14)
+
+The two Camera Module 3 actuators are not interchangeable: with the same LensPosition one eye was
+blurred. `video_capture.sh` now probes BOTH cameras in auto (in parallel), takes exposure / gain / AWB
+from cam0 and keeps each camera's own converged focus (`FOCUS=each`, default). Measured on the bench:
+cam0 3.88 dioptres, cam1 1.02 dioptres for the same scene (delta -2.86), both AfState=focused. The delta
+is logged at every start; `LENS_DELTA=<d>` forces cam1 = cam0 + d so the two lenses move in unison if
+cam0's focus is driven later (e.g. focus following the gripper distance); `FOCUS=shared` is the old
+behaviour. After the change both eyes are sharp on the A16 (2x120 fps, 2.6-2.7 Mbit/s, 0 loss).

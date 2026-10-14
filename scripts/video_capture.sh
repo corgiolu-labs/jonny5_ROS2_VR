@@ -9,7 +9,7 @@
 # Cameras: libcamera frame sync (cam0 server, cam1 client, ~0.3 ms), exposure / gain / AWB / focus matched
 # from a cam0 probe (MATCH=cam0, default) or fixed (MATCH=manual) or independent (MATCH=auto), optional
 # identical ROI; encoder x264 --low-latency, CBR BITRATE, IDR every INTRA frames, SPS/PPS inline.
-# Same knobs as video_direct.sh (SYNC, MATCH, PROBE_S, SHUTTER/GAIN/AWBGAINS/LENSPOS, ROI, INTRA).
+# Knobs: SYNC, MATCH (cam0|manual|auto), PROBE_S, FOCUS (each|shared), LENS_DELTA, SHUTTER/GAIN/AWBGAINS/LENSPOS, ROI, INTRA.
 #
 # Usage: scripts/video_capture.sh [WIDTH HEIGHT FPS BITRATE]   (run by jonny5-video-capture.service)
 set -u
@@ -28,32 +28,57 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
+# Focus is calibrated PER CAMERA: the two Camera Module 3 actuators differ, the same LensPosition
+# (dioptres) does not give the same physical focus on both. Exposure / gain / AWB come from cam0;
+# each camera keeps the focus its own AF converged to. The measured offset (cam1 - cam0, dioptres) is
+# logged and can be forced with LENS_DELTA (then cam1 = cam0 + LENS_DELTA, lenses move in unison if
+# cam0's focus is changed later). FOCUS=shared reproduces the old behaviour (same value on both).
+FOCUS="${FOCUS:-each}"
+LENS_DELTA="${LENS_DELTA:-}"
 MANUAL_ARGS=""
-case "$MATCH" in
-  cam0)
-    echo "probing cam0 auto exposure / AWB / AF for ${PROBE_S}s..."
-    rm -f /tmp/probe_cam0.json
-    rpicam-vid --camera 0 -t "$((PROBE_S * 1000))" -n --width "$W" --height "$H" --framerate "$FPS" \
-        --codec h264 --libav-format h264 --bitrate 1000000 --denoise off \
-        --autofocus-mode continuous --autofocus-range normal \
-        --metadata /tmp/probe_cam0.json --save-pts /tmp/probe_cam0_pts.txt -o /tmp/probe_cam0.h264 2>/dev/null
-    MANUAL_ARGS="$(python3 - <<'PY'
-import json
-raw = open("/tmp/probe_cam0.json").read().strip()
+declare -A LENS_ARGS=([0]="" [1]="")
+probe_cam() {  # $1 = cam id -> /tmp/probe_cam$1.json
+  rm -f "/tmp/probe_cam$1.json"
+  rpicam-vid --camera "$1" -t "$((PROBE_S * 1000))" -n --width "$W" --height "$H" --framerate "$FPS"       --codec h264 --libav-format h264 --bitrate 1000000 --denoise off       --autofocus-mode continuous --autofocus-range normal       --metadata "/tmp/probe_cam$1.json" --save-pts "/tmp/probe_cam$1_pts.txt" -o "/tmp/probe_cam$1.h264" 2>/dev/null
+}
+read_probe() {  # $1 = cam id -> "shutter gain awb_r awb_b lens"
+  python3 - "$1" <<'PY'
+import json, sys
+raw = open("/tmp/probe_cam%s.json" % sys.argv[1]).read().strip()
 if not raw.endswith("]"):
     raw = raw.rstrip(",") + "]"
 e = json.loads(raw)[-1]
 cg = e.get("ColourGains", [1.0, 1.0])
-print("--shutter %d --gain %.3f --awbgains %.3f,%.3f --autofocus-mode manual --lens-position %.2f" % (
-    int(e["ExposureTime"]), float(e["AnalogueGain"]) * float(e.get("DigitalGain", 1.0)), cg[0], cg[1],
-    float(e.get("LensPosition", 1.0))))
+print("%d %.3f %.3f %.3f %.2f" % (int(e["ExposureTime"]), float(e["AnalogueGain"]) * float(e.get("DigitalGain", 1.0)),
+                                 cg[0], cg[1], float(e.get("LensPosition", 1.0))))
 PY
-)" || MANUAL_ARGS=""
-    echo "cam0 converged to: ${MANUAL_ARGS:-(probe failed, cameras left on auto)}"
-    [ -z "$MANUAL_ARGS" ] && MANUAL_ARGS="--autofocus-mode continuous --autofocus-range normal"
+}
+case "$MATCH" in
+  cam0)
+    echo "probing both cameras (auto exposure / AWB / AF) for ${PROBE_S}s..."
+    probe_cam 0 & P0=$!
+    probe_cam 1 & P1=$!
+    wait $P0; wait $P1
+    read -r SH GN AR AB L0 <<<"$(read_probe 0 2>/dev/null)"
+    read -r _ _ _ _ L1 <<<"$(read_probe 1 2>/dev/null)"
+    if [ -n "${SH:-}" ]; then
+      MANUAL_ARGS="--shutter $SH --gain $GN --awbgains $AR,$AB"
+      L1="${L1:-$L0}"
+      if [ -n "$LENS_DELTA" ]; then L1="$(python3 -c "print('%.2f' % ($L0 + $LENS_DELTA))")"; fi
+      if [ "$FOCUS" = "shared" ]; then L1="$L0"; fi
+      LENS_ARGS[0]="--autofocus-mode manual --lens-position $L0"
+      LENS_ARGS[1]="--autofocus-mode manual --lens-position $L1"
+      echo "cam0: shutter $SH gain $GN awb $AR,$AB lens $L0 | cam1 lens $L1 (delta $(python3 -c "print('%+.2f' % ($L1 - $L0))") dioptres)"
+    else
+      echo "probe failed, cameras left on auto"
+      MANUAL_ARGS="--autofocus-mode continuous --autofocus-range normal"
+    fi
     ;;
   manual)
-    MANUAL_ARGS="--shutter ${SHUTTER:?} --gain ${GAIN:?} --awbgains ${AWBGAINS:?} --autofocus-mode manual --lens-position ${LENSPOS:?}"
+    MANUAL_ARGS="--shutter ${SHUTTER:?} --gain ${GAIN:?} --awbgains ${AWBGAINS:?}"
+    L1="$(python3 -c "print('%.2f' % (${LENSPOS:?} + ${LENS_DELTA:-0}))")"
+    LENS_ARGS[0]="--autofocus-mode manual --lens-position ${LENSPOS}"
+    LENS_ARGS[1]="--autofocus-mode manual --lens-position $L1"
     ;;
   *)
     MANUAL_ARGS="--autofocus-mode continuous --autofocus-range normal"
