@@ -41,7 +41,8 @@ SAMPLE_RATE_HZ = 30.0
 ACQUIRE_DURATION_S = 20.0
 SAMPLES_TOTAL = int(SAMPLE_RATE_HZ * ACQUIRE_DURATION_S)
 
-WB_PATH = Path("/home/jonny5/raspberry5/config_runtime/imu/imu_world_bias.json")
+# raspberry/config_runtime/imu/imu_world_bias.json, resolved from this file (raspberry/tools/)
+WB_PATH = Path(__file__).resolve().parents[1] / "config_runtime" / "imu" / "imu_world_bias.json"
 
 
 def normalize_quat(q):
