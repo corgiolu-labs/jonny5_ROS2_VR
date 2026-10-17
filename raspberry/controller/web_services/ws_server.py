@@ -64,6 +64,7 @@ from controller.web_services.head_assist import (
     parse_head_assist_cfg,
     step_mode5_head_assist,
 )
+from controller.web_services import head_assist_gimbal as _gimbal
 from controller.web_services.head_assist_dls import (
     parse_assist_dls_cfg,
     step_dls_head_assist,
@@ -175,6 +176,21 @@ def _load_dx_runtime_cfg() -> dict:
     return merged
 
 
+_gimbal_params_cache: dict = {"t": 0.0, "params": None}
+
+
+def _gimbal_vr_params() -> list:
+    """SET_VR_PARAMS tokens exactly as last pushed to the STM32 (cached 2 s): the gimbal assist inverts the
+    firmware HEAD pipeline with these gains / signs / dead zone / routing."""
+    now = time.monotonic()
+    if _gimbal_params_cache["params"] is None or now - _gimbal_params_cache["t"] > 2.0:
+        cfg = _uart.load_persisted_vr_config() or {}
+        cmd = _uart._build_set_vr_params_from_config(_uart._build_runtime_vr_config_for_apply(cfg))
+        _gimbal_params_cache["params"] = cmd.split()[1:]
+        _gimbal_params_cache["t"] = now
+    return _gimbal_params_cache["params"]
+
+
 def _process_head_assist_mode(intent: dict) -> bool:
     """
     Mode=5 — HEAD OVERFLOW ASSIST:
@@ -222,7 +238,16 @@ def _process_head_assist_mode(intent: dict) -> bool:
         logger.info("[HEAD-ASSIST] assistMode transition: %s -> %s",
                     _last_assist_mode_flag, assist_mode_flag)
         _last_assist_mode_flag = assist_mode_flag
-    if assist_mode_flag == "dls":
+    if assist_mode_flag == "gimbal":
+        arm, g_active, hold, tid = _gimbal.step(
+            intent,
+            physical_six=phys_list,
+            limits_src=cfg.get("limits") or {},
+            vr_params=_gimbal_vr_params(),
+            uart_manager=_uart.uart_manager,
+            grip=grip,
+        )
+    elif assist_mode_flag == "dls":
         ha_dls = parse_assist_dls_cfg(cfg.get("assistDls") or {})
         arm, g_active, hold, tid = step_dls_head_assist(
             raw_grip_active=grip,

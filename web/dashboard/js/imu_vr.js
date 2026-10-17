@@ -465,7 +465,8 @@ function _buildFullPageConfigObject() {
       maxStepDegPerTick: parseFloat(document.getElementById("ha-max-step")?.value ?? "4.0"),
       reliefDeadband: _headAssistDefaults.reliefDeadband,
     },
-    assistMode: (document.getElementById("ha-mode")?.value === "dls") ? "dls" : "rate",
+    assistMode: (["dls", "gimbal"].includes(document.getElementById("ha-mode")?.value))
+      ? document.getElementById("ha-mode").value : "rate",
     assistDls: {
       gainM:           parseFloat(document.getElementById("hdls-gain-m")?.value       ?? "0.15"),
       lambdaMax:       parseFloat(document.getElementById("hdls-lambda-max")?.value   ?? "0.12"),
@@ -580,7 +581,7 @@ function _pbApplyConfigObject(cfg) {
   // Read them unconditionally so the DLS UI syncs even if the loaded config
   // has no headAssist block.
   if (typeof cfg.assistMode === "string") {
-    _assistModeDefault = (cfg.assistMode === "dls") ? "dls" : "rate";
+    _assistModeDefault = (["dls", "gimbal"].includes(cfg.assistMode)) ? cfg.assistMode : "rate";
     _touchedHeadAssistUi = true;
   }
   if (cfg.assistDls && typeof cfg.assistDls === "object") {

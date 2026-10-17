@@ -535,6 +535,7 @@ async def handle_uart_cmd(websocket, data: dict) -> None:
         "HYBRID ENABLE",
         "HYBRID DISABLE",
         "PP?",                # Pick&Place: lettura stato duty cycle
+        "HEADZERO",           # zero del riferimento testa (viewer XR nativo al cambio modo / gimbal assist)
     }
     # SETPOSE accetta un payload variabile: "SETPOSE B S G Y P R vel PLANNER"
     _is_setpose = (cmd_upper.startswith("SETPOSE ") and len(cmd.strip()) > 8) or \
@@ -715,6 +716,8 @@ async def handle_uart_cmd(websocket, data: dict) -> None:
         try:
             uart_ok, uart_resp = await uart_manager.send_uart_command(uart_cmd, timeout_s=1.5)
             ok, response = uart_ok, uart_resp
+            if ok and uart_cmd == "HEADZERO":
+                _notify_gimbal_headzero()
             # NOTE [HYBRID-H3]: aggiorna stato HYBRID lato RPi SOLO dopo ack robusto firmware.
             global _hybrid_enabled_rpi
             if ok and uart_cmd == "HYBRID ENABLE":
@@ -1453,10 +1456,19 @@ async def _broadcast_setpose_done(payload: str) -> None:
         logger.info("[SETPOSE_DONE] inviato a %d client", len(clients))
 
 
+def _notify_gimbal_headzero() -> None:
+    try:
+        from controller.web_services import head_assist_gimbal
+        head_assist_gimbal.notify_headzero_external()
+    except Exception:
+        pass
+
+
 async def _send_headzero_after_pose(mode: int) -> None:
     """Invia HEADZERO dopo TELEOPPOSE completato (solo HEAD/HYBRID)."""
     try:
         ok, response = await uart_manager.send_uart_command("HEADZERO", timeout_s=1.0)
+        _notify_gimbal_headzero()
         if ok:
             logger.info("[POSE] HEADZERO eseguito (mode=%d): riferimento azzerato", mode)
         else:
