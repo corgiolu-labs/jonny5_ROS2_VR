@@ -61,7 +61,8 @@ F_PX = (W / 2) / math.tan(math.radians(HFOV_DEG / 2))
 BASELINE_MM = 63.0
 
 # matching, at half resolution (400x225)
-TPL = 32                             # template side (64 px full res = the size of the viewer crosshair)
+TPLS = (32, 48, 64, 96)              # template sides, half res (64..192 px full res): the smallest one with enough
+                                     # texture is used (a flat surface under the crosshair -> look a bit wider)
 DX_MIN, DX_MAX = -210, 40            # search range in half-res pixels: near objects shift LEFT in cam1
 DY_MAX = 12
 MIN_TEXTURE = 4.0                    # template std (grey levels) below which there is nothing to match
@@ -145,13 +146,27 @@ def subpixel(v_m, v_0, v_p) -> float:
 
 
 def match(left: np.ndarray, right: np.ndarray):
-    """Returns (dx, dy, score, ok, why) in FULL-resolution pixels, cam1 relative to cam0 centre."""
+    """Returns (dx, dy, score, ok, why, window_px_full) in FULL-resolution pixels, cam1 relative to cam0 centre.
+    Tries the template sides in TPLS from the smallest; the first one with enough texture whose match passes the
+    score/uniqueness checks wins."""
+    last = (None, None, 0.0, False, "flat", 0)
+    for tpl in TPLS:
+        r = match_size(left, right, tpl)
+        if r[4] == "flat":
+            continue
+        if r[3]:
+            return r
+        last = r
+    return last
+
+
+def match_size(left: np.ndarray, right: np.ndarray, TPL: int):
     h, w = left.shape
     cy, cx = h // 2, w // 2
     t = left[cy - TPL // 2: cy + TPL // 2, cx - TPL // 2: cx + TPL // 2]
     if float(t.std()) < MIN_TEXTURE:
-        return None, None, 0.0, False, "flat"
-    y0, y1 = cy - TPL // 2 - DY_MAX, cy + TPL // 2 + DY_MAX
+        return None, None, 0.0, False, "flat", 2 * TPL
+    y0, y1 = max(0, cy - TPL // 2 - DY_MAX), min(h, cy + TPL // 2 + DY_MAX)
     x0, x1 = max(0, cx - TPL // 2 + DX_MIN), min(w, cx + TPL // 2 + DX_MAX)
     sr = right[y0:y1, x0:x1]
     m = ncc(sr, t)
@@ -167,7 +182,7 @@ def match(left: np.ndarray, right: np.ndarray):
     dy = (y0 + iy + fy + TPL / 2) - cy
     ok = best >= MIN_SCORE and best - second >= MIN_MARGIN
     why = "" if ok else ("low score" if best < MIN_SCORE else "ambiguous")
-    return 2.0 * dx, 2.0 * dy, best, ok, why
+    return 2.0 * dx, 2.0 * dy, best, ok, why, 2 * TPL
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -253,10 +268,10 @@ def main():
             time.sleep(0.02)
             continue
         last_seq = (sl, srq)
-        dx, dy, score, ok, why = match(fl, fr)
+        dx, dy, score, ok, why, win = match(fl, fr)
 
         msg = {"type": "stereo_collimation", "score": round(score, 3), "dx_inf": round(calib["dx_inf"], 2),
-               "ts": round(time.time(), 3)}
+               "win": win, "ts": round(time.time(), 3)}
         if ok:
             hist = (hist + [(dx, dy)])[-3:]
             mdx = float(np.median([h[0] for h in hist]))
