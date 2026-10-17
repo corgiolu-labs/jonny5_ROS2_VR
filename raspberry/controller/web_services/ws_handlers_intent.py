@@ -287,6 +287,10 @@ def validate_and_build_intent(data):
         intent.update(ctrl_left_quat)
     if ctrl_right_quat is not None:
         intent.update(ctrl_right_quat)
+    # head position (m, yaw-referenced XR frame) from the Quest XR app: ASSIST gimbal height / reach
+    head_pos = [_clamp_float(data.get(k), -10.0, 10.0) for k in ("head_px", "head_py", "head_pz")]
+    if all(v is not None for v in head_pos):
+        intent["head_px"], intent["head_py"], intent["head_pz"] = (float(v) for v in head_pos)
     if camctrl_obj is not None:
         intent["camctrl"]         = camctrl_obj
         intent["camctrl_payload"] = camctrl_payload

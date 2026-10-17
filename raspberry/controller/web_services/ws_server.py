@@ -247,6 +247,7 @@ def _process_head_assist_mode(intent: dict) -> bool:
             vr_params=_gimbal_vr_params(),
             uart_manager=_uart.uart_manager,
             grip=grip,
+            pos_cfg=cfg.get("gimbalPosition") if isinstance(cfg.get("gimbalPosition"), dict) else None,
         )
     elif assist_mode_flag == "dls":
         ha_dls = parse_assist_dls_cfg(cfg.get("assistDls") or {})
