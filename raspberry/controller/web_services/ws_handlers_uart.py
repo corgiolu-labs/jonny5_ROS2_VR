@@ -814,6 +814,7 @@ async def _run_demo_sequence() -> None:
             current_settings = settings_manager.load()
             steps   = current_settings.get("demo_steps", settings_manager.DEFAULTS["demo_steps"])
             offsets = current_settings.get("offsets",    settings_manager.DEFAULTS["offsets"])
+            dirs    = current_settings.get("dirs",       settings_manager.DEFAULTS.get("dirs", [1, 1, 1, 1, 1, 1]))
 
             for step in steps:
                 if _demo_stop_event.is_set():
@@ -821,7 +822,8 @@ async def _run_demo_sequence() -> None:
                 virtual   = step["angles"]
                 vel_deg_s = step["vel"]
                 profile   = step["profile"]
-                physical  = settings_manager.virtual_to_physical(virtual, offsets)
+                # stesso spazio virtuale di HOME/PARK/SETPOSE/slider: offset E verso di rotazione
+                physical  = settings_manager.virtual_to_physical(virtual, offsets, dirs)
                 vel_pct   = max(1, min(100, round((vel_deg_s - 1.0) / 119.0 * 100)))
                 uart_cmd  = "SETPOSE " + " ".join(str(v) for v in physical) + f" {vel_pct} {profile}"
                 logger.info("[DEMO] step virtuale=%s fisico=%s vel=%s°/s (%d%%) profile=%s",
