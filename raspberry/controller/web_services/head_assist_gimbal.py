@@ -88,6 +88,35 @@ def cam_rotation(q_math_rad) -> np.ndarray:
     return _rz(q1) @ _ry(q2 + q3) @ _rz(q4) @ _ry(q5) @ _rx(q6)
 
 
+def wrist_pitch_roll_for_yaw(q_arm_rad, r_target, q4) -> tuple[float, float]:
+    """Wrist pitch / roll when the wrist yaw is held at q4 (yaw at its limit): the camera keeps the WORLD pitch and
+    roll of the target (optical axis elevation, level horizon) and only stops turning in yaw. With the forearm
+    tilted the wrist yaw axis is not vertical, so the full-yaw solution clipped in yaw tilted the camera by up to
+    25 deg in pitch / roll. A few Gauss-Newton steps on (pitch, roll) from the plain decomposition."""
+    q1, q2, q3 = q_arm_rad
+    base = _rz(q1) @ _ry(q2 + q3) @ _rz(q4)
+    m = base.T @ r_target
+    x = np.array([math.asin(max(-1.0, min(1.0, -m[2, 0]))), math.atan2(m[2, 1], m[2, 2])])
+    _, tp, tr = _rot_to_ypr(r_target)
+
+    def err(v):
+        _, p, r = _rot_to_ypr(base @ _ry(v[0]) @ _rx(v[1]))
+        return np.array([p - tp, math.atan2(math.sin(r - tr), math.cos(r - tr))])
+
+    h = 1e-4
+    for _ in range(6):
+        e = err(x)
+        if abs(e[0]) + abs(e[1]) < 1e-5:
+            break
+        j = np.column_stack([(err(x + d) - e) / h for d in (np.array([h, 0.0]), np.array([0.0, h]))])
+        try:
+            dx = np.linalg.solve(j.T @ j + 1e-6 * np.eye(2), j.T @ e)
+        except np.linalg.LinAlgError:
+            break
+        x = x - np.clip(dx, -0.5, 0.5)
+    return float(x[0]), float(x[1])
+
+
 def wrist_ik(q_arm_rad, r_target) -> tuple[float, float, float]:
     q1, q2, q3 = q_arm_rad
     w = (_rz(q1) @ _ry(q2 + q3)).T @ r_target
@@ -268,6 +297,11 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     w_lo = [v_lo[i] + WRIST_MARGIN_DEG for i in (3, 4, 5)]
     w_hi = [v_hi[i] - WRIST_MARGIN_DEG for i in (3, 4, 5)]
     w_cmd = [float(np.clip(w_deg[i], w_lo[i], w_hi[i])) for i in range(3)]
+    if abs(w_cmd[0] - w_deg[0]) > 0.05:
+        # wrist yaw at its limit (and the base too, or still catching up): re-solve pitch / roll for that yaw
+        p5, p6 = wrist_pitch_roll_for_yaw(qm[:3], r_target, math.radians(w_cmd[0] - 90.0))
+        w_cmd[1] = float(np.clip(math.degrees(p5) + 90.0, w_lo[1], w_hi[1]))
+        w_cmd[2] = float(np.clip(math.degrees(p6) + 90.0, w_lo[2], w_hi[2]))
 
     # arm assist: bring the wrist back inside +-BAND (virtual deg around 90)
     def overflow(v):
