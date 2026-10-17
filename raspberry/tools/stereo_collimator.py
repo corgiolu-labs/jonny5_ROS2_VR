@@ -196,8 +196,10 @@ def match_size(left: np.ndarray, right: np.ndarray, TPL: int, prev_dx=None):
     # template top-left in right = (x0 + ix, y0 + iy); its centre relative to the image centre
     dx = (x0 + ix + fx + TPL / 2) - cx
     dy = (y0 + iy + fy + TPL / 2) - cy
-    ok = best >= MIN_SCORE and best - second >= MIN_MARGIN
-    why = why_ok if ok else ("low score" if best < MIN_SCORE else "ambiguous")
+    # a peak on the border of the search window is a truncated / wrong match (the real one is outside)
+    on_edge = iy == 0 or iy == m.shape[0] - 1 or ix == 0 or ix == m.shape[1] - 1
+    ok = best >= MIN_SCORE and best - second >= MIN_MARGIN and not on_edge
+    why = why_ok if ok else ("edge" if on_edge else ("low score" if best < MIN_SCORE else "ambiguous"))
     return 2.0 * dx, 2.0 * dy, best, ok, why, 2 * TPL
 
 
