@@ -30,8 +30,8 @@
     "tg-vel-pitch-head": 200,
     "tg-vel-roll-head": 200,
     "tg-vel-base-head": 600,
-    "tg-vel-spalla-head": 54,
-    "tg-vel-gomito-head": 54,
+    "tg-vel-spalla-head": 90,
+    "tg-vel-gomito-head": 90,
     "tg-roll-level": false,
     "tg-pitch-level": false,
     "tg-yaw-level": false

@@ -40,8 +40,8 @@ from controller.web_services import settings_manager
 logger = logging.getLogger("ws_teleop")
 
 BAND_DEG = 15.0          # wrist free band before the arm helps
-ARM_RATE = 7.0           # 1/s: the overflow decays as exp(-ARM_RATE * t) (same feel as 0.25/tick at 25 Hz)
-ARM_MAX_DEG_S = 50.0     # arm assist speed cap
+ARM_RATE = 14.0          # 1/s: the overflow decays as exp(-ARM_RATE * t) (was 7: too slow on the robot)
+ARM_MAX_DEG_S = 100.0    # arm assist speed cap (firmware caps spalla/gomito with tg-vel-*-head, now 90 deg/s)
 # time based, so the behaviour does not depend on the intent rate (60/s from the Quest XR app, 25/s web)
 WRIST_MARGIN_DEG = 1.0   # stay this far from the wrist hard limits
 
