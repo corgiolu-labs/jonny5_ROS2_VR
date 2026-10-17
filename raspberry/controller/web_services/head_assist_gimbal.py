@@ -40,8 +40,9 @@ from controller.web_services import settings_manager
 logger = logging.getLogger("ws_teleop")
 
 BAND_DEG = 15.0          # wrist free band before the arm helps
-ARM_GAIN = 0.25          # fraction of the overflow absorbed per tick
-ARM_MAX_STEP_DEG = 2.0   # per intent (40 ms in mode 5) -> 50 deg/s
+ARM_RATE = 7.0           # 1/s: the overflow decays as exp(-ARM_RATE * t) (same feel as 0.25/tick at 25 Hz)
+ARM_MAX_DEG_S = 50.0     # arm assist speed cap
+# time based, so the behaviour does not depend on the intent rate (60/s from the Quest XR app, 25/s web)
 WRIST_MARGIN_DEG = 1.0   # stay this far from the wrist hard limits
 
 # XR (x right, y up, z back) -> robot base (x forward, y left, z up)
@@ -153,7 +154,8 @@ class GimbalState:
         self.arm_v = None            # arm target, virtual deg (B, S, G)
         self.last_arm_phys = None
         self.target_id = 0
-        self.log_n = 0
+        self.last_t = 0.0
+        self.last_log = 0.0
 
 
 _state = GimbalState()
@@ -205,7 +207,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         st.zero_ok_at = 0.0
         st.zero_task = asyncio.get_event_loop().create_task(_send_headzero(uart_manager))
         st.arm_v = virt[:3].copy()
-        logger.info("[GIMBAL] engage: HEADZERO, arm virt %s", [round(v, 1) for v in virt[:3]])
+        logger.info("[GIMBAL] engage: HEADZERO, arm virt %s", [round(float(v), 1) for v in virt[:3]])
     if st.phase == "zeroing":
         send_quat(st.q_hold)
         # a couple of intents after the OK so the firmware has latched q_hold as its reference
@@ -215,7 +217,8 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
             st.r_cam_ref = cam_rotation(qm)
             st.r_head_ref = r_head
             st.phase = "track"
-            logger.info("[GIMBAL] tracking: wrist centre phys %s", [round(v, 1) for v in st.center_phys])
+            st.last_t = 0.0
+            logger.info("[GIMBAL] tracking: wrist centre phys %s", [round(float(v), 1) for v in st.center_phys])
         arm_phys = [int(round(v)) for v in physical_six[:3]]
         st.last_arm_phys = arm_phys
         return arm_phys, True, True, st.target_id
@@ -233,13 +236,18 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         d = v - 90.0
         return d - max(-BAND_DEG, min(BAND_DEG, d))
 
+    now = time.monotonic()
+    dt = min(0.1, max(0.0, now - st.last_t)) if st.last_t else 0.0
+    st.last_t = now
+    frac = 1.0 - math.exp(-ARM_RATE * dt)
+    max_step = ARM_MAX_DEG_S * dt
     a_lo = [lim["base"]["min"], lim["spalla"]["min"], lim["gomito"]["min"]]
     a_hi = [lim["base"]["max"], lim["spalla"]["max"], lim["gomito"]["max"]]
     ov_yaw = overflow(float(w_deg[0]))
     ov_pitch = overflow(float(w_deg[1]))
-    step_b = max(-ARM_MAX_STEP_DEG, min(ARM_MAX_STEP_DEG, ARM_GAIN * ov_yaw))
+    step_b = max(-max_step, min(max_step, frac * ov_yaw))
     st.arm_v[0] = float(np.clip(st.arm_v[0] + step_b, a_lo[0], a_hi[0]))
-    step_p = max(-ARM_MAX_STEP_DEG, min(ARM_MAX_STEP_DEG, ARM_GAIN * ov_pitch))
+    step_p = max(-max_step, min(max_step, frac * ov_pitch))
     g_new = float(np.clip(st.arm_v[2] + step_p, a_lo[2], a_hi[2]))
     rest = step_p - (g_new - st.arm_v[2])            # what the elbow could not take goes to the shoulder
     st.arm_v[2] = g_new
@@ -262,14 +270,15 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     st.last_arm_phys = arm_phys
     st.target_id = (st.target_id + 1) & 0xFFFF
 
-    st.log_n += 1
-    if st.log_n % 25 == 0:
+    if now - st.last_log >= 1.0:
+        st.last_log = now
         fk = np.degrees(_rot_to_ypr(cam_rotation(np.radians(np.asarray(full_v) - 90.0))))
         tg = np.degrees(_rot_to_ypr(r_target))
-        logger.info("[GIMBAL] target ypr %s cam(cmd) ypr %s wrist virt %s%s arm virt %s",
-                    [round(v, 1) for v in tg], [round(v, 1) for v in fk], [round(v, 1) for v in w_cmd],
+        logger.info("[GIMBAL] target ypr %s cam(cmd) ypr %s wrist virt %s%s arm virt %s dt %.0f ms",
+                    [round(float(v), 1) for v in tg], [round(float(v), 1) for v in fk],
+                    [round(float(v), 1) for v in w_cmd],
                     " (clamped)" if any(abs(w_cmd[i] - w_deg[i]) > 0.05 for i in range(3)) else "",
-                    [round(v, 1) for v in st.arm_v])
+                    [round(float(v), 1) for v in st.arm_v], dt * 1000.0)
     return arm_phys, True, False, st.target_id
 
 
