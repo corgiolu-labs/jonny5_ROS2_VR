@@ -89,6 +89,13 @@ if [ -f "$REPO_ROOT/raspberry/systemd/jonny5-refocus-cams.service" ]; then
   sudo systemctl daemon-reload
   echo "    jonny5-refocus-cams installed (on demand, no timer)."
 fi
+# Automatic crosshair collimation for the VR viewers (stereo disparity at the crosshair + distance).
+if [ -f "$REPO_ROOT/raspberry/systemd/jonny5-stereo-collimator.service" ]; then
+  sudo install -m 644 "$REPO_ROOT/raspberry/systemd/jonny5-stereo-collimator.service" /etc/systemd/system/jonny5-stereo-collimator.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable jonny5-stereo-collimator.service >/dev/null 2>&1
+  echo "    jonny5-stereo-collimator enabled."
+fi
 # Bring it up now if the radio is free; otherwise it starts at boot (autoconnect).
 sudo nmcli con up "jonny5-hotspot" >/dev/null 2>&1 \
   && echo "    Hotspot '$HOTSPOT_SSID' up on 10.42.0.1 (5 GHz ch $HOTSPOT_CHANNEL)." \

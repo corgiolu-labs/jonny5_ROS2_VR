@@ -894,6 +894,8 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
                     pass
                 continue
 
+            # stereo_collimation (raspberry/tools/stereo_collimator.py -> viewer) e stereo_calibrate (viewer /
+            # dashboard -> collimator) usano lo stesso relay "a tutti gli altri client".
             # vr_session_refresh / vr_session_state: il viewer XR pubblica
             # session.frameRate dell'HMD (Quest 1=72, Quest 2=90/120 Hz nativi)
             # ogni 2 s mentre la sessione XR è attiva. Broadcast a tutti gli
@@ -901,7 +903,8 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
             # del refresh HMD reale, distinto dal monitor del PC che apre la
             # pagina dashboard. Usato per validare la spec "60-72 Hz visore"
             # del Cap.6/Cap.10 della tesi.
-            if isinstance(data, dict) and data.get("type") in ("vr_session_refresh", "vr_session_state", "vr_video_latency"):
+            if isinstance(data, dict) and data.get("type") in ("vr_session_refresh", "vr_session_state", "vr_video_latency",
+                                                               "stereo_collimation", "stereo_calibrate"):
                 try:
                     msg_out = json.dumps(data)
                     for client in list(clients):
