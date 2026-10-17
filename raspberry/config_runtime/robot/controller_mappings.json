@@ -12,22 +12,26 @@
     },
     "POSE": {},
     "MANUAL": {
+      "left.X.press|noGrips":   "togglePassthrough",
       "left.Y.press":      "toggleCrosshair",
       "right.thumb.click": "refocusCamerasHw"
     },
     "HEAD": {
+      "left.X.press|noGrips":   "togglePassthrough",
       "left.Y.press":            "toggleCrosshair",
       "right.thumb.click":       "refocusCamerasHw",
       "right.A.held|bothGrips":  "zoom_in_continuous",
       "right.B.held|bothGrips":  "zoom_out_continuous"
     },
     "HYBRID": {
+      "left.X.press|noGrips":   "togglePassthrough",
       "left.Y.press":            "toggleCrosshair",
       "right.thumb.click":       "refocusCamerasHw",
       "right.A.held|bothGrips":  "zoom_in_continuous",
       "right.B.held|bothGrips":  "zoom_out_continuous"
     },
     "ASSIST": {
+      "left.X.press|noGrips":   "togglePassthrough",
       "left.Y.press":            "toggleCrosshair",
       "right.thumb.click":       "refocusCamerasHw",
       "right.A.held|bothGrips":  "zoom_in_continuous",

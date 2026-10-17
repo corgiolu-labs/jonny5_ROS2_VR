@@ -29,6 +29,7 @@ const ACTIONS = [
   "toggleCrosshair",
   "refocusCamerasHw",
   "toggleAutoConv",
+  "togglePassthrough",   // native Quest viewer (JONNY5 XR) only: passthrough background around the video
 ];
 
 // Stick analogici: descrizione (sola lettura) per modalità.
