@@ -172,5 +172,9 @@
     "pitchReachEnabled": true,
     "pitchReachBias": 0.82
   },
-  "assistMode": "gimbal"
+  "assistMode": "gimbal",
+  "gimbalPosition": {
+    "enable": true,
+    "scale": 0.7
+  }
 }

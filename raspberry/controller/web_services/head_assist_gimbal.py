@@ -53,7 +53,7 @@ ARM_MAX_DEG_S = 100.0    # arm assist speed cap (firmware caps spalla/gomito wit
 WRIST_MARGIN_DEG = 1.0   # stay this far from the wrist hard limits
 
 # head position -> wrist centre (see the module docstring)
-POS_SCALE_DEFAULT = 0.5      # robot metres per head metre (crouching 40 cm lowers the camera 20 cm)
+POS_SCALE_DEFAULT = 0.7      # robot metres per head metre (crouching 30 cm lowers the camera 21 cm)
 POS_WC_Z_MIN = 0.17          # m, lowest wrist centre (camera still clear of the base / table)
 POS_REACH_MIN = -0.02        # m, do not lean back behind the base axis
 POS_JUMP_M = 0.25            # head position jump in one intent (recenter, tracking loss): re-reference
