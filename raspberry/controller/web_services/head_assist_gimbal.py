@@ -177,6 +177,22 @@ async def _send_headzero(uart_manager):
         _state.phase = "idle"
 
 
+_JOINTS = ("base", "spalla", "gomito", "yaw", "pitch", "roll")
+
+
+def _virtual_limits(lim: dict, offsets, dirs):
+    """Physical joint limits -> (virtual min[6], virtual max[6]); virtual = (phys - offset) / dir + 90."""
+    lo, hi = [], []
+    for i, j in enumerate(_JOINTS):
+        d = float(dirs[i]) if i < len(dirs) and float(dirs[i]) != 0.0 else 1.0
+        off = float(offsets[i]) if i < len(offsets) else 90.0
+        a = (float(lim[j]["min"]) - off) / d + 90.0
+        b = (float(lim[j]["max"]) - off) / d + 90.0
+        lo.append(min(a, b))
+        hi.append(max(a, b))
+    return lo, hi
+
+
 def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], uart_manager, grip: bool):
     """Returns (arm_physical[3] | None, grip_active, hold_active, target_id) and rewrites intent quat_* ."""
     st = _state
@@ -227,8 +243,12 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     r_target = r_head @ st.r_head_ref.T @ st.r_cam_ref
     q4, q5, q6 = wrist_ik(qm[:3], r_target)
     w_deg = np.degrees([q4, q5, q6]) + 90.0          # wrist virtual
-    w_lo = [lim["yaw"]["min"] + WRIST_MARGIN_DEG, lim["pitch"]["min"] + WRIST_MARGIN_DEG, lim["roll"]["min"] + WRIST_MARGIN_DEG]
-    w_hi = [lim["yaw"]["max"] - WRIST_MARGIN_DEG, lim["pitch"]["max"] - WRIST_MARGIN_DEG, lim["roll"]["max"] - WRIST_MARGIN_DEG]
+    # routing_config limits are PHYSICAL servo degrees (the firmware clamps there): convert them to virtual with
+    # offsets / dirs. Using them as virtual was wrong for the reversed joints (pitch dir -1: physical 35..120 is
+    # virtual 60..145), the IK then believed the wrist reached angles the firmware had clipped.
+    v_lo, v_hi = _virtual_limits(lim, offsets, dirs)
+    w_lo = [v_lo[i] + WRIST_MARGIN_DEG for i in (3, 4, 5)]
+    w_hi = [v_hi[i] - WRIST_MARGIN_DEG for i in (3, 4, 5)]
     w_cmd = [float(np.clip(w_deg[i], w_lo[i], w_hi[i])) for i in range(3)]
 
     # arm assist: bring the wrist back inside +-BAND (virtual deg around 90)
@@ -241,8 +261,8 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     st.last_t = now
     frac = 1.0 - math.exp(-ARM_RATE * dt)
     max_step = ARM_MAX_DEG_S * dt
-    a_lo = [lim["base"]["min"], lim["spalla"]["min"], lim["gomito"]["min"]]
-    a_hi = [lim["base"]["max"], lim["spalla"]["max"], lim["gomito"]["max"]]
+    a_lo = v_lo[:3]
+    a_hi = v_hi[:3]
     ov_yaw = overflow(float(w_deg[0]))
     ov_pitch = overflow(float(w_deg[1]))
     step_b = max(-max_step, min(max_step, frac * ov_yaw))
