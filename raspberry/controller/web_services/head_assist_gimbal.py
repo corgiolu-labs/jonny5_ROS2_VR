@@ -180,6 +180,12 @@ async def _send_headzero(uart_manager):
 _JOINTS = ("base", "spalla", "gomito", "yaw", "pitch", "roll")
 
 
+def _virt_to_phys_f(v: float, offset, d) -> float:
+    """virtual -> physical without rounding, same formula and [5, 175] clamp as settings_manager."""
+    s = -1.0 if float(d) < 0 else 1.0
+    return max(5.0, min(175.0, float(offset) + s * (float(v) - 90.0)))
+
+
 def _virtual_limits(lim: dict, offsets, dirs):
     """Physical joint limits -> (virtual min[6], virtual max[6]); virtual = (phys - offset) / dir + 90."""
     lo, hi = [], []
@@ -235,7 +241,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
             st.phase = "track"
             st.last_t = 0.0
             logger.info("[GIMBAL] tracking: wrist centre phys %s", [round(float(v), 1) for v in st.center_phys])
-        arm_phys = [int(round(v)) for v in physical_six[:3]]
+        arm_phys = [round(float(v), 2) for v in physical_six[:3]]
         st.last_arm_phys = arm_phys
         return arm_phys, True, True, st.target_id
 
@@ -276,8 +282,9 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     full_v = list(virt)
     full_v[0:3] = [float(v) for v in st.arm_v]
     full_v[3:6] = w_cmd
-    phys = settings_manager.virtual_to_physical(full_v, offsets, dirs)
-    arm_phys = [int(round(float(v))) for v in phys[:3]]
+    # arm targets with the fraction (the SPI frame carries centidegrees): settings_manager.virtual_to_physical
+    # truncates to whole degrees, which made the arm follow the head in 1 deg steps
+    arm_phys = [round(_virt_to_phys_f(full_v[i], offsets[i], dirs[i]), 2) for i in range(3)]
     wrist_phys = [float(v) for v in
                   [offsets[i] + (dirs[i] if dirs[i] >= 0 else -1) * (w_cmd[i - 3] - 90.0) for i in (3, 4, 5)]]
 

@@ -151,7 +151,8 @@ def _attach_mode5_arm_target(intent: dict, physical_angles: list[int] | None, gr
         "grip_active": bool(grip_active),
         "hold_active": bool(hold_active),
         "target_id": int(target_id) & 0xFFFF,
-        "physical_deg": [int(v) for v in physical_angles[:3]],
+        # floats: the SPI frame carries centidegrees (int() here quantised the ASSIST arm to 1 deg)
+        "physical_deg": [round(float(v), 2) for v in physical_angles[:3]],
     }
 
 
