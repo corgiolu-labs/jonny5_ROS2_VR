@@ -66,8 +66,13 @@ TPLS = (32, 48, 64, 96)              # template sides, half res (64..192 px full
 DX_MIN, DX_MAX = -210, 40            # search range in half-res pixels: near objects shift LEFT in cam1
 DY_MAX = 12
 MIN_TEXTURE = 4.0                    # template std (grey levels) below which there is nothing to match
-MIN_SCORE = 0.70
-MIN_MARGIN = 0.04                    # best peak must beat the best peak elsewhere by this much (repetitive textures)
+MIN_SCORE = 0.65
+MIN_MARGIN = 0.02                    # best peak must beat the best peak elsewhere by this much (repetitive textures)
+# Continuity: when two places are almost equally good (drawers, shelves...), take the one next to the last lock
+# if it is within CONT_PX (full-res) of it and its score is within CONT_BAND of the best.
+CONT_PX = 10.0
+CONT_BAND = 0.06
+CONT_MAX_AGE_S = 1.0
 
 
 def log(*a):
@@ -145,13 +150,13 @@ def subpixel(v_m, v_0, v_p) -> float:
     return 0.0 if abs(den) < 1e-9 else 0.5 * (v_m - v_p) / den
 
 
-def match(left: np.ndarray, right: np.ndarray):
+def match(left: np.ndarray, right: np.ndarray, prev_dx=None):
     """Returns (dx, dy, score, ok, why, window_px_full) in FULL-resolution pixels, cam1 relative to cam0 centre.
     Tries the template sides in TPLS from the smallest; the first one with enough texture whose match passes the
     score/uniqueness checks wins."""
     last = (None, None, 0.0, False, "flat", 0)
     for tpl in TPLS:
-        r = match_size(left, right, tpl)
+        r = match_size(left, right, tpl, prev_dx)
         if r[4] == "flat":
             continue
         if r[3]:
@@ -160,7 +165,7 @@ def match(left: np.ndarray, right: np.ndarray):
     return last
 
 
-def match_size(left: np.ndarray, right: np.ndarray, TPL: int):
+def match_size(left: np.ndarray, right: np.ndarray, TPL: int, prev_dx=None):
     h, w = left.shape
     cy, cx = h // 2, w // 2
     t = left[cy - TPL // 2: cy + TPL // 2, cx - TPL // 2: cx + TPL // 2]
@@ -175,13 +180,24 @@ def match_size(left: np.ndarray, right: np.ndarray, TPL: int):
     masked = m.copy()
     masked[max(0, iy - 3): iy + 4, max(0, ix - 3): ix + 4] = -1
     second = float(masked.max())
+    why_ok = ""
+    if best >= MIN_SCORE and best - second < MIN_MARGIN and prev_dx is not None:
+        # ambiguous: among the near-best places pick the one closest to the previous lock
+        cy_, cx_ = np.nonzero(m >= best - CONT_BAND)
+        cand_dx = 2.0 * ((x0 + cx_ + TPL / 2) - cx)
+        k = int(np.argmin(np.abs(cand_dx - prev_dx)))
+        if abs(cand_dx[k] - prev_dx) <= CONT_PX:
+            iy, ix = int(cy_[k]), int(cx_[k])
+            best = float(m[iy, ix])
+            second = best - MIN_MARGIN  # accepted by continuity
+            why_ok = "continuity"
     fx = subpixel(m[iy, ix - 1], m[iy, ix], m[iy, ix + 1]) if 0 < ix < m.shape[1] - 1 else 0.0
     fy = subpixel(m[iy - 1, ix], m[iy, ix], m[iy + 1, ix]) if 0 < iy < m.shape[0] - 1 else 0.0
     # template top-left in right = (x0 + ix, y0 + iy); its centre relative to the image centre
     dx = (x0 + ix + fx + TPL / 2) - cx
     dy = (y0 + iy + fy + TPL / 2) - cy
     ok = best >= MIN_SCORE and best - second >= MIN_MARGIN
-    why = "" if ok else ("low score" if best < MIN_SCORE else "ambiguous")
+    why = why_ok if ok else ("low score" if best < MIN_SCORE else "ambiguous")
     return 2.0 * dx, 2.0 * dy, best, ok, why, 2 * TPL
 
 
@@ -232,6 +248,7 @@ def main():
     ctx.verify_mode = ssl.CERT_NONE
 
     hist: list = []        # last good measurements (dx, dy) for a small median
+    last_lock = (0.0, -1e9)  # (dx, monotonic time) of the last locked measurement
     last_seq = (-1, -1)
     ws = None
     calib_samples: list = []
@@ -268,11 +285,13 @@ def main():
             time.sleep(0.02)
             continue
         last_seq = (sl, srq)
-        dx, dy, score, ok, why, win = match(fl, fr)
+        prev = last_lock[0] if time.monotonic() - last_lock[1] < CONT_MAX_AGE_S else None
+        dx, dy, score, ok, why, win = match(fl, fr, prev)
 
         msg = {"type": "stereo_collimation", "score": round(score, 3), "dx_inf": round(calib["dx_inf"], 2),
                "win": win, "ts": round(time.time(), 3)}
         if ok:
+            last_lock = (dx, time.monotonic())
             hist = (hist + [(dx, dy)])[-3:]
             mdx = float(np.median([h[0] for h in hist]))
             mdy = float(np.median([h[1] for h in hist]))
@@ -280,6 +299,8 @@ def main():
             dist = F_PX * BASELINE_MM / d if d > 0.5 else None
             msg.update({"lock": True, "dx": round(mdx, 2), "dy": round(mdy, 2),
                         "dist_mm": round(dist, 1) if dist else None})
+            if why:
+                msg["why"] = why
             if calib_request["mm"] > 0:
                 calib_samples.append((mdx, mdy))
                 if len(calib_samples) >= 9:
