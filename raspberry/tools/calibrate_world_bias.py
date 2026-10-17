@@ -92,7 +92,11 @@ HOME_SETTLE_S = 5.0  # tempo di stabilizzazione dopo HOME prima dell'acquisizion
 
 
 def extract_quat_wxyz(msg):
-    keys_wxyz = ("imu_q_w", "imu_q_x", "imu_q_y", "imu_q_z")
+    # RAW BNO085 quaternion: imu_q_* in telemetry is already corrected by the current
+    # world_bias (ws_handlers_imu), sampling it would just re-derive the old bias.
+    keys_wxyz = ("imu_q_raw_w", "imu_q_raw_x", "imu_q_raw_y", "imu_q_raw_z")
+    if not all(k in msg for k in keys_wxyz):
+        keys_wxyz = ("imu_q_w", "imu_q_x", "imu_q_y", "imu_q_z")  # legacy telemetry without raw fields
     q = [msg.get(k) for k in keys_wxyz]
     if all(v is not None for v in q):
         try:

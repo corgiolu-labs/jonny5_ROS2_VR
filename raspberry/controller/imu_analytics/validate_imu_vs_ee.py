@@ -114,13 +114,14 @@ def _extract_joint_physical_deg(msg: dict[str, Any]) -> list[float] | None:
 
 
 def _extract_imu_quat_xyzw(msg: dict[str, Any]) -> np.ndarray | None:
-    keys = ("imu_q_w", "imu_q_x", "imu_q_y", "imu_q_z")
+    # The model R_imu = R_world_bias * R_ee * R_mount expects the RAW BNO085 quaternion;
+    # imu_q_* in telemetry is already corrected by world_bias (ws_handlers_imu), so prefer imu_q_raw_*.
+    keys = ("imu_q_raw_w", "imu_q_raw_x", "imu_q_raw_y", "imu_q_raw_z")
     if any(k not in msg for k in keys):
-        return None
-    qw = float(msg["imu_q_w"])
-    qx = float(msg["imu_q_x"])
-    qy = float(msg["imu_q_y"])
-    qz = float(msg["imu_q_z"])
+        keys = ("imu_q_w", "imu_q_x", "imu_q_y", "imu_q_z")  # legacy telemetry without raw fields
+        if any(k not in msg for k in keys):
+            return None
+    qw, qx, qy, qz = (float(msg[k]) for k in keys)
     return _quat_wxyz_to_xyzw([qw, qx, qy, qz])
 
 
