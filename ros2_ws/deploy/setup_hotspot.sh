@@ -81,6 +81,14 @@ if [ -f "$REPO_ROOT/raspberry/systemd/jonny5-video-capture.service" ]; then
   sudo systemctl enable jonny5-video-capture.service >/dev/null 2>&1
   echo "    jonny5-video-capture enabled (needs video_profile: relay in config_runtime/video/video_pipeline.yaml)."
 fi
+# On-demand camera refocus (POST /api/refocus-cameras, right stick click in the VR viewers): restarts MediaMTX,
+# which restarts jonny5-video-capture (PartOf) and re-probes AF on both cameras. Only the service is installed:
+# the periodic timer would black out the video for ~6 s every 10 minutes.
+if [ -f "$REPO_ROOT/raspberry/systemd/jonny5-refocus-cams.service" ]; then
+  sudo install -m 644 "$REPO_ROOT/raspberry/systemd/jonny5-refocus-cams.service" /etc/systemd/system/jonny5-refocus-cams.service
+  sudo systemctl daemon-reload
+  echo "    jonny5-refocus-cams installed (on demand, no timer)."
+fi
 # Bring it up now if the radio is free; otherwise it starts at boot (autoconnect).
 sudo nmcli con up "jonny5-hotspot" >/dev/null 2>&1 \
   && echo "    Hotspot '$HOTSPOT_SSID' up on 10.42.0.1 (5 GHz ch $HOTSPOT_CHANNEL)." \

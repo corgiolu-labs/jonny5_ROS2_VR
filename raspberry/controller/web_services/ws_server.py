@@ -830,7 +830,9 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
                         "action": str(data.get("action", "delta")),
                         "value": float(data.get("value", 0.0)),
                     })
-                    for client in list(_ws_core.clients):
+                    # (was _ws_core.clients: _ws_core is not imported here, the NameError was swallowed by the
+                    #  except below and dashboard zoom commands never reached the viewer)
+                    for client in list(clients):
                         if client is websocket:
                             continue
                         try:
