@@ -153,6 +153,7 @@ class GimbalState:
         self.r_head_ref = None
         self.arm_v = None            # arm target, virtual deg (B, S, G)
         self.last_arm_phys = None
+        self.arm_cmd_phys = None     # last arm target sent while tracking (physical, float)
         self.target_id = 0
         self.last_t = 0.0
         self.last_log = 0.0
@@ -217,6 +218,16 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     cfg = settings_manager.load()
     offsets = cfg.get("offsets", settings_manager.DEFAULTS["offsets"])
     dirs = cfg.get("dirs", settings_manager.DEFAULTS.get("dirs", [1] * 6))
+    physical_six = [float(v) for v in physical_six[:6]]
+    if st.phase == "track" and st.arm_cmd_phys is not None:
+        # The telemetry reports the arm servos in WHOLE degrees (uint8 = round of the firmware's float position).
+        # With the arm now moving smoothly, the wrist compensation computed from those values advanced in 1 deg
+        # steps (camera yaw wobble of ~0.5 deg on slow turns). Best estimate of the real position: our last
+        # float target, kept within +-0.5 deg of the reported value (exact when the arm keeps up, falls back to
+        # the telemetry edge when the firmware rate limit leaves it behind).
+        for i in range(3):
+            t = physical_six[i]
+            physical_six[i] = min(t + 0.5, max(t - 0.5, float(st.arm_cmd_phys[i])))
     virt = np.asarray(settings_manager.physical_to_virtual(list(physical_six), offsets, dirs), dtype=float)
     qm = np.radians(virt - 90.0)
     hw, hx, hy, hz = (float(intent.get(k, d)) for k, d in
@@ -226,6 +237,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     if st.phase == "idle":
         # engage: freeze the firmware wrist (constant quaternion) and zero its reference
         st.phase = "zeroing"
+        st.arm_cmd_phys = None
         st.zero_ok_at = 0.0
         st.zero_task = asyncio.get_event_loop().create_task(_send_headzero(uart_manager))
         st.arm_v = virt[:3].copy()
@@ -295,6 +307,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     send_quat(q_send)
     st.q_hold = q_send   # on release / re-engage the firmware keeps exactly this pose (no jump)
     st.last_arm_phys = arm_phys
+    st.arm_cmd_phys = arm_phys
     st.target_id = (st.target_id + 1) & 0xFFFF
 
     if now - st.last_log >= 1.0:
