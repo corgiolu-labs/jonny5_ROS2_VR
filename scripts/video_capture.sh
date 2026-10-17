@@ -13,7 +13,10 @@
 #
 # Usage: scripts/video_capture.sh [WIDTH HEIGHT FPS BITRATE]   (run by jonny5-video-capture.service)
 set -u
-W="${1:-800}"; H="${2:-450}"; FPS="${3:-120}"; BITRATE="${4:-3000000}"
+# FPS default 90 = Quest 2 display refresh: at 120 fps the headset compositor (90 Hz) back-pressures the
+# decoder output and the queue fills up (measured 2026-10-17: q 31/31, decode 25-45 ms, purges every ~1 s;
+# at 90 fps q 0/1, decode 3.8 ms, 0 purges). Use 120 only for a 120 Hz viewer (phone bench).
+W="${1:-800}"; H="${2:-450}"; FPS="${3:-90}"; BITRATE="${4:-3000000}"
 INTRA="${INTRA:-20}"
 MTX="${MTX:-rtsp://127.0.0.1:8554}"
 SYNC="${SYNC:-1}"
