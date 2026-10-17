@@ -156,6 +156,10 @@ float desired_positions[SERVO_COUNT] = {
 /** @brief Residuo frazionario accumulato per-giunto. Condiviso con SETPOSE. */
 float step_accumulator[SERVO_COUNT] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
+/* Variazione minima di comando inviata al PWM: 0.02 deg = ~0.2 us, sotto la deadband (~2 us)
+ * dei servo digitali, cosi' il moto resta continuo senza scrivere il timer a ogni tick a fermo. */
+#define SERVO_SUBDEG_MIN_DELTA 0.02f
+
 /** @brief Limite inferiore per-giunto [deg]. Ordine: BASE, SPALLA, GOMITO, YAW, PITCH, ROLL.
  *  Condiviso con j5vr_head.c. */
 float joint_min_deg[SERVO_COUNT] = {
@@ -252,7 +256,7 @@ static inline uint8_t j5_angle_to_u8(float angle_deg)
  */
 static inline void manual_discharge_axis_target(servo_joint_t joint)
 {
-    const float servo_now = (float)servo_get_angle(joint);
+    const float servo_now = servo_get_angle_f(joint);
     desired_positions[joint] = servo_now;
     step_accumulator[joint] = 0.0f;
     desired_positions_filtered[joint] = servo_now;
@@ -359,9 +363,12 @@ void j5vr_actuation_apply_desired(const struct j5vr_state *j5vr)
 {
     for (int i = 0; i < SERVO_COUNT; i++)
     {
-        const uint8_t current_angle = servo_get_angle((servo_joint_t)i);
-        const float   current_pos   = (float)current_angle;
-        const float   diff          = desired_positions[i] - current_pos;
+        /* Posizione corrente con la frazione: l'uscita e' sub-grado (servo_set_angle_f), come nel
+         * trajectory tick di SETPOSE. Prima il comando veniva arrotondato al grado intero:
+         * 1 grado = ~11 us di impulso, il servo digitale (deadband ~2 us) saltava a gradini e
+         * il polso PITCH/ROLL faceva vibrare il video in HEAD/ASSIST. */
+        const float current_pos = servo_get_angle_f((servo_joint_t)i);
+        const float diff        = desired_positions[i] - current_pos;
 
         /* Mode 5 (HEAD ASSIST): target B/S/G arriva a burst da RPi (~100 Hz). Con alpha<1 l'uscita
          * segue solo desired_positions_filtered (EMA) — stesso target sembra "mushy" e in
@@ -451,23 +458,20 @@ void j5vr_actuation_apply_desired(const struct j5vr_state *j5vr)
         send_pos = j5_clampf(send_pos, SERVO_SAFETY_MIN_DEG, SERVO_SAFETY_MAX_DEG);
         new_pos  = j5_clampf(new_pos,  SERVO_SAFETY_MIN_DEG, SERVO_SAFETY_MAX_DEG);
 
-        const uint8_t filtered_angle = (uint8_t)roundf(send_pos);
-
-        if (filtered_angle == current_angle)
-        {
-            continue; /* nessun cambio visibile: non inviare */
-        }
-
         /* Polso in dominio logico unico 0..180 come nella versione buona. */
-        uint16_t send_cmd;
-
         if (i == SERVO_ROLL || i == SERVO_PITCH || i == SERVO_YAW) {
-            send_cmd = j5_angle_to_u8((float)filtered_angle);
-        } else {
-            send_cmd = filtered_angle;
+            send_pos = j5_clampf(send_pos, 0.0f, 180.0f);
         }
 
-        servo_set_angle((servo_joint_t)i, send_cmd);
+        if (fabsf(send_pos - current_pos) < SERVO_SUBDEG_MIN_DELTA)
+        {
+            continue; /* sotto la risoluzione utile del servo: accumula ancora */
+        }
+
+        if (!servo_set_angle_f((servo_joint_t)i, send_pos))
+        {
+            continue;
+        }
 
         /* Log PWM rate-limited per i giunti più critici */
         if (i == SERVO_YAW || i == SERVO_PITCH || i == SERVO_SPALLA)
@@ -475,23 +479,22 @@ void j5vr_actuation_apply_desired(const struct j5vr_state *j5vr)
             static uint32_t pwm_step_log = 0;
             if ((pwm_step_log++ % 50U) == 0U)
             {
-                LOG_DBG("[PWM_STEP] j=%d cur=%u filt=%u send=%u",
-                       i, (unsigned)current_angle,
-                       (unsigned)filtered_angle,
-                       (unsigned)send_cmd);
+                LOG_DBG("[PWM_STEP] j=%d cur=%d send=%d (cdeg)",
+                       i, (int)lroundf(current_pos * 100.0f),
+                       (int)lroundf(send_pos * 100.0f));
             }
         }
 
         /* Mantieni il residuo frazionario rispetto all'angolo effettivamente inviato */
-        step_accumulator[i] = new_pos - (float)filtered_angle;
+        step_accumulator[i] = new_pos - send_pos;
 
 #if J5VR_DEBUG_MINIMAL
         static uint8_t dbg_logged_move[SERVO_COUNT] = {0, 0, 0, 0, 0, 0};
         if (!dbg_logged_move[i])
         {
-            LOG_INF("[J5VR][MOVE] joint=%d %u->%u"
+            LOG_INF("[J5VR][MOVE] joint=%d %.2f->%.2f"
                     " (desired=%.2f diff=%.3f step=%.4f acc_rem=%.4f)",
-                    i, current_angle, filtered_angle,
+                    i, (double)current_pos, (double)send_pos,
                     (double)desired_positions[i], (double)diff,
                     (double)step, (double)step_accumulator[i]);
             dbg_logged_move[i] = 1;
@@ -710,27 +713,27 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
         const bool roll_has_input = (btn_x  && !btn_y)  || (btn_y  && !btn_x);
 
         if (fabsf(jx) <= 0.01f) {
-            desired_positions[SERVO_YAW]    = (float)servo_get_angle(SERVO_YAW);
+            desired_positions[SERVO_YAW]    = servo_get_angle_f(SERVO_YAW);
             step_accumulator[SERVO_YAW]     = 0.0f;
         }
         if (fabsf(jy) <= 0.01f) {
-            desired_positions[SERVO_PITCH]  = (float)servo_get_angle(SERVO_PITCH);
+            desired_positions[SERVO_PITCH]  = servo_get_angle_f(SERVO_PITCH);
             step_accumulator[SERVO_PITCH]   = 0.0f;
         }
         if (!base_has_input) {
-            desired_positions[SERVO_BASE]   = (float)servo_get_angle(SERVO_BASE);
+            desired_positions[SERVO_BASE]   = servo_get_angle_f(SERVO_BASE);
             step_accumulator[SERVO_BASE]    = 0.0f;
         }
         if (fabsf(yw) <= 0.01f) {
-            desired_positions[SERVO_SPALLA] = (float)servo_get_angle(SERVO_SPALLA);
+            desired_positions[SERVO_SPALLA] = servo_get_angle_f(SERVO_SPALLA);
             step_accumulator[SERVO_SPALLA]  = 0.0f;
         }
         if (fabsf(pt) <= 0.01f) {
-            desired_positions[SERVO_GOMITO] = (float)servo_get_angle(SERVO_GOMITO);
+            desired_positions[SERVO_GOMITO] = servo_get_angle_f(SERVO_GOMITO);
             step_accumulator[SERVO_GOMITO]  = 0.0f;
         }
         if (!roll_has_input) {
-            desired_positions[SERVO_ROLL]   = (float)servo_get_angle(SERVO_ROLL);
+            desired_positions[SERVO_ROLL]   = servo_get_angle_f(SERVO_ROLL);
             step_accumulator[SERVO_ROLL]    = 0.0f;
         }
     }
@@ -986,15 +989,15 @@ void j5vr_apply_hybrid(const struct j5vr_state *s)
         const bool base_has_input = (trig_l && !trig_r) || (trig_r && !trig_l);
 
         if (!base_has_input) {
-            desired_positions[SERVO_BASE] = (float)servo_get_angle(SERVO_BASE);
+            desired_positions[SERVO_BASE] = servo_get_angle_f(SERVO_BASE);
             step_accumulator[SERVO_BASE]  = 0.0f;
         }
         if (fabsf(yw) <= 0.01f) {
-            desired_positions[SERVO_SPALLA] = (float)servo_get_angle(SERVO_SPALLA);
+            desired_positions[SERVO_SPALLA] = servo_get_angle_f(SERVO_SPALLA);
             step_accumulator[SERVO_SPALLA]  = 0.0f;
         }
         if (fabsf(pt) <= 0.01f) {
-            desired_positions[SERVO_GOMITO] = (float)servo_get_angle(SERVO_GOMITO);
+            desired_positions[SERVO_GOMITO] = servo_get_angle_f(SERVO_GOMITO);
             step_accumulator[SERVO_GOMITO]  = 0.0f;
         }
     }

@@ -55,6 +55,9 @@ bool servo_set_angle_f(servo_joint_t joint, float angle_deg);
 /** Angolo logico corrente 0–180 per tutti i giunti. */
 uint8_t servo_get_angle(servo_joint_t joint);
 
+/** Angolo logico corrente con la frazione (ultimo valore comandato, 0–180). */
+float servo_get_angle_f(servo_joint_t joint);
+
 /* Ultimo pulse width applicato (microsecondi); 0 se mai applicato / disabilitato */
 uint16_t servo_get_last_pulse_us(servo_joint_t joint);
 
