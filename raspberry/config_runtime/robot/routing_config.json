@@ -58,8 +58,8 @@
       "max": 145
     },
     "roll": {
-      "min": 45,
-      "max": 135
+      "min": 68,
+      "max": 128
     }
   },
   "manualRpyUi": {
