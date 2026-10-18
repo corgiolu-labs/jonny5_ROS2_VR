@@ -18,6 +18,12 @@ collimator moves cam1's crop onto the object under cam0's crosshair, so at high 
 the residual disparity is small). The offset is clamped to the sensor area (no margin at 1x). The crop eases towards
 the target (time constant ZOOM_TAU_S) so both cameras move smoothly together. The applied zoom is written to
 /dev/shm/jonny5_cam{N}_zoom.json ({"zoom", "target", "ts"}) for the collimator and ws-teleop.
+
+Brightness: UDP {"ev": stops} (EV_MIN .. EV_MAX). With the fixed probed exposure (--shutter/--gain, both cameras
+matched) the gain is scaled by 2^ev: below gain 1 the shutter gets shorter, above the sensor's analogue maximum
+the shutter gets longer up to the frame period and the rest is requested as gain (the ISP adds it as digital
+gain). Both cameras receive the same ev, so the eyes stay matched. With auto exposure (--shutter 0) the ev goes to
+libcamera's ExposureValue. The applied exposure is logged once the sensor reports it.
 """
 from __future__ import annotations
 
@@ -41,6 +47,9 @@ from picamera2.request import MappedArray
 CTL_PORT_BASE = 5600
 ZOOM_MAX = 6.0
 ZOOM_TAU_S = 0.15
+EV_MIN, EV_MAX = -2.0, 2.0
+ANALOGUE_GAIN_MAX = 16.0     # IMX708
+GAIN_REQUEST_MAX = 64.0      # beyond the analogue maximum the ISP applies digital gain
 STATE_DIR = "/dev/shm"
 
 
@@ -236,10 +245,40 @@ def main():
         if ts is None:
             return
         state["sensor_ts"] = (int(ts), time.time())   # for the sync check (phase between the two cameras)
+        if expo.get("log_after") and time.monotonic() > expo["log_after"]:
+            md = request.get_metadata()
+            expo["log_after"] = None
+            log(f"cam{cam}: ev {expo['ev']:+.2f} -> shutter {md.get('ExposureTime')} us, analogue gain "
+                f"{md.get('AnalogueGain', 0):.2f}, digital gain {md.get('DigitalGain', 0):.2f}")
         g = int(round(ts / period_ns)) // max(1, args.intra)
         if g != gop["last"]:
             gop["last"] = g
             enc.force_key_frame()
+
+    # ---- brightness (UDP {"ev": stops}), see the module docstring
+    shutter_max = int(1e6 / args.fps) - 400
+    expo = {"ev": 0.0, "log_after": None}
+
+    def apply_ev(ev: float):
+        ev = max(EV_MIN, min(EV_MAX, ev))
+        expo["ev"] = ev
+        if args.shutter > 0:
+            shutter = float(args.shutter)
+            gain = max(1.0, args.gain) * (2.0 ** ev)
+            if gain < 1.0:                               # darker than the probe at gain 1: shorter shutter
+                shutter *= gain
+                gain = 1.0
+            elif gain > ANALOGUE_GAIN_MAX and shutter < shutter_max:
+                s2 = min(float(shutter_max), shutter * gain / ANALOGUE_GAIN_MAX)
+                gain *= shutter / s2
+                shutter = s2
+            gain = min(GAIN_REQUEST_MAX, gain)
+            picam2.set_controls({"ExposureTime": max(50, int(round(shutter))), "AnalogueGain": float(gain)})
+            log(f"cam{cam}: ev {ev:+.2f} -> request shutter {int(shutter)} us, gain {gain:.2f}")
+        else:
+            picam2.set_controls({"ExposureValue": float(ev)})
+            log(f"cam{cam}: ev {ev:+.2f} (auto exposure, ExposureValue)")
+        expo["log_after"] = time.monotonic() + 0.5
 
     picam2.pre_callback = align_keyframes
     if args.sync != "off":
@@ -274,6 +313,7 @@ def main():
                            "offset": [round(v, 2) for v in state["off_applied"]],
                            "offset_target": [round(v, 2) for v in state["off_t"]],
                            "sensor_ts": state.get("sensor_ts"),
+                           "ev": round(expo["ev"], 3),
                            "ts": round(time.time(), 3)}, f)
             os.replace(tmp_path, state_path)
         except OSError:
@@ -295,6 +335,10 @@ def main():
                     z = float(msg["zoom"])
                     if math.isfinite(z):
                         state["target"] = max(1.0, min(ZOOM_MAX, z))
+                if "ev" in msg:
+                    ev = float(msg["ev"])
+                    if math.isfinite(ev) and abs(ev - expo["ev"]) > 1e-3:
+                        apply_ev(ev)
                 if "stamp" in msg:
                     enc.stamp_on = bool(msg["stamp"])
                     log(f"cam{cam}: capture stamp {'ON' if enc.stamp_on else 'OFF'}")

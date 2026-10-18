@@ -120,6 +120,32 @@ def _send_cam_zoom(z: float) -> None:
         pass
 
 
+# Camera brightness (tools/cam_stream.py {"ev": stops}): from the native Quest app's slider (cam_exposure), sent to
+# both capture processes (same value = eyes stay matched) and re-sent every second like the zoom (a capture
+# restart starts at ev 0). Published in the telemetry as cam_ev.
+_cam_ev_req: dict = {"ev": None, "sent": 0.0}
+
+
+def _send_cam_ev(ev: float) -> None:
+    global _cam_zoom_sock
+    try:
+        if _cam_zoom_sock is None:
+            _cam_zoom_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        data = json.dumps({"ev": float(ev)}).encode()
+        for cam in (0, 1):
+            _cam_zoom_sock.sendto(data, ("127.0.0.1", _CAM_ZOOM_PORT_BASE + cam))
+        _cam_ev_req["sent"] = time.monotonic()
+    except OSError:
+        pass
+
+
+def set_cam_exposure(ev) -> None:
+    """Brightness slider of the Quest app (cam_exposure): stops relative to the probed exposure, -2 .. +2."""
+    if isinstance(ev, (int, float)) and ev == ev:
+        _cam_ev_req["ev"] = max(-2.0, min(2.0, float(ev)))
+        _send_cam_ev(_cam_ev_req["ev"])
+
+
 def _cam_zoom_applied():
     """Applied sensor zoom, or None when the capture does not publish one (rpicam-vid)."""
     try:
@@ -568,6 +594,10 @@ async def imu_debug_loop(get_robot_state) -> None:
                         payload["cam_zoom"] = round(cz, 3)
                     if _cam_zoom_req["zoom"] is not None and time.monotonic() - _cam_zoom_req["sent"] > 1.0:
                         _send_cam_zoom(_cam_zoom_req["zoom"])
+                    if _cam_ev_req["ev"] is not None:
+                        payload["cam_ev"] = _cam_ev_req["ev"]
+                        if time.monotonic() - _cam_ev_req["sent"] > 1.0:
+                            _send_cam_ev(_cam_ev_req["ev"])
                     div = cz if (cz is not None and _cam_zoom_req["zoom"] is not None) else 1.0
                     if _vr_zoom["zoom0"] is not None:
                         payload["vr_zoom0"] = max(1.0, _vr_zoom["zoom0"] / div)

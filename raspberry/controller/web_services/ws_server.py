@@ -88,6 +88,34 @@ logging.basicConfig(
 logger = logging.getLogger("ws_teleop")
 
 
+# Robot clock: no internet on the hotspot / bench link and no RTC battery, so after a power cycle the clock restarts
+# from the last saved time (days behind). The native Quest app (NTP-synced) sends {"type":"time_sync","epoch_ms"}
+# on connection; a difference over 2 s is corrected with sudo date (passwordless sudo for the service user) and the
+# timesyncd clock file is touched so the next boot starts from here.
+_CLOCK_MIN_EPOCH = 1767225600.0      # 2026-01-01: older client clocks are not trusted
+_last_clock_sync = 0.0
+
+
+def _sync_clock(epoch_ms) -> None:
+    global _last_clock_sync
+    t = float(epoch_ms) / 1000.0
+    if not (t > _CLOCK_MIN_EPOCH):
+        return
+    diff = t - time.time()
+    if abs(diff) < 2.0 or time.monotonic() - _last_clock_sync < 60.0:
+        return
+    _last_clock_sync = time.monotonic()
+    try:
+        r = subprocess.run(["sudo", "-n", "date", "-u", "-s", f"@{t:.3f}"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            subprocess.run(["sudo", "-n", "touch", "/var/lib/systemd/timesync/clock"], capture_output=True, timeout=5)
+            logger.info("[CLOCK] corrected by %+.1f s from the client time -> %s", diff, time.strftime("%Y-%m-%d %H:%M:%S"))
+        else:
+            logger.warning("[CLOCK] date failed (%s): %s", r.returncode, (r.stderr or "").strip())
+    except Exception as e:
+        logger.warning("[CLOCK] sync failed: %s", e)
+
+
 def _resolve_tls_pair() -> tuple[str, str, str, str]:
     requested_cert = os.path.abspath(
         os.environ.get("WEBRTC_CERT_FILE", rcfg.get_runtime_config_path("tls_cert"))
@@ -837,6 +865,22 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
             # Stato zoom VR: il viewer XR notifica il backend a ~10Hz quando l'utente
             # cambia zoom. Il valore viene incluso nei payload di telemetria successivi
             # (campi vr_zoom0 / vr_zoom1) per la visualizzazione su dashboard.
+            # Camera brightness slider of the native Quest app (tools/cam_stream.py, both cameras)
+            if isinstance(data, dict) and data.get("type") == "cam_exposure":
+                try:
+                    _imu.set_cam_exposure(data.get("ev"))
+                except Exception:
+                    pass
+                continue
+
+            # Client clock -> robot clock (no internet / RTC battery on the robot), see _sync_clock
+            if isinstance(data, dict) and data.get("type") == "time_sync":
+                try:
+                    _sync_clock(data.get("epoch_ms"))
+                except Exception:
+                    pass
+                continue
+
             if isinstance(data, dict) and data.get("type") == "vr_zoom_state":
                 try:
                     z0 = data.get("zoom0")
