@@ -87,7 +87,7 @@ POINT_SPEED_DEG_S = 40.0    # largest joint motion / duration
 POINT_MIN_T_S = 1.5
 
 # head motion prediction (routing_config "gimbalPrediction": enable, lead_s, max_deg)
-PRED_LEAD_S = 0.15          # how far ahead (the servos are ~0.2 s behind their targets)
+PRED_LEAD_S = 0.20          # how far ahead (servos ~0.2 s behind; A/B 2026-10-18: pitch lag 125 -> 0 ms)
 PRED_WIN_S = 0.08           # angular velocity over this window (intent arrival jitter on Wi-Fi)
 PRED_TAU_S = 0.03           # smoothing of the angular velocity
 PRED_W_LO, PRED_W_HI = 4.0, 20.0   # deg/s: no prediction below LO, full above HI (smoothstep in between)

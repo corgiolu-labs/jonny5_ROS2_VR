@@ -179,7 +179,7 @@
   },
   "gimbalPrediction": {
     "enable": true,
-    "lead_s": 0.15,
+    "lead_s": 0.20,
     "max_deg": 12.0
   }
 }
