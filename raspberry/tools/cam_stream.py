@@ -31,6 +31,7 @@ import time
 
 
 import av  # noqa: F401  (PyAV, used by the encoder)
+import numpy as np
 from libcamera import controls
 from picamera2 import Picamera2
 from picamera2.encoders import LibavH264Encoder
@@ -71,6 +72,26 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
             params += [f"vbv-maxrate={kbps}", f"vbv-bufsize={buf}"]
         cc.options["x264-params"] = ":".join(params)
 
+    def _yuv420_frame(self, arr):
+        """Copy the YUV420 buffer (stride 896 for 800 px) plane by plane into a frame of the exact size.
+        av.VideoFrame.from_numpy_buffer turns the 675 rows of an 800x450 buffer into a 448-row frame: the U / V
+        planes were read 2 luma rows early (green / yellow garbage in the top 8 rows, chroma 4 rows off, stream
+        encoded at 800x448). 0.15 ms per frame."""
+        if self._av_input_format != "yuv420p":
+            return av.VideoFrame.from_numpy_buffer(arr, format=self._av_input_format, width=self.width)
+        w, h = self.width, self.height
+        stride = arr.shape[1]
+        ch, cs = (h + 1) // 2, stride // 2
+        fl = arr.reshape(-1)
+        y = fl[:stride * h].reshape(h, stride)[:, :w]
+        u = fl[stride * h:stride * h + cs * ch].reshape(ch, cs)[:, :w // 2]
+        v = fl[stride * h + cs * ch:stride * h + 2 * cs * ch].reshape(ch, cs)[:, :w // 2]
+        frame = av.VideoFrame(w, h, "yuv420p")
+        for plane, data in zip(frame.planes, (y, u, v)):
+            dst = np.frombuffer(plane, np.uint8).reshape(plane.height, plane.line_size)
+            dst[:, :data.shape[1]] = data
+        return frame
+
     def _encode(self, stream, request):
         # Same as LibavH264Encoder._encode, but a forced keyframe uses PictureType.I: Picamera2 0.3.34 assigns
         # the string "I", which PyAV 14 rejects (TypeError) and kills the capture.
@@ -78,7 +99,7 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
         self._request_release_queue.append(request)
         timestamp_us = self._timestamp(request)
         with MappedArray(request, stream) as m:
-            frame = av.VideoFrame.from_numpy_buffer(m.array, format=self._av_input_format, width=self.width)
+            frame = self._yuv420_frame(m.array)
             frame.pts = timestamp_us
             if self._key_frames_requested > self._key_frames_generated:
                 self._key_frames_generated = self._key_frames_requested
@@ -141,6 +162,8 @@ def main():
     smin, smax, _sdef = picam2.camera_controls["ScalerCrop"]
     full = smax  # (x, y, w, h)
     log(f"cam{cam}: sensor mode {picam2.camera_configuration()['sensor']}, crop max {full}, min {smin}")
+    mc = picam2.camera_configuration()["main"]
+    log(f"cam{cam}: main stream {mc.get('size')} {mc.get('format')} stride {mc.get('stride')} framesize {mc.get('framesize')}")
 
     k = full[2] / float(args.width)   # sensor pixels per zoom-1 stream pixel
 
@@ -178,6 +201,7 @@ def main():
         ts = request.get_metadata().get("SensorTimestamp")
         if ts is None:
             return
+        state["sensor_ts"] = (int(ts), time.time())   # for the sync check (phase between the two cameras)
         g = int(round(ts / period_ns)) // max(1, args.intra)
         if g != gop["last"]:
             gop["last"] = g
@@ -215,6 +239,7 @@ def main():
                 json.dump({"zoom": round(state["zoom"], 4), "target": round(state["target"], 4),
                            "offset": [round(v, 2) for v in state["off_applied"]],
                            "offset_target": [round(v, 2) for v in state["off_t"]],
+                           "sensor_ts": state.get("sensor_ts"),
                            "ts": round(time.time(), 3)}, f)
             os.replace(tmp_path, state_path)
         except OSError:
