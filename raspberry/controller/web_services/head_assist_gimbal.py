@@ -38,6 +38,12 @@ through the object centre with a level horizon. The pose is reached with a minim
 held: releasing the grips stops it, like every motion in mode 5); then the references are re-latched at the new
 pose and the head keeps steering from there without a jump.
 
+Head motion prediction (2026-10-18, routing_config "gimbalPrediction"): the IMU campaign measured ~200-250 ms
+between the firmware servo targets and the real wrist motion (command -> firmware only 41 ms). The target camera
+orientation is computed from the head orientation PREDICTED lead_s ahead: angular velocity of the head (finite
+difference over PRED_WIN_S of the intent arrival times, smoothed), applied for lead_s, faded out below a few deg/s
+(no amplified micro-motion while holding still) and capped at max_deg (no big overshoot when the head stops).
+
 Selected with routing_config.json "assistMode": "gimbal" (other values: "rate" legacy, "dls").
 """
 from __future__ import annotations
@@ -79,6 +85,13 @@ POINT_STANDOFF_M = 0.15     # camera -> object centre, closest approach
 POINT_REACH_FRAC = 0.98     # "maximum extension" = this fraction of the stretched arm
 POINT_SPEED_DEG_S = 40.0    # largest joint motion / duration
 POINT_MIN_T_S = 1.5
+
+# head motion prediction (routing_config "gimbalPrediction": enable, lead_s, max_deg)
+PRED_LEAD_S = 0.15          # how far ahead (the servos are ~0.2 s behind their targets)
+PRED_WIN_S = 0.08           # angular velocity over this window (intent arrival jitter on Wi-Fi)
+PRED_TAU_S = 0.03           # smoothing of the angular velocity
+PRED_W_LO, PRED_W_HI = 4.0, 20.0   # deg/s: no prediction below LO, full above HI (smoothstep in between)
+PRED_MAX_DEG = 12.0
 
 # XR (x right, y up, z back) -> robot base (x forward, y left, z up)
 _C = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
@@ -310,6 +323,10 @@ class GimbalState:
         self.v_lims = None           # (virtual lo[6], virtual hi[6]) of the last step
         self.goal = None             # request_point motion in progress
         self.goal_done = None        # info of the last reached goal, taken by ws_server (pop_goal_done)
+        self.head_hist = []          # (t, R_head) of the last ~0.3 s, for the prediction
+        self.w_f = np.zeros(3)       # smoothed head angular velocity, rad/s (robot base frame)
+        self.w_t = 0.0
+        self.pred_deg = 0.0
 
 
 _state = GimbalState()
@@ -351,7 +368,7 @@ def set_campaign_label(label: str) -> None:
     logger.info("[CAMPAIGN] label %s", label)
 
 
-def _campaign_log(st, intent, full_v, r_target, physical_tel):
+def _campaign_log(st, intent, full_v, r_target, physical_tel, r_target_raw=None):
     c = _campaign
     if c["f"] is None:
         return
@@ -374,6 +391,8 @@ def _campaign_log(st, intent, full_v, r_target, physical_tel):
            "cmd_v": [round(float(v), 3) for v in full_v],
            "tel_phys": [round(float(v), 2) for v in physical_tel],
            "target_R": None if r_target is None else [round(float(v), 5) for v in np.asarray(r_target).reshape(-1)],
+           "target_raw_R": None if r_target_raw is None else [round(float(v), 5) for v in np.asarray(r_target_raw).reshape(-1)],
+           "pred_deg": round(float(st.pred_deg), 2),
            "imu": imu}
     try:
         c["f"].write(json.dumps(rec) + "\n")
@@ -382,6 +401,57 @@ def _campaign_log(st, intent, full_v, r_target, physical_tel):
             c["f"].flush()
     except OSError:
         pass
+
+
+def _log_map(r):
+    """Rotation vector (rad) of a rotation matrix."""
+    c = max(-1.0, min(1.0, (float(np.trace(r)) - 1.0) / 2.0))
+    a = math.acos(c)
+    if a < 1e-9:
+        return np.zeros(3)
+    v = np.array([r[2, 1] - r[1, 2], r[0, 2] - r[2, 0], r[1, 0] - r[0, 1]])
+    return v * (a / (2.0 * math.sin(a)))
+
+
+def _exp_map(v):
+    a = float(np.linalg.norm(v))
+    if a < 1e-12:
+        return np.eye(3)
+    k = v / a
+    kx = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    return np.eye(3) + math.sin(a) * kx + (1.0 - math.cos(a)) * (kx @ kx)
+
+
+def _predict_head(st, r_head, now, cfg):
+    """Head orientation lead_s ahead (see the module docstring); r_head itself when disabled / still."""
+    cfg = cfg or {}
+    hist = st.head_hist
+    hist.append((now, r_head))
+    while hist and now - hist[0][0] > 0.3:
+        hist.pop(0)
+    if not cfg.get("enable", True):
+        st.pred_deg = 0.0
+        return r_head
+    old = None
+    for t_o, r_o in hist:
+        if now - t_o >= PRED_WIN_S:
+            old = (t_o, r_o)
+    if old is None:
+        return r_head
+    w = (r_head @ old[1].T)
+    w = _log_map(w) / max(1e-3, now - old[0])
+    dt = min(0.1, max(0.0, now - st.w_t)) if st.w_t else 0.0
+    st.w_t = now
+    a = 1.0 - math.exp(-dt / PRED_TAU_S) if dt > 0 else 1.0
+    st.w_f = st.w_f + a * (w - st.w_f)
+    speed = math.degrees(float(np.linalg.norm(st.w_f)))
+    x = max(0.0, min(1.0, (speed - PRED_W_LO) / (PRED_W_HI - PRED_W_LO)))
+    fade = x * x * (3.0 - 2.0 * x)
+    ang = min(float(cfg.get("max_deg", PRED_MAX_DEG)), speed * float(cfg.get("lead_s", PRED_LEAD_S)) * fade)
+    st.pred_deg = ang
+    if ang < 1e-3 or speed < 1e-6:
+        return r_head
+    return _exp_map(st.w_f / np.linalg.norm(st.w_f) * math.radians(ang)) @ r_head
 
 
 def notify_headzero_external():
@@ -431,7 +501,7 @@ def _head_pos(intent: dict):
 
 
 def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], uart_manager, grip: bool,
-         pos_cfg: dict | None = None):
+         pos_cfg: dict | None = None, pred_cfg: dict | None = None):
     """Returns (arm_physical[3] | None, grip_active, hold_active, target_id) and rewrites intent quat_* ."""
     st = _state
     lim = _ha._joint_limits_dict(limits_src)
@@ -479,6 +549,9 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         st.zero_ok_at = 0.0
         st.zero_task = asyncio.get_event_loop().create_task(_send_headzero(uart_manager))
         st.arm_v = virt[:3].copy()
+        st.head_hist = []
+        st.w_f = np.zeros(3)
+        st.w_t = 0.0
         logger.info("[GIMBAL] engage: HEADZERO, arm virt %s", [round(float(v), 1) for v in virt[:3]])
     if st.phase == "zeroing":
         send_quat(st.q_hold)
@@ -538,7 +611,9 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         return out
 
     # ---- track
-    r_target = r_head @ st.r_head_ref.T @ st.r_cam_ref
+    r_target_raw = r_head @ st.r_head_ref.T @ st.r_cam_ref
+    r_head_p = _predict_head(st, r_head, time.monotonic(), pred_cfg)
+    r_target = r_head_p @ st.r_head_ref.T @ st.r_cam_ref
     q4, q5, q6 = wrist_ik(qm[:3], r_target)
     w_deg = np.degrees([q4, q5, q6]) + 90.0          # wrist virtual
     # routing_config limits are PHYSICAL servo degrees (the firmware clamps there): convert them to virtual with
@@ -639,7 +714,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     full_v[0:3] = [float(v) for v in st.arm_v]
     full_v[3:6] = w_cmd
     arm_phys, _, _, _ = _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat)
-    _campaign_log(st, intent, full_v, r_target, tel_raw)
+    _campaign_log(st, intent, full_v, r_target, tel_raw, r_target_raw)
 
     if now - st.last_log >= 1.0:
         st.last_log = now
@@ -651,11 +726,11 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
             r_c, z_c = wc_rz(math.radians(st.arm_v[1] - 90.0), math.radians(st.arm_v[2] - 90.0))
             pos_txt = " pos d[r z] %+.0f %+.0f mm wc tgt [%.0f %.0f] cmd [%.0f %.0f] mm" % (
                 dr * 1000, dz * 1000, r_t * 1000, z_t * 1000, r_c * 1000, z_c * 1000)
-        logger.info("[GIMBAL] target ypr %s cam(cmd) ypr %s wrist virt %s%s arm virt %s dt %.0f ms%s",
+        logger.info("[GIMBAL] target ypr %s cam(cmd) ypr %s wrist virt %s%s arm virt %s dt %.0f ms pred %.1f deg%s",
                     [round(float(v), 1) for v in tg], [round(float(v), 1) for v in fk],
                     [round(float(v), 1) for v in w_cmd],
                     " (clamped)" if any(abs(w_cmd[i] - w_deg[i]) > 0.05 for i in range(3)) else "",
-                    [round(float(v), 1) for v in st.arm_v], dt * 1000.0, pos_txt)
+                    [round(float(v), 1) for v in st.arm_v], dt * 1000.0, st.pred_deg, pos_txt)
     return arm_phys, True, False, st.target_id
 
 

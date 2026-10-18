@@ -176,5 +176,10 @@
   "gimbalPosition": {
     "enable": true,
     "scale": 0.7
+  },
+  "gimbalPrediction": {
+    "enable": true,
+    "lead_s": 0.15,
+    "max_deg": 12.0
   }
 }
