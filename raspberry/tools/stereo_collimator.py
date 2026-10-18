@@ -81,6 +81,12 @@ DY_LEARN_N = 25
 DY_LEARN_MIN = 5
 DY_SAVE_DELTA = 1.0
 DY_SAVE_EVERY_S = 60.0
+# Sensor zoom (tools/cam_stream.py, centred ScalerCrop): the stream pixels are zoom x the zoom-1 pixels. All the
+# geometry (history, dy learning, dx_inf, distance, calibration) is kept in ZOOM-1 pixels; the messages are in
+# stream pixels (what the viewer draws). While the zoom moves the matching is skipped and the last lock is
+# rescaled (a centred crop scales the offsets from the centre by the zoom ratio).
+CAM_ZOOM_PATH = "/dev/shm/jonny5_cam0_zoom.json"
+ZOOM_SETTLE_S = 0.35
 
 
 def log(*a):
@@ -158,13 +164,13 @@ def subpixel(v_m, v_0, v_p) -> float:
     return 0.0 if abs(den) < 1e-9 else 0.5 * (v_m - v_p) / den
 
 
-def match(left: np.ndarray, right: np.ndarray, prev_dx=None):
+def match(left: np.ndarray, right: np.ndarray, prev_dx=None, zoom: float = 1.0):
     """Returns (dx, dy, score, ok, why, window_px_full) in FULL-resolution pixels, cam1 relative to cam0 centre.
     Tries the template sides in TPLS from the smallest; the first one with enough texture whose match passes the
     score/uniqueness checks wins."""
     last = (None, None, 0.0, False, "flat", 0)
     for tpl in TPLS:
-        r = match_size(left, right, tpl, prev_dx)
+        r = match_size(left, right, tpl, prev_dx, zoom)
         if r[4] == "flat":
             continue
         if r[3]:
@@ -173,14 +179,15 @@ def match(left: np.ndarray, right: np.ndarray, prev_dx=None):
     return last
 
 
-def match_size(left: np.ndarray, right: np.ndarray, TPL: int, prev_dx=None):
+def match_size(left: np.ndarray, right: np.ndarray, TPL: int, prev_dx=None, zoom: float = 1.0):
     h, w = left.shape
     cy, cx = h // 2, w // 2
     t = left[cy - TPL // 2: cy + TPL // 2, cx - TPL // 2: cx + TPL // 2]
     if float(t.std()) < MIN_TEXTURE:
         return None, None, 0.0, False, "flat", 2 * TPL
     y0, y1 = max(0, cy - TPL // 2 - DY_MAX), min(h, cy + TPL // 2 + DY_MAX)
-    x0, x1 = max(0, cx - TPL // 2 + DX_MIN), min(w, cx + TPL // 2 + DX_MAX)
+    # the disparity range grows with the sensor zoom; the image border limits it anyway
+    x0, x1 = max(0, cx - TPL // 2 + int(DX_MIN * zoom)), min(w, cx + TPL // 2 + int(DX_MAX * zoom))
     sr = right[y0:y1, x0:x1]
     m = ncc(sr, t)
     iy, ix = np.unravel_index(int(np.argmax(m)), m.shape)
@@ -189,12 +196,12 @@ def match_size(left: np.ndarray, right: np.ndarray, TPL: int, prev_dx=None):
     masked[max(0, iy - 3): iy + 4, max(0, ix - 3): ix + 4] = -1
     second = float(masked.max())
     why_ok = ""
-    if best >= MIN_SCORE and best - second < MIN_MARGIN and prev_dx is not None:
+    if best >= MIN_SCORE and best - second < MIN_MARGIN and prev_dx is not None:  # prev_dx: stream px
         # ambiguous: among the near-best places pick the one closest to the previous lock
         cy_, cx_ = np.nonzero(m >= best - CONT_BAND)
         cand_dx = 2.0 * ((x0 + cx_ + TPL / 2) - cx)
         k = int(np.argmin(np.abs(cand_dx - prev_dx)))
-        if abs(cand_dx[k] - prev_dx) <= CONT_PX:
+        if abs(cand_dx[k] - prev_dx) <= CONT_PX * zoom:
             iy, ix = int(cy_[k]), int(cx_[k])
             best = float(m[iy, ix])
             second = best - MIN_MARGIN  # accepted by continuity
@@ -251,6 +258,32 @@ def save_dy_off(dy_off: float):
         log(f"cannot save dy_off: {e}")
 
 
+class CamZoom:
+    """Applied sensor zoom of the cameras (cam_stream.py state file); 1 when the file is missing / stale
+    (rpicam-vid capture). stable = not moving for ZOOM_SETTLE_S."""
+
+    def __init__(self):
+        self.z = 1.0
+        self.changed_at = 0.0
+
+    def read(self):
+        z, target = 1.0, 1.0
+        try:
+            with open(CAM_ZOOM_PATH) as f:
+                st = json.load(f)
+            if time.time() - float(st.get("ts", 0)) < 3.0:
+                z = float(st.get("zoom", 1.0))
+                target = float(st.get("target", z))
+        except Exception:
+            pass
+        now = time.monotonic()
+        if abs(z - self.z) > 0.002:
+            self.changed_at = now
+        self.z = z
+        stable = abs(z - target) < 0.005 and now - self.changed_at > ZOOM_SETTLE_S
+        return z, stable
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rtsp", default="rtsp://127.0.0.1:8554")
@@ -279,6 +312,8 @@ def main():
     last_seq = (-1, -1)
     ws = None
     calib_samples: list = []
+    camzoom = CamZoom()
+    last_out = None       # (mdx1, mdy1, dist) of the last lock, zoom-1 px, for the rescaled hold while zooming
 
     def ws_reader(sock):
         try:
@@ -312,11 +347,35 @@ def main():
             time.sleep(0.02)
             continue
         last_seq = (sl, srq)
-        prev = last_lock[0] if time.monotonic() - last_lock[1] < CONT_MAX_AGE_S else None
-        dx, dy, score, ok, why, win = match(fl, fr, prev)
+        z, z_stable = camzoom.read()
+        if not z_stable:
+            # zoom moving: these keyframes mix crops, do not match; send the last lock rescaled to this zoom
+            msg = {"type": "stereo_collimation", "score": 0.0, "dx_inf": round(calib["dx_inf"] * z, 2), "win": 0,
+                   "ts": round(time.time(), 3), "zoom": round(z, 3)}
+            if last_out is not None and time.monotonic() - last_lock[1] < CONT_MAX_AGE_S:
+                msg.update({"lock": True, "dx": round(last_out[0] * z, 2), "dy": round(last_out[1] * z, 2),
+                            "dist_mm": round(last_out[2], 1) if last_out[2] else None, "why": "zoom"})
+                last_lock = (last_lock[0], time.monotonic())
+            else:
+                msg.update({"lock": False, "dx": round(calib["dx_inf"] * z, 2), "dy": round(calib["dy_off"] * z, 2),
+                            "dist_mm": None, "why": "zoom"})
+            if ws is not None:
+                try:
+                    ws.send(json.dumps(msg))
+                except Exception:
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+                    ws = None
+            continue
+        prev = last_lock[0] * z if time.monotonic() - last_lock[1] < CONT_MAX_AGE_S else None
+        dx, dy, score, ok, why, win = match(fl, fr, prev, z)
+        if ok:
+            dx, dy = dx / z, dy / z          # zoom-1 pixels from here on
 
-        msg = {"type": "stereo_collimation", "score": round(score, 3), "dx_inf": round(calib["dx_inf"], 2),
-               "win": win, "ts": round(time.time(), 3)}
+        msg = {"type": "stereo_collimation", "score": round(score, 3), "dx_inf": round(calib["dx_inf"] * z, 2),
+               "win": win, "ts": round(time.time(), 3), "zoom": round(z, 3)}
         if ok:
             last_lock = (dx, time.monotonic())
             dy_hist = (dy_hist + [dy])[-DY_LEARN_N:]
@@ -333,7 +392,8 @@ def main():
             mdy = float(np.median([h[1] for h in hist]))
             d = calib["dx_inf"] - mdx
             dist = F_PX * BASELINE_MM / d if d > 0.5 else None
-            msg.update({"lock": True, "dx": round(mdx, 2), "dy": round(mdy, 2),
+            last_out = (mdx, mdy, dist)
+            msg.update({"lock": True, "dx": round(mdx * z, 2), "dy": round(mdy * z, 2),
                         "dist_mm": round(dist, 1) if dist else None})
             if why:
                 msg["why"] = why
@@ -354,7 +414,7 @@ def main():
                         return
         else:
             hist = []
-            msg.update({"lock": False, "dx": round(calib["dx_inf"], 2), "dy": round(calib["dy_off"], 2),
+            msg.update({"lock": False, "dx": round(calib["dx_inf"] * z, 2), "dy": round(calib["dy_off"] * z, 2),
                         "dist_mm": None, "why": why})
 
         if args.print or (int(time.time()) % 10 == 0 and sl % 5 == 0):

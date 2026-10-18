@@ -31,6 +31,7 @@ import json
 import logging
 import math
 import os
+import socket
 import time
 
 import numpy as np
@@ -95,14 +96,52 @@ _SETTINGS_CACHE_TTL_S = 2.0
 # Stato zoom VR (ricevuto dal viewer XR via vr_zoom_state, incluso in telemetry).
 _vr_zoom: dict = {"zoom0": None, "zoom1": None, "ts": 0.0}
 
+# Sensor zoom (tools/cam_stream.py): the native Quest app sends vr_zoom_state with "camera": true; the requested
+# zoom goes to both capture processes over UDP (127.0.0.1:5600 + cam) and is re-sent every second (a capture
+# restart, e.g. refocus, starts at 1x). The applied zoom comes back from /dev/shm/jonny5_cam0_zoom.json and is
+# published in the telemetry as cam_zoom; vr_zoom0/1 become the RESIDUAL digital zoom (requested / applied) so
+# the dashboards (CSS scale) and the app do not zoom the already zoomed stream again.
+_CAM_ZOOM_PORT_BASE = 5600
+_CAM_ZOOM_STATE = "/dev/shm/jonny5_cam0_zoom.json"
+_cam_zoom_req: dict = {"zoom": None, "sent": 0.0}
+_cam_zoom_sock = None
 
-def set_vr_zoom_state(zoom0, zoom1) -> None:
+
+def _send_cam_zoom(z: float) -> None:
+    global _cam_zoom_sock
+    try:
+        if _cam_zoom_sock is None:
+            _cam_zoom_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        data = json.dumps({"zoom": float(z)}).encode()
+        for cam in (0, 1):
+            _cam_zoom_sock.sendto(data, ("127.0.0.1", _CAM_ZOOM_PORT_BASE + cam))
+        _cam_zoom_req["sent"] = time.monotonic()
+    except OSError:
+        pass
+
+
+def _cam_zoom_applied():
+    """Applied sensor zoom, or None when the capture does not publish one (rpicam-vid)."""
+    try:
+        with open(_CAM_ZOOM_STATE) as f:
+            st = json.load(f)
+        if time.time() - float(st.get("ts", 0)) < 3.0:
+            return float(st.get("zoom", 1.0))
+    except Exception:
+        pass
+    return None
+
+
+def set_vr_zoom_state(zoom0, zoom1, camera: bool = False) -> None:
     """Aggiorna lo stato zoom VR (chiamato da ws_server al ricevere vr_zoom_state)."""
     if isinstance(zoom0, (int, float)):
         _vr_zoom["zoom0"] = float(zoom0)
     if isinstance(zoom1, (int, float)):
         _vr_zoom["zoom1"] = float(zoom1)
     _vr_zoom["ts"] = time.monotonic()
+    if camera and isinstance(zoom0, (int, float)):
+        _cam_zoom_req["zoom"] = float(zoom0)
+        _send_cam_zoom(float(zoom0))
 
 
 def _get_cached_settings() -> dict:
@@ -522,11 +561,18 @@ async def imu_debug_loop(get_robot_state) -> None:
                     _append_spi_rate(payload, telemetry)
 
                     payload["robot_state"] = get_robot_state()
-                    # Zoom VR (cam0/cam1) inviato dal viewer XR via vr_zoom_state.
+                    # Zoom VR (cam0/cam1) inviato dal viewer XR via vr_zoom_state; with the sensor zoom only the
+                    # residual digital part (requested / applied) is left for the dashboards / app.
+                    cz = _cam_zoom_applied()
+                    if cz is not None:
+                        payload["cam_zoom"] = round(cz, 3)
+                    if _cam_zoom_req["zoom"] is not None and time.monotonic() - _cam_zoom_req["sent"] > 1.0:
+                        _send_cam_zoom(_cam_zoom_req["zoom"])
+                    div = cz if (cz is not None and _cam_zoom_req["zoom"] is not None) else 1.0
                     if _vr_zoom["zoom0"] is not None:
-                        payload["vr_zoom0"] = _vr_zoom["zoom0"]
+                        payload["vr_zoom0"] = max(1.0, _vr_zoom["zoom0"] / div)
                     if _vr_zoom["zoom1"] is not None:
-                        payload["vr_zoom1"] = _vr_zoom["zoom1"]
+                        payload["vr_zoom1"] = max(1.0, _vr_zoom["zoom1"] / div)
                     payload["type"] = "telemetry"
                     msg = json.dumps(payload)
                     active = set(clients)

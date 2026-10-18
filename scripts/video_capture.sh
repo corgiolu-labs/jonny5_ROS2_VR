@@ -20,6 +20,10 @@ W="${1:-800}"; H="${2:-450}"; FPS="${3:-90}"; BITRATE="${4:-3000000}"
 INTRA="${INTRA:-20}"
 MTX="${MTX:-rtsp://127.0.0.1:8554}"
 SYNC="${SYNC:-1}"
+# CAPTURE=picamera2 (default): raspberry/tools/cam_stream.py, same stream + LIVE sensor zoom (ScalerCrop) driven
+# by ws-teleop over UDP (the Quest app's zoom). CAPTURE=rpicam: the previous rpicam-vid capture (no live zoom).
+CAPTURE="${CAPTURE:-picamera2}"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
 MATCH="${MATCH:-cam0}"
 PROBE_S="${PROBE_S:-4}"
 command -v rpicam-vid >/dev/null || { echo "ERR: rpicam-vid not found" >&2; exit 1; }
@@ -97,6 +101,13 @@ trap cleanup EXIT INT TERM
 
 start_cam() {
   local cam="$1"
+  if [ "$CAPTURE" = "picamera2" ]; then
+    # same options as rpicam-vid below (LENS_ARGS is not passed there either: continuous AF on both cameras)
+    python3 "$HERE/raspberry/tools/cam_stream.py" --camera "$cam"         --width "$W" --height "$H" --fps "$FPS" --bitrate "$BITRATE" --intra "$INTRA"         $MANUAL_ARGS ${SYNC_ARGS[$cam]:-}         -o "$MTX/cam$cam" >"/tmp/video_capture_cam$cam.log" 2>&1 &
+    PIDS+=($!)
+    echo "cam$cam -> $MTX/cam$cam  (picamera2, ${W}x${H} @ ${FPS} fps, $BITRATE bit/s, IDR every $INTRA, live zoom)"
+    return
+  fi
   rpicam-vid --camera "$cam" -t 0 -n \
       --width "$W" --height "$H" --framerate "$FPS" \
       --codec h264 --libav-format rtsp --profile baseline --level 4.2 --low-latency \

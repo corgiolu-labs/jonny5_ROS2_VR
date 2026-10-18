@@ -841,7 +841,8 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
                 try:
                     z0 = data.get("zoom0")
                     z1 = data.get("zoom1")
-                    _imu.set_vr_zoom_state(z0, z1)
+                    # "camera": true only from the native Quest app -> sensor zoom (tools/cam_stream.py)
+                    _imu.set_vr_zoom_state(z0, z1, camera=bool(data.get("camera", False)))
                 except Exception:
                     pass
                 continue
