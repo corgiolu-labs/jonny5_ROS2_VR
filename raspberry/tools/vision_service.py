@@ -248,6 +248,19 @@ class Service:
         for r in self.readers:
             r.start()
         self.det = Detector(YOLO_PATH, args.threads)
+        # RapidOCR builds its onnxruntime sessions with the default thread count (all 4 cores): during an analysis
+        # the camera encoders were starved (stream 90 -> 56 fps, sensor -> RTSP p95 27 -> 80 ms). Same thread
+        # budget as YOLO; the service also runs with SCHED_IDLE (jonny5-vision.service).
+        import rapidocr_onnxruntime.utils as rou
+        so_cls = rou.SessionOptions
+
+        def limited_session_options():
+            so = so_cls()
+            so.intra_op_num_threads = args.threads
+            so.inter_op_num_threads = 1
+            return so
+
+        rou.SessionOptions = limited_session_options
         from rapidocr_onnxruntime import RapidOCR
         self.ocr = RapidOCR()
         self.calib = sc.load_calib()

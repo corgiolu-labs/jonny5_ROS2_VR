@@ -10,9 +10,11 @@ Wants=jonny5-video-capture.service
 [Service]
 Type=simple
 WorkingDirectory=/home/jonny5ros2/JONNY5_ROS2
-ExecStart=/home/jonny5ros2/JONNY5_ROS2/raspberry/.venv-vision/bin/python -u /home/jonny5ros2/JONNY5_ROS2/raspberry/tools/vision_service.py
+ExecStart=/home/jonny5ros2/JONNY5_ROS2/raspberry/.venv-vision/bin/python -u /home/jonny5ros2/JONNY5_ROS2/raspberry/tools/vision_service.py --threads 1
 User=jonny5ros2
-Nice=10
+Nice=19
+# only spare CPU: the camera encoders must never wait for an analysis
+CPUSchedulingPolicy=idle
 Restart=always
 RestartSec=3
 StandardOutput=journal
