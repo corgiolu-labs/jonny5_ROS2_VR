@@ -32,6 +32,7 @@ from libcamera import controls
 from picamera2 import Picamera2
 from picamera2.encoders import LibavH264Encoder
 from picamera2.outputs import PyavOutput
+from picamera2.request import MappedArray
 
 CTL_PORT_BASE = 5600
 ZOOM_MAX = 6.0
@@ -43,7 +44,7 @@ def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
 
 
-class LowLatencyH264(LibavH264Encoder):
+class LowLatencyH264(LibavH264Encoder):  # noqa: D101
     """Picamera2's libav x264 encoder with the rpicam-vid --low-latency settings: slice threads (no frame-thread
     latency), baseline, level, VBV so the rate is really capped."""
 
@@ -59,10 +60,31 @@ class LowLatencyH264(LibavH264Encoder):
         cc.thread_count = 2
         if self.level:
             cc.options["level"] = self.level
+        cc.options["forced-idr"] = "1"   # a forced keyframe is a real IDR (the collimator decodes only those)
+        params = ["scenecut=0"]   # keyframes only where we ask (aligned across the two cameras)
         if self.bitrate:
             kbps = int(self.bitrate / 1000)
             buf = max(50, int(kbps * self.vbv_frames / max(1, self.framerate)))
-            cc.options["x264-params"] = f"vbv-maxrate={kbps}:vbv-bufsize={buf}"
+            params += [f"vbv-maxrate={kbps}", f"vbv-bufsize={buf}"]
+        cc.options["x264-params"] = ":".join(params)
+
+    def _encode(self, stream, request):
+        # Same as LibavH264Encoder._encode, but a forced keyframe uses PictureType.I: Picamera2 0.3.34 assigns
+        # the string "I", which PyAV 14 rejects (TypeError) and kills the capture.
+        request.acquire()
+        self._request_release_queue.append(request)
+        timestamp_us = self._timestamp(request)
+        with MappedArray(request, stream) as m:
+            frame = av.VideoFrame.from_numpy_buffer(m.array, format=self._av_input_format, width=self.width)
+            frame.pts = timestamp_us
+            if self._key_frames_requested > self._key_frames_generated:
+                self._key_frames_generated = self._key_frames_requested
+                frame.pict_type = av.video.frame.PictureType.I
+            for packet in self._stream.encode(frame):
+                self._lasttimestamp = (time.monotonic_ns(), packet.pts)
+                self.outputframe(bytes(packet), packet.is_keyframe, timestamp=packet.pts, packet=packet)
+        while len(self._request_release_queue) > self._request_release_delay:
+            self._request_release_queue.popleft().release()
 
 
 def main():
@@ -129,8 +151,25 @@ def main():
     state = {"target": max(1.0, min(ZOOM_MAX, args.zoom)), "zoom": max(1.0, min(ZOOM_MAX, args.zoom))}
     picam2.set_controls({"ScalerCrop": crop_for(state["zoom"])})
 
-    enc = LowLatencyH264(bitrate=args.bitrate, repeat=True, iperiod=args.intra, framerate=int(round(args.fps)),
+    # Keyframes ALIGNED across the two cameras: the stereo collimator decodes only keyframes and pairs them by
+    # time. With a frame counter per encoder (iperiod) the two cameras' IDRs fell on different frames (the
+    # encoders start at different times) and matching pairs were rare. The synchronised sensors share the
+    # frame timestamps, so the GOP index is taken from SensorTimestamp and an IDR is forced when it changes.
+    enc = LowLatencyH264(bitrate=args.bitrate, repeat=True, iperiod=None, framerate=int(round(args.fps)),
                          profile="baseline")
+    period_ns = 1e9 / args.fps
+    gop = {"last": None}
+
+    def align_keyframes(request):
+        ts = request.get_metadata().get("SensorTimestamp")
+        if ts is None:
+            return
+        g = int(round(ts / period_ns)) // max(1, args.intra)
+        if g != gop["last"]:
+            gop["last"] = g
+            enc.force_key_frame()
+
+    picam2.pre_callback = align_keyframes
     if args.sync != "off":
         enc.sync_enable = True       # encode only once the cameras report SyncReady
     # RTP over UDP like rpicam-vid: MediaMTX is configured with rtspTransports [udp] (TCP -> 461 -> EPROTONOSUPPORT)
