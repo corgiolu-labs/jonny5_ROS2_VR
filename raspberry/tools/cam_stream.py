@@ -24,6 +24,12 @@ matched) the gain is scaled by 2^ev: below gain 1 the shutter gets shorter, abov
 the shutter gets longer up to the frame period and the rest is requested as gain (the ISP adds it as digital
 gain). Both cameras receive the same ev, so the eyes stay matched. With auto exposure (--shutter 0) the ev goes to
 libcamera's ExposureValue. The applied exposure is logged once the sensor reports it.
+
+High-resolution snapshot for the OCR (tools/vision_service.py, 2026-10-18): with --hires (default) the ISP main
+output is the sensor mode size (1536x864, the most detail available at 90 fps, 1.92x the stream) and the video is
+encoded from the lores output (WxH, same crop, so nothing changes in the stream). UDP {"snap": {"id": n,
+"box": [x0, y0, x1, y1]}} (stream px) -> the grey (Y) crop of that box from the next main frame is saved to
+/dev/shm/jonny5_cam{N}_snap.npy and the sender gets {"snap_done": n, "path", "scale", "x0", "y0"} (main px).
 """
 from __future__ import annotations
 
@@ -173,6 +179,7 @@ def main():
     ap.add_argument("--roi", default="", help="ignored: the zoom is driven over UDP")
     ap.add_argument("--sync", choices=("server", "client", "off"), default="off")
     ap.add_argument("--zoom", type=float, default=1.0, help="initial zoom")
+    ap.add_argument("--hires", type=int, default=1, help="1: main = sensor size for snapshots, video from lores")
     ap.add_argument("-o", "--output", required=True, help="rtsp://127.0.0.1:8554/camN")
     args = ap.parse_args()
 
@@ -195,8 +202,14 @@ def main():
     if args.sync != "off":
         ctrl["SyncMode"] = (controls.rpi.SyncModeEnum.Server if args.sync == "server"
                             else controls.rpi.SyncModeEnum.Client)
+    hires = bool(args.hires) and (sw, sh) != (args.width, args.height)
+    if hires:
+        streams = {"main": {"size": (sw, sh), "format": "YUV420"},
+                   "lores": {"size": (args.width, args.height), "format": "YUV420"}}
+    else:
+        streams = {"main": {"size": (args.width, args.height), "format": "YUV420"}}
     cfg = picam2.create_video_configuration(
-        main={"size": (args.width, args.height), "format": "YUV420"},
+        **streams,
         sensor={"output_size": (sw, sh), "bit_depth": 10},
         controls=ctrl, buffer_count=6)
     picam2.configure(cfg)
@@ -280,7 +293,41 @@ def main():
             log(f"cam{cam}: ev {ev:+.2f} (auto exposure, ExposureValue)")
         expo["log_after"] = time.monotonic() + 0.5
 
-    picam2.pre_callback = align_keyframes
+    # ---- high-resolution snapshot (UDP {"snap": {...}}), taken from the next main frame in the camera thread
+    snap = {"req": None}
+    snap_path = os.path.join(STATE_DIR, f"jonny5_cam{cam}_snap.npy")
+    snap_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    def take_snapshot(request):
+        rq = snap["req"]
+        if rq is None:
+            return
+        snap["req"] = None
+        sid, box, addr = rq
+        try:
+            mw, mh = (sw, sh) if hires else (args.width, args.height)
+            k = mw / float(args.width)
+            x0 = max(0, int((box[0]) * k)) & ~1
+            y0 = max(0, int((box[1]) * k)) & ~1
+            x1 = min(mw, int(math.ceil(box[2] * k)))
+            y1 = min(mh, int(math.ceil(box[3] * k)))
+            with MappedArray(request, "main") as m:
+                crop = np.array(m.array[y0:y1, x0:x1], dtype=np.uint8)   # Y plane rows come first
+            np.save(snap_path, crop)
+            snap_sock.sendto(json.dumps({"snap_done": sid, "path": snap_path, "scale": k, "x0": x0, "y0": y0,
+                                         "w": int(crop.shape[1]), "h": int(crop.shape[0])}).encode(), addr)
+        except Exception as e:
+            log(f"cam{cam}: snapshot failed {e!r}")
+            try:
+                snap_sock.sendto(json.dumps({"snap_done": sid, "error": str(e)}).encode(), addr)
+            except OSError:
+                pass
+
+    def pre_callback(request):
+        align_keyframes(request)
+        take_snapshot(request)
+
+    picam2.pre_callback = pre_callback
     if args.sync != "off":
         enc.sync_enable = True       # encode only once the cameras report SyncReady
     # RTP over UDP like rpicam-vid: MediaMTX is configured with rtspTransports [udp] (TCP -> 461 -> EPROTONOSUPPORT)
@@ -293,7 +340,7 @@ def main():
         log(f"cam{cam}: output error {e!r}")
 
     out.error_callback = on_output_error
-    picam2.start_encoder(enc, out)
+    picam2.start_encoder(enc, out, name="lores" if hires else "main")
     picam2.start()
     log(f"cam{cam}: streaming {args.width}x{args.height} @ {args.fps} fps, {args.bitrate} bit/s, IDR {args.intra},"
         f" sync {args.sync} -> {args.output}")
@@ -329,8 +376,11 @@ def main():
             if fatal["err"] is not None:
                 raise SystemExit(2)
             try:
-                data, _ = sock.recvfrom(512)
+                data, addr = sock.recvfrom(512)
                 msg = json.loads(data.decode("utf-8", "replace"))
+                if isinstance(msg.get("snap"), dict):
+                    b = [float(v) for v in msg["snap"].get("box", [0, 0, args.width, args.height])[:4]]
+                    snap["req"] = (msg["snap"].get("id"), b, addr)
                 if "zoom" in msg:
                     z = float(msg["zoom"])
                     if math.isfinite(z):

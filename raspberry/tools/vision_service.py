@@ -20,6 +20,10 @@ the nearest box centre within NEAR_PX; without a detection the point under the c
 Distance: the collimator's template matching (stereo_collimator.py) at the target pixel, several points of the
 box, median; true disparity in zoom-1 px = dx_stream / zoom + cam1 crop offset, Z = f * B / (dx_inf - d).
 
+OCR resolution: the text is read from a high-resolution snapshot of the box taken by the capture process
+(cam_stream.py UDP {"snap"}: the ISP main output at the sensor mode size, 1.92x the stream at 90 fps), falling back
+to the stream keyframe.
+
 Models (raspberry/models): YOLO11n COCO (ONNX, exported with ultralytics) and RapidOCR PP-OCRv3 (bundled in the
 rapidocr_onnxruntime wheel). Runs in raspberry/.venv-vision (system site packages: PyAV, numpy), Nice 10, so
 the camera encoders keep priority.
@@ -29,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import socket
 import ssl
 import sys
 import threading
@@ -247,6 +252,7 @@ class Service:
         self.calib = sc.load_calib()
         self.last_col = {"dist_mm": None, "t": 0.0}
         self.queue: list[dict] = []
+        self.snap_id = 0
         self.cv = threading.Condition()
         log(f"YOLO {YOLO_PATH.name} {self.det.size}px, f {sc.F_PX:.1f} px, dx_inf {self.calib['dx_inf']:.1f} px")
 
@@ -324,11 +330,38 @@ class Service:
             out["aim"] = dist is not None
         else:
             out["texts"] = self.read_text(bgr, target["box"], u, v)
+            out["ocr_src"] = getattr(self, "last_ocr_src", None)
         t4 = time.monotonic()
         out["ms"] = {"wait": round((t1 - t0) * 1000), "detect": round((t2 - t1) * 1000),
                      "stereo": round((t3 - t2) * 1000), "ocr": round((t4 - t3) * 1000)}
         out["frame_age_ms"] = round((t4 - tf) * 1000)
         return out
+
+    def snapshot(self, box):
+        """High-resolution grey crop of box (stream px) from cam0's capture process: (img, scale, x0, y0) in main
+        px, or None (old capture without snapshots, timeout)."""
+        self.snap_id += 1
+        sid = self.snap_id
+        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sk.bind(("127.0.0.1", 0))
+            sk.settimeout(0.5)
+            sk.sendto(json.dumps({"snap": {"id": sid, "box": [float(b) for b in box]}}).encode(),
+                      ("127.0.0.1", sc.CAM1_CTL[1] - 1))
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline:
+                m = json.loads(sk.recv(2048).decode())
+                if m.get("snap_done") == sid:
+                    if m.get("error"):
+                        log("snapshot error:", m["error"])
+                        return None
+                    img = np.load(m["path"])
+                    return img, float(m["scale"]), int(m["x0"]), int(m["y0"])
+        except (OSError, ValueError) as e:
+            log("snapshot:", e)
+        finally:
+            sk.close()
+        return None
 
     def read_text(self, bgr, box, u, v) -> list[dict]:
         if box is not None:
@@ -338,12 +371,25 @@ class Service:
         else:
             x0, y0, x1, y1 = max(0, u - 220), max(0, v - 120), min(W, u + 220), min(H, v + 120)
         x0, y0, x1, y1 = (int(round(t)) for t in (x0, y0, x1, y1))
-        crop = bgr[y0:y1, x0:x1]
-        if crop.size == 0:
+        if x1 - x0 < 8 or y1 - y0 < 8:
             return []
-        k = 2.0 if crop.shape[1] < 320 else 1.0                # small crops: upscale, OCR likes ~20+ px letters
-        if k != 1.0:
-            crop = cv2.resize(crop, None, fx=k, fy=k, interpolation=cv2.INTER_CUBIC)
+        hi = self.snapshot((x0, y0, x1, y1))
+        if hi is not None and hi[0].size:
+            # main px -> stream px: (p + origin) / scale
+            g, scale, ox, oy = hi
+            crop = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
+            up = 2.0 if crop.shape[1] < 320 else 1.0
+            k = scale * up
+            off_x, off_y = ox / scale, oy / scale
+            self.last_ocr_src = f"snapshot {crop.shape[1]}x{crop.shape[0]} (x{scale:.2f})"
+        else:
+            crop = bgr[y0:y1, x0:x1]
+            up = 2.0 if crop.shape[1] < 320 else 1.0       # small crops: upscale, OCR likes ~20+ px letters
+            k = up
+            off_x, off_y = x0, y0
+            self.last_ocr_src = "stream"
+        if up != 1.0:
+            crop = cv2.resize(crop, None, fx=up, fy=up, interpolation=cv2.INTER_CUBIC)
         try:
             res, _ = self.ocr(crop)
         except Exception as e:
@@ -357,8 +403,8 @@ class Service:
                 continue
             p = np.asarray(pts, dtype=float) / k
             texts.append({"text": txt, "score": round(score, 2),
-                          "box": [round(float(p[:, 0].min()) + x0, 1), round(float(p[:, 1].min()) + y0, 1),
-                                  round(float(p[:, 0].max()) + x0, 1), round(float(p[:, 1].max()) + y0, 1)]})
+                          "box": [round(float(p[:, 0].min()) + off_x, 1), round(float(p[:, 1].min()) + off_y, 1),
+                                  round(float(p[:, 0].max()) + off_x, 1), round(float(p[:, 1].max()) + off_y, 1)]})
         texts.sort(key=lambda t: (round(t["box"][1] / 20), t["box"][0]))
         return texts
 
@@ -406,7 +452,8 @@ class Service:
                        "why": f"errore: {e}"}
             t = res.get("target") or {}
             log(f"{res.get('action')} req {res.get('req')}: {t.get('label_it')} conf {t.get('conf')} "
-                f"dist {t.get('dist_mm')} texts {[x['text'] for x in res.get('texts', [])]} ms {res.get('ms')}")
+                f"dist {t.get('dist_mm')} texts {[x['text'] for x in res.get('texts', [])]} ({res.get('ocr_src')}) "
+                f"ms {res.get('ms')}")
             ws = getattr(self, "ws", None)
             if ws is not None:
                 try:
