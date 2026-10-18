@@ -58,6 +58,7 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
         self.vbv_frames = vbv_frames
         self.lat_ms = []
         self.lat_stats = None
+        self.stamp_on = False   # glass-to-glass measurement: capture time written into the frame
 
     def _start(self):
         super()._start()
@@ -94,6 +95,25 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
             dst[:, :data.shape[1]] = data
         return frame
 
+    STAMP_BITS = 24
+    STAMP_BS = 16
+
+    def _draw_stamp(self, frame, sensor_ns):
+        """Top-left block row: capture time = SensorTimestamp (CLOCK_MONOTONIC) as epoch ms & 0xFFFFFF, 24 bits LSB
+        first + white / black guard, 16 px blocks (stamped_h264_source.py format). Read in the Quest screenshot
+        by tools/g2g_quest.py together with the app's display-time row."""
+        epoch_ms = ((sensor_ns + (time.time_ns() - time.monotonic_ns())) // 1000000) & 0xFFFFFF
+        bs = self.STAMP_BS
+        yp, up, vp = frame.planes
+        y = np.frombuffer(yp, np.uint8).reshape(yp.height, yp.line_size)
+        u = np.frombuffer(up, np.uint8).reshape(up.height, up.line_size)
+        v = np.frombuffer(vp, np.uint8).reshape(vp.height, vp.line_size)
+        for i in range(self.STAMP_BITS + 2):
+            on = ((epoch_ms >> i) & 1) if i < self.STAMP_BITS else (i == self.STAMP_BITS)
+            y[0:bs, i * bs:(i + 1) * bs] = 235 if on else 16
+        u[0:bs // 2, 0:(self.STAMP_BITS + 2) * bs // 2] = 128
+        v[0:bs // 2, 0:(self.STAMP_BITS + 2) * bs // 2] = 128
+
     def _encode(self, stream, request):
         # Same as LibavH264Encoder._encode, but a forced keyframe uses PictureType.I: Picamera2 0.3.34 assigns
         # the string "I", which PyAV 14 rejects (TypeError) and kills the capture.
@@ -103,6 +123,8 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
         sensor_ns = request.get_metadata().get("SensorTimestamp")
         with MappedArray(request, stream) as m:
             frame = self._yuv420_frame(m.array)
+            if self.stamp_on and sensor_ns:
+                self._draw_stamp(frame, sensor_ns)
             frame.pts = timestamp_us
             if self._key_frames_requested > self._key_frames_generated:
                 self._key_frames_generated = self._key_frames_requested
@@ -273,6 +295,9 @@ def main():
                     z = float(msg["zoom"])
                     if math.isfinite(z):
                         state["target"] = max(1.0, min(ZOOM_MAX, z))
+                if "stamp" in msg:
+                    enc.stamp_on = bool(msg["stamp"])
+                    log(f"cam{cam}: capture stamp {'ON' if enc.stamp_on else 'OFF'}")
                 if "offset" in msg:
                     ox, oy = (float(v) for v in msg["offset"][:2])
                     if math.isfinite(ox) and math.isfinite(oy):
