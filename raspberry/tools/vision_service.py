@@ -47,10 +47,10 @@ RASPBERRY = Path(__file__).resolve().parents[1]
 YOLO_PATH = RASPBERRY / "models" / "yolo11n.onnx"
 W, H = sc.W, sc.H
 CX, CY = W / 2.0, H / 2.0
-CONF_MIN = 0.30
+CONF_MIN = 0.40
 NMS_IOU = 0.45
 NEAR_PX = 110.0
-OCR_MIN_SCORE = 0.55
+OCR_MIN_SCORE = 0.70
 FRAME_WAIT_S = 0.8          # wait this long for a keyframe pair newer than the request
 
 COCO = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
