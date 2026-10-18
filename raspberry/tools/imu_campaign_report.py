@@ -31,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 SETTINGS = HERE.parent / "config_runtime" / "robot" / "j5_settings.json"
 # robot calibration (2026-10, /api/imu-frame-calib): R_imu = R_wb . R_ee . R_mount
 WB0 = [0.6551074397161296, 0.0, 0.0, -0.755535732066047]
-MOUNT0 = [0.9978145291471898, 0.0553353613787577, 0.002751663137535594, 0.03600821508811257]
+MOUNT0 = [0.9971356382119817, 0.03321677091881162, 0.06652072496339438, -0.013862116997614297]   # 2026-10-18 refit
 H0, L1, L2 = 0.112, 0.060, 0.173           # POE geometry (head_assist_gimbal._arm_geom)
 
 
@@ -151,6 +151,22 @@ def main():
     q3 = np.radians(v_fw[:, 2] - 90)
     reach = L1 * np.sin(q2) + L2 * np.sin(q2 + q3)
 
+    # gravity-referenced (drift-free) error on the STILL samples (firmware pose and IMU within 1 deg for 0.6 s):
+    # the honest static error, without the servo lag of the moving samples nor the magnetometer yaw
+    still = np.zeros(n, bool)
+    for i in range(n):
+        j = int(np.searchsorted(t, t[i] - 0.6))
+        if t[i] - t[j] >= 0.5 and i - j >= 10 and np.max(np.ptp(v_fw[j:i + 1], axis=0)) < 1.0                 and ang_deg(R_imu[j], R_imu[i]) < 1.0:
+            still[i] = True
+    g_err = ypr_imu[:, 1:] - ypr_fw[:, 1:]          # pitch, roll
+
+    def lag_fw_imu(a, b, maxk=20):
+        da, db = np.diff(a), np.diff(b)
+        ks = range(0, min(maxk, len(da) - 10))
+        k = max(ks, key=lambda k: float(np.dot(da[:len(da) - k], db[k:]) /
+                                         (np.linalg.norm(da[:len(da) - k]) * np.linalg.norm(db[k:]) + 1e-9)))
+        return k * float(np.median(np.diff(t))) * 1000.0
+
     def stats(sel):
         e = E[sel]
         return {"n": int(sel.sum()), "rms": np.sqrt(np.nanmean(e ** 2, axis=0)), "max": np.nanmax(np.abs(e), axis=0),
@@ -201,6 +217,11 @@ def main():
     if len(idx) > 30 and np.ptp(reach[idx]) > 0.03:
         p = np.polyfit(reach[idx], E[idx, 1], 1)
         sag = p[0] * 0.1     # deg per 10 cm of reach
+
+    lag_servo = lag_fw_imu(ypr_fw[:, 1], ypr_imu[:, 1])
+    st_i = np.nonzero(still)[0]
+    g_rms = np.sqrt(np.mean(g_err[st_i] ** 2, axis=0)) if len(st_i) else [float("nan")] * 2
+    g_p95 = np.percentile(np.abs(g_err[st_i]), 95, axis=0) if len(st_i) else [float("nan")] * 2
 
     import matplotlib
     matplotlib.use("Agg")
@@ -257,6 +278,9 @@ td:first-child,th:first-child{{text-align:left}}.k{{font-size:15px;line-height:1
 quello previsto dalla cinematica sulle posizioni servo del firmware (dopo l'allineamento IMU stimato dai dati).
 Assi nel riferimento del polso: <b>rollio x / beccheggio y / imbardata z</b>, gradi.</p>
 <h2>Sintesi</h2><ul class="k">
+<li><b>Errore statico riferito alla gravità</b> ({len(st_i)} campioni fermi): beccheggio <b>{g_rms[0]:.2f}</b> deg RMS
+ (95% entro {g_p95[0]:.2f}), rollio <b>{g_rms[1]:.2f}</b> (95% entro {g_p95[1]:.2f})</li>
+<li>Ritardo firmware → movimento reale (servo): <b>{lag_servo:.0f} ms</b></li>
 <li>Errore complessivo RMS: <b>{f3(allst['rms'])}</b> deg, massimo {f3(allst['max'])}</li>
 <li>Ritardo comando → IMU: beccheggio <b>{lag_p[0]:.0f} ms</b> (corr {lag_p[1]:.2f}), imbardata {lag_y[0]:.0f} ms
  (corr {lag_y[1]:.2f}); comando → firmware {lag_fw[0]:.0f} ms</li>
@@ -272,6 +296,8 @@ Assi nel riferimento del polso: <b>rollio x / beccheggio y / imbardata z</b>, gr
     out = Path(args.out or (Path(args.log[0]).with_suffix(".html")))
     out.write_text(html, encoding="utf-8")
     print("report:", out)
+    print("STILL gravity pitch/roll RMS", np.round(g_rms, 2), "p95", np.round(g_p95, 2), "n", len(st_i),
+          "lag firmware->IMU ms", round(lag_servo))
     print("RMS x/y/z", f3(allst["rms"]), "max", f3(allst["max"]), "lag pitch", lag_p, "backlash", bl_pitch, bl_yaw,
           "sag/10cm", sag, "drift", drift)
     for lab, s, cf in rows:
