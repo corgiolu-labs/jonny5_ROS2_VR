@@ -30,6 +30,11 @@ output is the sensor mode size (1536x864, the most detail available at 90 fps, 1
 encoded from the lores output (WxH, same crop, so nothing changes in the stream). UDP {"snap": {"id": n,
 "box": [x0, y0, x1, y1]}} (stream px) -> the grey (Y) crop of that box from the next main frame is saved to
 /dev/shm/jonny5_cam{N}_snap.npy and the sender gets {"snap_done": n, "path", "scale", "x0", "y0"} (main px).
+UDP {"still": {"id": n, "box": [...]}}: the same from a FULL-RESOLUTION still (4608x2592, ~2x the snapshot, 3.8x
+the stream at zoom 1): the camera switches to the still mode for one frame (focus, exposure and white balance
+frozen at the current values) and back. The encoder only gets no frames meanwhile (about 1 s): the RTSP session
+stays up; the sensor sync and the zoom / brightness are restored afterwards. Reply {"still_done": n, ...} with the
+offsets / scale relative to the stream as for the snapshot, plus "ms".
 """
 from __future__ import annotations
 
@@ -132,6 +137,8 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
     def _encode(self, stream, request):
         # Same as LibavH264Encoder._encode, but a forced keyframe uses PictureType.I: Picamera2 0.3.34 assigns
         # the string "I", which PyAV 14 rejects (TypeError) and kills the capture.
+        if request.stream_map.get(stream) is None:
+            return   # full-resolution still in progress (no lores stream in that mode): skip, the video resumes after
         request.acquire()
         self._request_release_queue.append(request)
         timestamp_us = self._timestamp(request)
@@ -258,6 +265,7 @@ def main():
         if ts is None:
             return
         state["sensor_ts"] = (int(ts), time.time())   # for the sync check (phase between the two cameras)
+        state["md"] = request.get_metadata()
         if expo.get("log_after") and time.monotonic() > expo["log_after"]:
             md = request.get_metadata()
             expo["log_after"] = None
@@ -323,6 +331,54 @@ def main():
             except OSError:
                 pass
 
+    full_w, full_h = picam2.sensor_resolution
+
+    def take_still(sid, box, addr):
+        """Full-resolution grey crop of box (stream px), see the module docstring."""
+        t0 = time.monotonic()
+        md = state.get("md") or {}
+        crop_now = state.get("crop_applied") or crop
+        # NoiseReductionMode Off as in the video: the still mode default (temporal denoise) aborts the PiSP back end
+        # ("TDN output not enabled when TDN enabled") when switching from the video mode
+        ctrl_s = {"AeEnable": False, "AwbEnable": False, "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,
+                  "ExposureTime": int(md.get("ExposureTime", args.shutter or 10000)),
+                  "AnalogueGain": float(md.get("AnalogueGain", max(1.0, args.gain))),
+                  "ScalerCrop": (0, 0, full_w, full_h)}
+        if md.get("ColourGains"):
+            ctrl_s["ColourGains"] = tuple(md["ColourGains"])
+        if md.get("LensPosition") is not None:
+            ctrl_s.update({"AfMode": controls.AfModeEnum.Manual, "LensPosition": float(md["LensPosition"])})
+        still_cfg = picam2.create_still_configuration(main={"size": (full_w, full_h), "format": "YUV420"},
+                                                      buffer_count=1, transform=cfg["transform"], controls=ctrl_s)
+        try:
+            arr = picam2.switch_mode_and_capture_array(still_cfg, "main")
+        except Exception as e:
+            log(f"cam{cam}: still failed {e!r}")
+            snap_sock.sendto(json.dumps({"still_done": sid, "error": str(e)}).encode(), addr)
+            return
+        t1 = time.monotonic()
+        # back in the video mode: zoom crop, brightness and focus mode as before the still
+        picam2.set_controls({"ScalerCrop": crop_now})
+        if args.lens_position is None and args.autofocus_mode in ("continuous", "default"):
+            picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
+        if abs(expo["ev"]) > 1e-3:
+            apply_ev(expo["ev"])
+        # stream px -> sensor px: the video crop (centred for cam0, same flip as the still)
+        k = crop_now[2] / float(args.width)
+        ax = (full_w - crop_now[2]) / 2.0 + (crop_now[0] - (full_w - crop_now[2]) / 2.0)
+        ay = (full_h - crop_now[3]) / 2.0 + (crop_now[1] - (full_h - crop_now[3]) / 2.0)
+        x0 = max(0, int(ax + box[0] * k)) & ~1
+        y0 = max(0, int(ay + box[1] * k)) & ~1
+        x1 = min(full_w, int(math.ceil(ax + box[2] * k)))
+        y1 = min(full_h, int(math.ceil(ay + box[3] * k)))
+        g = np.array(arr[y0:y1, x0:x1], dtype=np.uint8)
+        np.save(snap_path, g)
+        ms = round((time.monotonic() - t0) * 1000)
+        log(f"cam{cam}: full-resolution still {g.shape[1]}x{g.shape[0]} (x{k:.2f}), mode switch {round((t1 - t0) * 1000)} ms,"
+            f" total {ms} ms")
+        snap_sock.sendto(json.dumps({"still_done": sid, "path": snap_path, "scale": k, "x0": x0 - ax, "y0": y0 - ay,
+                                     "w": int(g.shape[1]), "h": int(g.shape[0]), "ms": ms}).encode(), addr)
+
     def pre_callback(request):
         align_keyframes(request)
         take_snapshot(request)
@@ -378,6 +434,9 @@ def main():
             try:
                 data, addr = sock.recvfrom(512)
                 msg = json.loads(data.decode("utf-8", "replace"))
+                if isinstance(msg.get("still"), dict) and cam == 0:
+                    b = [float(v) for v in msg["still"].get("box", [0, 0, args.width, args.height])[:4]]
+                    take_still(msg["still"].get("id"), b, addr)
                 if isinstance(msg.get("snap"), dict):
                     b = [float(v) for v in msg["snap"].get("box", [0, 0, args.width, args.height])[:4]]
                     snap["req"] = (msg["snap"].get("id"), b, addr)
@@ -417,6 +476,7 @@ def main():
                     or max(abs(state["off"][i] - last_off[i]) for i in (0, 1)) >= 0.05):
                 crop, state["off_applied"] = crop_for(state["zoom"], state["off"])
                 picam2.set_controls({"ScalerCrop": crop})
+                state["crop_applied"] = crop
                 last_applied = state["zoom"]
                 last_off = list(state["off"])
             if now - last_write > 0.1:

@@ -5,6 +5,7 @@ vision_service.py - on-demand object recognition, stereo distance and text readi
 Requests come over ws-teleop (wss://127.0.0.1:8557, relayed from the app):
     {"type": "vision_request", "action": "analyze" | "point", "req": <id>}
   analyze: detection + stereo distance + OCR of the target            (~1.5-2 s on the Pi 5 CPU)
+  analyze_hd: the same, the text read from a full-resolution still of cam0 (left video pauses ~1 s)
   point:   detection + stereo distance only, result with "aim": true  (~0.6 s); ws-teleop plans the arm motion
            towards the target (head_assist_gimbal.request_point) and asks for an "analyze" when it gets there
            (the text is read from close up).
@@ -329,7 +330,7 @@ class Service:
         if action == "point":
             out["aim"] = dist is not None
         else:
-            out["texts"] = self.read_text(bgr, target["box"], u, v)
+            out["texts"] = self.read_text(bgr, target["box"], u, v, hd=(action == "analyze_hd"))
             out["ocr_src"] = getattr(self, "last_ocr_src", None)
         t4 = time.monotonic()
         out["ms"] = {"wait": round((t1 - t0) * 1000), "detect": round((t2 - t1) * 1000),
@@ -337,7 +338,7 @@ class Service:
         out["frame_age_ms"] = round((t4 - tf) * 1000)
         return out
 
-    def snapshot(self, box):
+    def snapshot(self, box, hd: bool = False):
         """High-resolution grey crop of box (stream px) from cam0's capture process: (img, scale, x0, y0) in main
         px, or None (old capture without snapshots, timeout)."""
         self.snap_id += 1
@@ -345,13 +346,15 @@ class Service:
         sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sk.bind(("127.0.0.1", 0))
-            sk.settimeout(0.5)
-            sk.sendto(json.dumps({"snap": {"id": sid, "box": [float(b) for b in box]}}).encode(),
+            wait = 6.0 if hd else 0.5
+            key = "still" if hd else "snap"
+            sk.settimeout(wait)
+            sk.sendto(json.dumps({key: {"id": sid, "box": [float(b) for b in box]}}).encode(),
                       ("127.0.0.1", sc.CAM1_CTL[1] - 1))
-            deadline = time.monotonic() + 0.5
+            deadline = time.monotonic() + wait
             while time.monotonic() < deadline:
                 m = json.loads(sk.recv(2048).decode())
-                if m.get("snap_done") == sid:
+                if m.get(key + "_done") == sid:
                     if m.get("error"):
                         log("snapshot error:", m["error"])
                         return None
@@ -363,7 +366,7 @@ class Service:
             sk.close()
         return None
 
-    def read_text(self, bgr, box, u, v) -> list[dict]:
+    def read_text(self, bgr, box, u, v, hd: bool = False) -> list[dict]:
         if box is not None:
             x0, y0, x1, y1 = box
             mx, my = (x1 - x0) * 0.12 + 8, (y1 - y0) * 0.12 + 8
@@ -373,7 +376,7 @@ class Service:
         x0, y0, x1, y1 = (int(round(t)) for t in (x0, y0, x1, y1))
         if x1 - x0 < 8 or y1 - y0 < 8:
             return []
-        hi = self.snapshot((x0, y0, x1, y1))
+        hi = self.snapshot((x0, y0, x1, y1), hd)
         if hi is not None and hi[0].size:
             # main px -> stream px: (p + origin) / scale
             g, scale, ox, oy = hi
@@ -381,7 +384,7 @@ class Service:
             up = 2.0 if crop.shape[1] < 320 else 1.0
             k = scale * up
             off_x, off_y = ox / scale, oy / scale
-            self.last_ocr_src = f"snapshot {crop.shape[1]}x{crop.shape[0]} (x{scale:.2f})"
+            self.last_ocr_src = f"{'still' if hd else 'snapshot'} {crop.shape[1]}x{crop.shape[0]} (x{scale:.2f})"
         else:
             crop = bgr[y0:y1, x0:x1]
             up = 2.0 if crop.shape[1] < 320 else 1.0       # small crops: upscale, OCR likes ~20+ px letters
