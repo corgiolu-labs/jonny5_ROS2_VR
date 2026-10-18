@@ -56,6 +56,8 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
         super().__init__(*a, **kw)
         self.level = level
         self.vbv_frames = vbv_frames
+        self.lat_ms = []
+        self.lat_stats = None
 
     def _start(self):
         super()._start()
@@ -98,6 +100,7 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
         request.acquire()
         self._request_release_queue.append(request)
         timestamp_us = self._timestamp(request)
+        sensor_ns = request.get_metadata().get("SensorTimestamp")
         with MappedArray(request, stream) as m:
             frame = self._yuv420_frame(m.array)
             frame.pts = timestamp_us
@@ -107,6 +110,15 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
             for packet in self._stream.encode(frame):
                 self._lasttimestamp = (time.monotonic_ns(), packet.pts)
                 self.outputframe(bytes(packet), packet.is_keyframe, timestamp=packet.pts, packet=packet)
+            if sensor_ns:
+                # sensor timestamp (CLOCK_MONOTONIC, frame start) -> packet handed to the RTSP muxer
+                self.lat_ms.append((time.monotonic_ns() - sensor_ns) / 1e6)
+                if len(self.lat_ms) >= 900:      # ~10 s at 90 fps
+                    v = sorted(self.lat_ms)
+                    self.lat_stats = {"p50": round(v[len(v) // 2], 1), "p95": round(v[int(len(v) * 0.95)], 1),
+                                      "max": round(v[-1], 1)}
+                    log(f"sensor -> RTSP mux latency ms {self.lat_stats}")
+                    self.lat_ms = []
         while len(self._request_release_queue) > self._request_release_delay:
             self._request_release_queue.popleft().release()
 
