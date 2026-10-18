@@ -30,6 +30,14 @@ gimbalPosition.scale) moves the wrist centre in the arm plane (height, reach) by
 In that case the shoulder / elbow are driven by the position and no longer by the wrist-pitch overflow; the
 base still helps the wrist yaw. Without head position (web viewer) the old pitch assist is used.
 
+Point at an object (2026-10-18, request_point, from tools/vision_service.py via ws_server): the right trigger in
+ASSIST asks the vision service for the object under the crosshair and its 3D position in the cam0 frame. The plan:
+base towards the object, shoulder / elbow stretch the wrist centre along the shoulder -> object line (maximum
+extension, or POINT_STANDOFF_M from the object centre when it is closer), wrist so that cam0's optical axis goes
+through the object centre with a level horizon. The pose is reached with a minimum-jerk interpolation (deadman
+held: releasing the grips stops it, like every motion in mode 5); then the references are re-latched at the new
+pose and the head keeps steering from there without a jump.
+
 Selected with routing_config.json "assistMode": "gimbal" (other values: "rate" legacy, "dls").
 """
 from __future__ import annotations
@@ -61,6 +69,14 @@ POS_W_REACH = 0.25           # IK weight of the reach error vs the height error
 POS_POSTURE_W = 2e-4         # pull towards the engage posture (m^2 / rad^2): picks the "bow forward" branch
 POS_LM_DAMP = 1e-3           # Levenberg-Marquardt damping (near-straight arm = singular)
 PITCH_HELP_MARGIN_DEG = 3.0  # with head position: the arm helps the wrist pitch this close to its limits
+
+# point at an object (request_point)
+CAM0_OFF_M = np.array([0.100, 0.0315, 0.0])   # cam0 (left) optical centre from the wrist centre, tool frame (URDF:
+                                              # tool 0.057 + camera 0.045 forward, half of the 63 mm baseline left)
+POINT_STANDOFF_M = 0.15     # camera -> object centre, closest approach
+POINT_REACH_FRAC = 0.98     # "maximum extension" = this fraction of the stretched arm
+POINT_SPEED_DEG_S = 40.0    # largest joint motion / duration
+POINT_MIN_T_S = 1.5
 
 # XR (x right, y up, z back) -> robot base (x forward, y left, z up)
 _C = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
@@ -288,6 +304,10 @@ class GimbalState:
         self.target_id = 0
         self.last_t = 0.0
         self.last_log = 0.0
+        self.last_full_v = None      # last commanded pose, virtual deg [6] (planning base for request_point)
+        self.v_lims = None           # (virtual lo[6], virtual hi[6]) of the last step
+        self.goal = None             # request_point motion in progress
+        self.goal_done = None        # info of the last reached goal, taken by ws_server (pop_goal_done)
 
 
 _state = GimbalState()
@@ -351,6 +371,9 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     if not grip or not physical_six or len(physical_six) < 6:
         if st.phase != "idle":
             logger.info("[GIMBAL] released")
+        if st.goal is not None:
+            logger.info("[GIMBAL] point: cancelled (grips released)")
+            st.goal = None
         st.phase = "idle"
         send_quat(st.q_hold)
         return st.last_arm_phys, False, st.last_arm_phys is not None, st.target_id
@@ -404,6 +427,39 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         st.last_arm_phys = arm_phys
         return arm_phys, True, True, st.target_id
 
+    v_lo, v_hi = _virtual_limits(lim, offsets, dirs)
+    st.v_lims = (v_lo, v_hi)
+
+    # ---- point at an object: minimum-jerk motion to the planned pose, the head is ignored meanwhile
+    if st.goal is not None:
+        g = st.goal
+        now = time.monotonic()
+        st.last_t = now
+        s = min(1.0, (now - g["t0"]) / g["T"])
+        e = s * s * s * (10.0 - 15.0 * s + 6.0 * s * s)
+        st.arm_v = [g["a0"][i] + (g["a1"][i] - g["a0"][i]) * e for i in range(3)]
+        w_cmd = [g["w0"][i] + (g["w1"][i] - g["w0"][i]) * e for i in range(3)]
+        full_v = list(virt)
+        full_v[0:3] = list(st.arm_v)
+        full_v[3:6] = w_cmd
+        if s >= 1.0:
+            # new references at the reached pose: the head steers from here (no jump), as after an engage
+            qg = np.radians(np.asarray(full_v) - 90.0)
+            st.r_cam_ref = cam_rotation(qg)
+            st.r_head_ref = r_head
+            st.p_ref = _head_pos(intent)
+            st.p_last = st.p_ref
+            st.rz_ref = wc_rz(qg[1], qg[2])
+            st.q23_ref = (float(qg[1]), float(qg[2]))
+            st.z_off = 0.0
+            st.dpsi = (math.atan2(st.r_cam_ref[1, 0], st.r_cam_ref[0, 0])
+                       - math.atan2(st.r_head_ref[1, 0], st.r_head_ref[0, 0]))
+            st.goal_done = dict(g["info"], t=now)
+            st.goal = None
+            logger.info("[GIMBAL] point: reached arm virt %s wrist virt %s", [round(v, 1) for v in st.arm_v],
+                        [round(v, 1) for v in w_cmd])
+        return _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat)
+
     # ---- track
     r_target = r_head @ st.r_head_ref.T @ st.r_cam_ref
     q4, q5, q6 = wrist_ik(qm[:3], r_target)
@@ -411,7 +467,6 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     # routing_config limits are PHYSICAL servo degrees (the firmware clamps there): convert them to virtual with
     # offsets / dirs. Using them as virtual was wrong for the reversed joints (pitch dir -1: physical 35..120 is
     # virtual 60..145), the IK then believed the wrist reached angles the firmware had clipped.
-    v_lo, v_hi = _virtual_limits(lim, offsets, dirs)
     w_lo = [v_lo[i] + WRIST_MARGIN_DEG for i in (3, 4, 5)]
     w_hi = [v_hi[i] - WRIST_MARGIN_DEG for i in (3, 4, 5)]
     w_cmd = [float(np.clip(w_deg[i], w_lo[i], w_hi[i])) for i in range(3)]
@@ -506,21 +561,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     full_v = list(virt)
     full_v[0:3] = [float(v) for v in st.arm_v]
     full_v[3:6] = w_cmd
-    # arm targets with the fraction (the SPI frame carries centidegrees): settings_manager.virtual_to_physical
-    # truncates to whole degrees, which made the arm follow the head in 1 deg steps
-    arm_phys = [round(_virt_to_phys_f(full_v[i], offsets[i], dirs[i]), 2) for i in range(3)]
-    wrist_phys = [float(v) for v in
-                  [offsets[i] + (dirs[i] if dirs[i] >= 0 else -1) * (w_cmd[i - 3] - 90.0) for i in (3, 4, 5)]]
-
-    pipe = HeadPipe(vr_params)
-    q_err = pipe.quat_for_servo_deltas(wrist_phys[0] - st.center_phys[0], wrist_phys[1] - st.center_phys[1],
-                                       wrist_phys[2] - st.center_phys[2])
-    q_send = _qmul(q_err, st.q_ref)
-    send_quat(q_send)
-    st.q_hold = q_send   # on release / re-engage the firmware keeps exactly this pose (no jump)
-    st.last_arm_phys = arm_phys
-    st.arm_cmd_phys = arm_phys
-    st.target_id = (st.target_id + 1) & 0xFFFF
+    arm_phys, _, _, _ = _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat)
 
     if now - st.last_log >= 1.0:
         st.last_log = now
@@ -538,6 +579,133 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
                     " (clamped)" if any(abs(w_cmd[i] - w_deg[i]) > 0.05 for i in range(3)) else "",
                     [round(float(v), 1) for v in st.arm_v], dt * 1000.0, pos_txt)
     return arm_phys, True, False, st.target_id
+
+
+def _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat):
+    """Arm target (physical, with the fraction) + the synthetic head quaternion for the wrist part of full_v."""
+    # arm targets with the fraction (the SPI frame carries centidegrees): settings_manager.virtual_to_physical
+    # truncates to whole degrees, which made the arm follow the head in 1 deg steps
+    arm_phys = [round(_virt_to_phys_f(full_v[i], offsets[i], dirs[i]), 2) for i in range(3)]
+    wrist_phys = [float(v) for v in
+                  [offsets[i] + (dirs[i] if dirs[i] >= 0 else -1) * (full_v[i] - 90.0) for i in (3, 4, 5)]]
+    pipe = HeadPipe(vr_params)
+    q_err = pipe.quat_for_servo_deltas(wrist_phys[0] - st.center_phys[0], wrist_phys[1] - st.center_phys[1],
+                                       wrist_phys[2] - st.center_phys[2])
+    q_send = _qmul(q_err, st.q_ref)
+    send_quat(q_send)
+    st.q_hold = q_send   # on release / re-engage the firmware keeps exactly this pose (no jump)
+    st.last_arm_phys = arm_phys
+    st.arm_cmd_phys = arm_phys
+    st.last_full_v = [float(v) for v in full_v]
+    st.target_id = (st.target_id + 1) & 0xFFFF
+    return arm_phys, True, False, st.target_id
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# point at an object (tools/vision_service.py)
+# ---------------------------------------------------------------------------------------------------------------
+
+def plan_point(full_v, v_lims, p_cam_mm):
+    """Pose (virtual deg [6]) that points cam0 at the object p_cam_mm = [X right, Y down, Z forward] of cam0 seen
+    from the pose full_v, as close to it as the arm allows (POINT_STANDOFF_M at best).
+
+    The wrist yaw axis runs along the forearm and the wrist pitch only spans about -55..+40 deg, so the forearm
+    tilt and the camera pitch are coupled (camera pitch = forearm tilt + wrist pitch in the arm plane): stretching
+    the arm flat towards an object at camera height would leave the camera looking at the floor. So instead of
+    "wrist centre on the shoulder -> object line" all shoulder / elbow poses are searched (1 deg grid) for the
+    camera closest to the object whose required wrist pitch is reachable; the best few get the full wrist IK and
+    the first one that really points cam0 at the object wins. Returns (pose_v, info) or (None, info with "why")."""
+    v_lo, v_hi = v_lims
+    q = np.radians(np.asarray(full_v, dtype=float) - 90.0)
+    r_now = cam_rotation(q)
+    r_c, z_c = wc_rz(q[1], q[2])
+    c_now = np.array([r_c * math.cos(q[0]), r_c * math.sin(q[0]), z_c])
+    cam = c_now + r_now @ CAM0_OFF_M
+    x, y, z = (float(v) / 1000.0 for v in p_cam_mm)
+    p = cam + r_now @ np.array([z, -x, -y])            # image right = tool -y, image down = tool -z
+    info = {"p_base_mm": [round(float(v) * 1000) for v in p]}
+    # base towards the object
+    b_v = float(np.clip(math.degrees(math.atan2(p[1], p[0])) + 90.0, v_lo[0], v_hi[0]))
+    q1 = math.radians(b_v - 90.0)
+    pr = p[0] * math.cos(q1) + p[1] * math.sin(q1)      # object in the arm plane (reach, height)
+    pz = float(p[2])
+    h0, l1, l2 = _arm_geom()
+    fwd = float(CAM0_OFF_M[0])
+    # grid over shoulder / elbow (virtual deg, inside the limits)
+    s_v = np.arange(math.ceil(v_lo[1]), math.floor(v_hi[1]) + 1, 1.0)
+    e_v = np.arange(math.ceil(v_lo[2]), math.floor(v_hi[2]) + 1, 1.0)
+    S, E = np.meshgrid(np.radians(s_v - 90.0), np.radians(e_v - 90.0), indexing="ij")
+    wr = l1 * np.sin(S) + l2 * np.sin(S + E)
+    wz = h0 + l1 * np.cos(S) + l2 * np.cos(S + E)
+    dr, dzz = pr - wr, pz - wz
+    dwc = np.hypot(dr, dzz)                              # wrist centre -> object
+    pitch = np.arctan2(-dzz, dr)                         # camera pitch towards the object (+ = down), in the plane
+    q5 = pitch - (S + E)                                 # forearm tilt S+E (Ry, + = forward/down for the tool x)
+    p_lo = math.radians(v_lo[4] - 90.0 + WRIST_MARGIN_DEG + 2.0)
+    p_hi = math.radians(v_hi[4] - 90.0 - WRIST_MARGIN_DEG - 2.0)
+    dist_cam = dwc - fwd                                 # camera roughly on the wrist centre -> object line
+    ok = (q5 >= p_lo) & (q5 <= p_hi) & (wz >= POS_WC_Z_MIN) & (dr > fwd + 0.02) & (dist_cam >= POINT_STANDOFF_M)
+    if not np.any(ok):
+        return None, dict(info, why="nessuna posa del braccio riesce a puntare l'oggetto")
+    move = np.hypot(S - q[1], E - q[2])
+    cost = np.where(ok, (dist_cam - POINT_STANDOFF_M) + 0.02 * move, np.inf)
+    order = np.argsort(cost, axis=None)[:40]
+    best = None
+    for k in order:
+        i, j = np.unravel_index(int(k), cost.shape)
+        if not np.isfinite(cost[i, j]):
+            break
+        q2, q3 = float(S[i, j]), float(E[i, j])
+        c_t = np.array([float(wr[i, j]) * math.cos(q1), float(wr[i, j]) * math.sin(q1), float(wz[i, j])])
+        d = p - c_t
+        dh = math.hypot(d[0], d[1])
+        yaw = math.atan2(d[1], d[0]) - math.asin(max(-1.0, min(1.0, float(CAM0_OFF_M[1]) / max(dh, 0.05))))
+        r_t = _rz(yaw) @ _ry(math.atan2(-d[2], dh))
+        q4, q5w, q6 = wrist_ik((q1, q2, q3), r_t)
+        w = [math.degrees(t) + 90.0 for t in (q4, q5w, q6)]
+        if not all(v_lo[3 + n] + WRIST_MARGIN_DEG <= w[n] <= v_hi[3 + n] - WRIST_MARGIN_DEG for n in range(3)):
+            continue
+        pose = [b_v, math.degrees(q2) + 90.0, math.degrees(q3) + 90.0] + w
+        qp = np.radians(np.asarray(pose) - 90.0)
+        r_p = cam_rotation(qp)
+        to_p = p - (c_t + r_p @ CAM0_OFF_M)
+        err = math.degrees(math.acos(max(-1.0, min(1.0, float(r_p[:, 0] @ to_p) / max(1e-6, float(np.linalg.norm(to_p)))))))
+        if err > 4.0:
+            continue
+        best = (pose, err, float(np.linalg.norm(to_p)))
+        break
+    if best is None:
+        return None, dict(info, why="il polso non riesce a puntare l'oggetto da nessuna posa vicina")
+    pose, err, dist_after = best
+    info.update(err_deg=round(err, 1), dist_after_mm=round(dist_after * 1000),
+                base_limited=abs(b_v - (math.degrees(math.atan2(p[1], p[0])) + 90.0)) > 0.5)
+    return pose, info
+
+
+def request_point(p_cam_mm, label=None):
+    """Start the motion towards an object (ws_server, vision_result with aim). Only while tracking (grips held)."""
+    st = _state
+    if st.phase != "track" or st.last_full_v is None or st.v_lims is None:
+        return False, {"why": "tieni premuti i due grip (ASSIST attivo)"}
+    pose, info = plan_point(st.last_full_v, st.v_lims, p_cam_mm)
+    if pose is None:
+        return False, info
+    a0, w0 = list(st.last_full_v[0:3]), list(st.last_full_v[3:6])
+    span = max(abs(pose[i] - st.last_full_v[i]) for i in range(6))
+    T = max(POINT_MIN_T_S, span / POINT_SPEED_DEG_S)
+    info.update(label=label, T_s=round(T, 2), pose_v=[round(v, 1) for v in pose])
+    st.goal = {"a0": a0, "a1": pose[0:3], "w0": w0, "w1": pose[3:6], "t0": time.monotonic(), "T": T, "info": info}
+    st.goal_done = None
+    logger.info("[GIMBAL] point %s: object base %s mm -> pose virt %s in %.1f s (axis err %.1f deg, %d mm away%s%s)",
+                label, info["p_base_mm"], info["pose_v"], T, info["err_deg"], info["dist_after_mm"],
+                ", base at its limit" if info.get("base_limited") else "", "")
+    return True, info
+
+
+def pop_goal_done():
+    st = _state
+    d, st.goal_done = st.goal_done, None
+    return d
 
 
 def _rot_to_ypr(r):

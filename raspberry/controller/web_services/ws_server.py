@@ -116,6 +116,17 @@ def _sync_clock(epoch_ms) -> None:
         logger.warning("[CLOCK] sync failed: %s", e)
 
 
+async def _broadcast(obj: dict, skip=None) -> None:
+    msg = json.dumps(obj)
+    for client in list(clients):
+        if client is skip:
+            continue
+        try:
+            await client.send(msg)
+        except Exception:
+            pass
+
+
 def _resolve_tls_pair() -> tuple[str, str, str, str]:
     requested_cert = os.path.abspath(
         os.environ.get("WEBRTC_CERT_FILE", rcfg.get_runtime_config_path("tls_cert"))
@@ -975,8 +986,26 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
             # del refresh HMD reale, distinto dal monitor del PC che apre la
             # pagina dashboard. Usato per validare la spec "60-72 Hz visore"
             # del Cap.6/Cap.10 della tesi.
+            # Vision (raspberry/tools/vision_service.py): a result with "aim" (right trigger in ASSIST) starts the
+            # gimbal motion towards the object; the outcome goes to every client as vision_point.
+            if isinstance(data, dict) and data.get("type") == "vision_result" and data.get("aim"):
+                tgt = data.get("target") or {}
+                xyz = tgt.get("cam_xyz_mm")
+                try:
+                    if isinstance(xyz, list) and len(xyz) == 3:
+                        ok, info = _gimbal.request_point([float(v) for v in xyz], tgt.get("label_it"))
+                    else:
+                        ok, info = False, {"why": "distanza non misurata"}
+                except Exception as e:
+                    logger.warning("[VISION] point failed: %s", e)
+                    ok, info = False, {"why": f"errore: {e}"}
+                logger.info("[VISION] point %s: ok=%s %s", tgt.get("label_it"), ok, info)
+                await _broadcast(dict({k: v for k, v in info.items() if k not in ("pose_v",)},
+                                      type="vision_point", ok=ok, label=tgt.get("label_it")))
+
             if isinstance(data, dict) and data.get("type") in ("vr_session_refresh", "vr_session_state", "vr_video_latency",
-                                                               "stereo_collimation", "stereo_calibrate"):
+                                                               "stereo_collimation", "stereo_calibrate",
+                                                               "vision_request", "vision_result"):
                 try:
                     msg_out = json.dumps(data)
                     for client in list(clients):
@@ -1072,6 +1101,12 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
             # Mode=5: HEAD OVERFLOW ASSIST (config: routing_config headAssist).
             if int(intent.get("mode", -1)) == 5:
                 _process_head_assist_mode(intent)
+                # point at an object: the arm got there -> read the object again from close up (vision_service)
+                done = _gimbal.pop_goal_done()
+                if done:
+                    await _broadcast({"type": "vision_point", "ok": True, "done": True,
+                                      "label": done.get("label"), "dist_after_mm": done.get("dist_after_mm")})
+                    await _broadcast({"type": "vision_request", "action": "analyze", "req": "after_point"})
                 # Mantieni comunque latest_intent aggiornato per telemetria/debug.
                 with shared_state.lock:
                     shared_state.latest_intent = intent
