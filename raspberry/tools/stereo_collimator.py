@@ -70,9 +70,17 @@ MIN_SCORE = 0.65
 MIN_MARGIN = 0.02                    # best peak must beat the best peak elsewhere by this much (repetitive textures)
 # Continuity: when two places are almost equally good (drawers, shelves...), take the one next to the last lock
 # if it is within CONT_PX (full-res) of it and its score is within CONT_BAND of the best.
-CONT_PX = 10.0
+CONT_PX = 16.0
 CONT_BAND = 0.06
-CONT_MAX_AGE_S = 1.0
+CONT_MAX_AGE_S = 3.0                 # was 1 s: one missed keyframe (~0.2 s) dropped the continuity, then it stayed
+                                     # unlocked on repetitive / smooth targets
+# Vertical offset between the cameras (mechanical, independent of the distance): learned from the locks and sent
+# while searching, so the right crosshair / convergence stays aligned vertically (the stored calibration said
+# -0.3 px, the locks measure about -10 px after the cameras moved).
+DY_LEARN_N = 25
+DY_LEARN_MIN = 5
+DY_SAVE_DELTA = 1.0
+DY_SAVE_EVERY_S = 60.0
 
 
 def log(*a):
@@ -229,6 +237,20 @@ def save_calib(dx_inf: float, dy_off: float, distance_mm: float, dx_meas: float)
 # main loop
 # ---------------------------------------------------------------------------------------------------------------
 
+def save_dy_off(dy_off: float):
+    try:
+        c = json.loads(CALIB_PATH.read_text())
+    except Exception:
+        c = {}
+    c["dy_off_px"] = round(dy_off, 2)
+    c["dy_learned_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    try:
+        CALIB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CALIB_PATH.write_text(json.dumps(c, indent=2))
+    except Exception as e:
+        log(f"cannot save dy_off: {e}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rtsp", default="rtsp://127.0.0.1:8554")
@@ -251,6 +273,9 @@ def main():
 
     hist: list = []        # last good measurements (dx, dy) for a small median
     last_lock = (0.0, -1e9)  # (dx, monotonic time) of the last locked measurement
+    dy_hist = []
+    dy_saved = calib['dy_off']
+    dy_saved_at = -1e9
     last_seq = (-1, -1)
     ws = None
     calib_samples: list = []
@@ -294,6 +319,15 @@ def main():
                "win": win, "ts": round(time.time(), 3)}
         if ok:
             last_lock = (dx, time.monotonic())
+            dy_hist = (dy_hist + [dy])[-DY_LEARN_N:]
+            if len(dy_hist) >= DY_LEARN_MIN:
+                dy_learn = float(np.median(dy_hist))
+                if (abs(dy_learn - dy_saved) > DY_SAVE_DELTA
+                        and time.monotonic() - dy_saved_at > DY_SAVE_EVERY_S):
+                    save_dy_off(dy_learn)
+                    log(f"vertical offset learned: dy_off {dy_saved:.1f} -> {dy_learn:.1f} px")
+                    dy_saved, dy_saved_at = dy_learn, time.monotonic()
+                calib["dy_off"] = dy_learn
             hist = (hist + [(dx, dy)])[-3:]
             mdx = float(np.median([h[0] for h in hist]))
             mdy = float(np.median([h[1] for h in hist]))
