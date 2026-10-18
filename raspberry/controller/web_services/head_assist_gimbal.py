@@ -60,6 +60,7 @@ POS_JUMP_M = 0.25            # head position jump in one intent (recenter, track
 POS_W_REACH = 0.25           # IK weight of the reach error vs the height error
 POS_POSTURE_W = 2e-4         # pull towards the engage posture (m^2 / rad^2): picks the "bow forward" branch
 POS_LM_DAMP = 1e-3           # Levenberg-Marquardt damping (near-straight arm = singular)
+PITCH_HELP_MARGIN_DEG = 3.0  # with head position: the arm helps the wrist pitch this close to its limits
 
 # XR (x right, y up, z back) -> robot base (x forward, y left, z up)
 _C = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
@@ -281,6 +282,7 @@ class GimbalState:
         self.p_last = None
         self.rz_ref = None           # wrist centre (reach, height) at engage
         self.q23_ref = None          # shoulder / elbow (rad) at engage: preferred posture for the IK
+        self.z_off = 0.0             # height reference offset (m): end-of-range ratchet + pitch help
         self.dpsi = 0.0              # camera yaw - head yaw at engage (maps head displacement to the robot)
         self.pos_dbg = None
         self.target_id = 0
@@ -392,6 +394,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
             st.p_last = st.p_ref
             st.rz_ref = wc_rz(qm[1], qm[2])
             st.q23_ref = (float(qm[1]), float(qm[2]))
+            st.z_off = 0.0
             st.dpsi = (math.atan2(st.r_cam_ref[1, 0], st.r_cam_ref[0, 0])
                        - math.atan2(st.r_head_ref[1, 0], st.r_head_ref[0, 0]))
             st.phase = "track"
@@ -453,8 +456,20 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         hi = [math.radians(a_hi[1] - 90.0), math.radians(a_hi[2] - 90.0)]
         # height -> "bow" posture (down and a bit forward, like a person); the head's forward displacement adds
         # reach on top of the bow, solved around it
-        z_t = max(POS_WC_Z_MIN, st.rz_ref[1] + dz)
-        q2b, q3b = bow_for_height(z_t, st.q23_ref[0], st.q23_ref[1], lo, hi)
+        q2r, q3r = st.q23_ref
+        z_t = st.rz_ref[1] + dz + st.z_off
+        # ratchet at the ends of the reachable height: the excess is dropped from the reference, so the arm
+        # answers as soon as the head reverses (engaged crouched and stood up: the target went 50 cm above the
+        # straight arm and crouching again did nothing until the head came back below that point)
+        z_top = wc_rz(*bow_for_height(10.0, q2r, q3r, lo, hi))[1]
+        z_bot = max(POS_WC_Z_MIN, wc_rz(*bow_for_height(-10.0, q2r, q3r, lo, hi))[1])
+        if z_t > z_top:
+            st.z_off -= z_t - z_top
+            z_t = z_top
+        elif z_t < z_bot:
+            st.z_off += z_bot - z_t
+            z_t = z_bot
+        q2b, q3b = bow_for_height(z_t, q2r, q3r, lo, hi)
         r_bow = wc_rz(q2b, q3b)[0]
         h0, l1, l2 = _arm_geom()
         r_max = math.sqrt(max(0.0, (0.98 * (l1 + l2)) ** 2 - (z_t - h0) ** 2))   # stretched arm at that height
@@ -467,6 +482,19 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
             delta = math.degrees(qt) + 90.0 - st.arm_v[k]
             st.arm_v[k] = float(np.clip(st.arm_v[k] + max(-max_step, min(max_step, frac * delta)),
                                         a_lo[k], a_hi[k]))
+        # orientation first: when the wrist pitch reaches its limit, the elbow (then the shoulder) helps as in the
+        # orientation-only assist, and the height target follows the new posture (looking down with the arm
+        # straight: the wrist alone stopped at its 40 deg)
+        ov_lim = float(w_deg[1]) - float(np.clip(w_deg[1], w_lo[1] + PITCH_HELP_MARGIN_DEG,
+                                                 w_hi[1] - PITCH_HELP_MARGIN_DEG))
+        if abs(ov_lim) > 1e-3:
+            step_p = max(-max_step, min(max_step, frac * ov_lim))
+            g_new = float(np.clip(st.arm_v[2] + step_p, a_lo[2], a_hi[2]))
+            rest = step_p - (g_new - st.arm_v[2])
+            st.arm_v[2] = g_new
+            st.arm_v[1] = float(np.clip(st.arm_v[1] + rest, a_lo[1], a_hi[1]))
+            z_new = wc_rz(math.radians(st.arm_v[1] - 90.0), math.radians(st.arm_v[2] - 90.0))[1]
+            st.z_off += z_new - z_t
         st.pos_dbg = (dr, dz, r_t, z_t)
     else:
         step_p = max(-max_step, min(max_step, frac * ov_pitch))
