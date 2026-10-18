@@ -185,7 +185,10 @@ def match_size(left: np.ndarray, right: np.ndarray, TPL: int, prev_dx=None, zoom
     t = left[cy - TPL // 2: cy + TPL // 2, cx - TPL // 2: cx + TPL // 2]
     if float(t.std()) < MIN_TEXTURE:
         return None, None, 0.0, False, "flat", 2 * TPL
-    y0, y1 = max(0, cy - TPL // 2 - DY_MAX), min(h, cy + TPL // 2 + DY_MAX)
+    # vertical search grows with the zoom too (the camera offset, ~ -9 px at 1x, is ~ -40 px at 4.5x: with a fixed
+    # +-24 px window the match fell on the border -> "edge")
+    dyr = int(round(DY_MAX * max(1.0, zoom)))
+    y0, y1 = max(0, cy - TPL // 2 - dyr), min(h, cy + TPL // 2 + dyr)
     # the disparity range grows with the sensor zoom; the image border limits it anyway
     x0, x1 = max(0, cx - TPL // 2 + int(DX_MIN * zoom)), min(w, cx + TPL // 2 + int(DX_MAX * zoom))
     sr = right[y0:y1, x0:x1]
