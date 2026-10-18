@@ -12,7 +12,10 @@ Same stream as rpicam-vid (video_capture.sh): WxH @ FPS, x264 preset ultrafast +
 CBR-ish (VBV), IDR every INTRA frames, SPS/PPS repeated, denoise off, fixed exposure / gain / AWB / lens from the
 script's probe, libcamera frame sync (cam0 server, cam1 client).
 
-Zoom control: UDP 127.0.0.1:(CTL_PORT_BASE + camera), JSON {"zoom": z} (1 .. ZOOM_MAX). The crop eases towards
+Zoom control: UDP 127.0.0.1:(CTL_PORT_BASE + camera), JSON {"zoom": z} (1 .. ZOOM_MAX) and/or
+{"offset": [ox, oy]}: the crop centre moved by (ox, oy) ZOOM-1 stream pixels (sensor convergence: the stereo
+collimator moves cam1's crop onto the object under cam0's crosshair, so at high zoom the object stays in view and
+the residual disparity is small). The offset is clamped to the sensor area (no margin at 1x). The crop eases towards
 the target (time constant ZOOM_TAU_S) so both cameras move smoothly together. The applied zoom is written to
 /dev/shm/jonny5_cam{N}_zoom.json ({"zoom", "target", "ts"}) for the collimator and ws-teleop.
 """
@@ -139,17 +142,28 @@ def main():
     full = smax  # (x, y, w, h)
     log(f"cam{cam}: sensor mode {picam2.camera_configuration()['sensor']}, crop max {full}, min {smin}")
 
-    def crop_for(z: float):
+    k = full[2] / float(args.width)   # sensor pixels per zoom-1 stream pixel
+
+    def crop_for(z: float, off=(0.0, 0.0)):
+        """ScalerCrop for zoom z with the centre moved by off (zoom-1 px); also returns the offset actually
+        applied after clamping to the sensor area."""
         z = max(1.0, min(ZOOM_MAX, z))
         w = int(round(full[2] / z)) & ~1
         h = int(round(w * args.height / args.width)) & ~1
         h = min(h, full[3])
-        x = full[0] + (full[2] - w) // 2
-        y = full[1] + (full[3] - h) // 2
-        return (x & ~1, y & ~1, w, h)
+        cx = full[0] + full[2] / 2.0 + off[0] * k
+        cy = full[1] + full[3] / 2.0 + off[1] * k
+        x = int(round(cx - w / 2.0))
+        y = int(round(cy - h / 2.0))
+        x = max(full[0], min(full[0] + full[2] - w, x)) & ~1
+        y = max(full[1], min(full[1] + full[3] - h, y)) & ~1
+        applied = ((x + w / 2.0 - (full[0] + full[2] / 2.0)) / k, (y + h / 2.0 - (full[1] + full[3] / 2.0)) / k)
+        return (x, y, w, h), applied
 
-    state = {"target": max(1.0, min(ZOOM_MAX, args.zoom)), "zoom": max(1.0, min(ZOOM_MAX, args.zoom))}
-    picam2.set_controls({"ScalerCrop": crop_for(state["zoom"])})
+    state = {"target": max(1.0, min(ZOOM_MAX, args.zoom)), "zoom": max(1.0, min(ZOOM_MAX, args.zoom)),
+             "off": [0.0, 0.0], "off_t": [0.0, 0.0], "off_applied": [0.0, 0.0]}
+    crop, state["off_applied"] = crop_for(state["zoom"])
+    picam2.set_controls({"ScalerCrop": crop})
 
     # Keyframes ALIGNED across the two cameras: the stereo collimator decodes only keyframes and pairs them by
     # time. With a frame counter per encoder (iperiod) the two cameras' IDRs fell on different frames (the
@@ -199,6 +213,8 @@ def main():
         try:
             with open(tmp_path, "w") as f:
                 json.dump({"zoom": round(state["zoom"], 4), "target": round(state["target"], 4),
+                           "offset": [round(v, 2) for v in state["off_applied"]],
+                           "offset_target": [round(v, 2) for v in state["off_t"]],
                            "ts": round(time.time(), 3)}, f)
             os.replace(tmp_path, state_path)
         except OSError:
@@ -207,6 +223,7 @@ def main():
     write_state()
     last = time.monotonic()
     last_applied = state["zoom"]
+    last_off = [0.0, 0.0]
     last_write = 0.0
     try:
         while not stop.is_set():
@@ -219,6 +236,10 @@ def main():
                     z = float(msg["zoom"])
                     if math.isfinite(z):
                         state["target"] = max(1.0, min(ZOOM_MAX, z))
+                if "offset" in msg:
+                    ox, oy = (float(v) for v in msg["offset"][:2])
+                    if math.isfinite(ox) and math.isfinite(oy):
+                        state["off_t"] = [max(-400.0, min(400.0, ox)), max(-225.0, min(225.0, oy))]
             except socket.timeout:
                 pass
             except (ValueError, OSError):
@@ -232,10 +253,17 @@ def main():
             state["zoom"] = math.exp(lz)
             if abs(state["zoom"] - state["target"]) < 0.002:
                 state["zoom"] = state["target"]
-            if abs(state["zoom"] - last_applied) >= 0.002:
-                picam2.set_controls({"ScalerCrop": crop_for(state["zoom"])})
+            for i in (0, 1):
+                state["off"][i] += (state["off_t"][i] - state["off"][i]) * a
+                if abs(state["off"][i] - state["off_t"][i]) < 0.05:
+                    state["off"][i] = state["off_t"][i]
+            if (abs(state["zoom"] - last_applied) >= 0.002
+                    or max(abs(state["off"][i] - last_off[i]) for i in (0, 1)) >= 0.05):
+                crop, state["off_applied"] = crop_for(state["zoom"], state["off"])
+                picam2.set_controls({"ScalerCrop": crop})
                 last_applied = state["zoom"]
-            if now - last_write > 0.1 or state["zoom"] != last_applied:
+                last_off = list(state["off"])
+            if now - last_write > 0.1:
                 write_state()
                 last_write = now
     except KeyboardInterrupt:

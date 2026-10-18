@@ -37,6 +37,7 @@ import glob
 import json
 import math
 import os
+import socket
 import ssl
 import sys
 import threading
@@ -87,6 +88,14 @@ DY_SAVE_EVERY_S = 60.0
 # rescaled (a centred crop scales the offsets from the centre by the zoom ratio).
 CAM_ZOOM_PATH = "/dev/shm/jonny5_cam0_zoom.json"
 ZOOM_SETTLE_S = 0.35
+# Sensor convergence: cam1's crop centre is moved (cam_stream.py {"offset": [ox, oy]}, zoom-1 px) onto the object
+# under cam0's crosshair, so at high zoom the object stays in cam1's view (near objects: 600 px of disparity at 6x)
+# and only a small residual is matched. True disparity = residual / zoom + offset. The offset is re-sent only
+# when the residual is large (each change pauses the matching for ZOOM_SETTLE_S).
+CAM1_STATE_PATH = "/dev/shm/jonny5_cam1_zoom.json"
+CAM1_CTL = ("127.0.0.1", 5601)
+CONV_SEND_STREAM_PX = 12.0
+CONV_RELEASE_S = 3.0
 
 
 def log(*a):
@@ -261,30 +270,54 @@ def save_dy_off(dy_off: float):
         log(f"cannot save dy_off: {e}")
 
 
+def _read_state(path):
+    try:
+        with open(path) as f:
+            st = json.load(f)
+        if time.time() - float(st.get("ts", 0)) < 3.0:
+            return st
+    except Exception:
+        pass
+    return None
+
+
 class CamZoom:
-    """Applied sensor zoom of the cameras (cam_stream.py state file); 1 when the file is missing / stale
-    (rpicam-vid capture). stable = not moving for ZOOM_SETTLE_S."""
+    """Applied sensor zoom (cam0) and cam1 crop offset (cam_stream.py state files); 1 / (0, 0) when missing or
+    stale (rpicam-vid capture). stable = neither moving for ZOOM_SETTLE_S."""
 
     def __init__(self):
         self.z = 1.0
+        self.off = (0.0, 0.0)
+        self.off_target = (0.0, 0.0)
         self.changed_at = 0.0
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def read(self):
         z, target = 1.0, 1.0
-        try:
-            with open(CAM_ZOOM_PATH) as f:
-                st = json.load(f)
-            if time.time() - float(st.get("ts", 0)) < 3.0:
-                z = float(st.get("zoom", 1.0))
-                target = float(st.get("target", z))
-        except Exception:
-            pass
+        st = _read_state(CAM_ZOOM_PATH)
+        if st:
+            z = float(st.get("zoom", 1.0))
+            target = float(st.get("target", z))
+        off, off_t = (0.0, 0.0), (0.0, 0.0)
+        st1 = _read_state(CAM1_STATE_PATH)
+        if st1 and "offset" in st1:
+            off = tuple(float(v) for v in st1["offset"][:2])
+            off_t = tuple(float(v) for v in st1.get("offset_target", st1["offset"])[:2])
         now = time.monotonic()
-        if abs(z - self.z) > 0.002:
+        if abs(z - self.z) > 0.002 or max(abs(off[0] - self.off[0]), abs(off[1] - self.off[1])) > 0.05:
             self.changed_at = now
-        self.z = z
+        self.z, self.off, self.off_target = z, off, off_t
+        # the applied offset may stay clamped short of its target (no margin at low zoom): "not changing" is
+        # the criterion, not "reached the target"
         stable = abs(z - target) < 0.005 and now - self.changed_at > ZOOM_SETTLE_S
-        return z, stable
+        return z, off, stable
+
+    def send_offset(self, ox, oy):
+        try:
+            self.sock.sendto(json.dumps({"offset": [round(ox, 2), round(oy, 2)]}).encode(), CAM1_CTL)
+            self.off_target = (ox, oy)
+        except OSError:
+            pass
 
 
 def main():
@@ -350,18 +383,19 @@ def main():
             time.sleep(0.02)
             continue
         last_seq = (sl, srq)
-        z, z_stable = camzoom.read()
+        z, (ox, oy), z_stable = camzoom.read()
         if not z_stable:
-            # zoom moving: these keyframes mix crops, do not match; send the last lock rescaled to this zoom
+            # zoom / crop moving: these keyframes mix crops, do not match; send the last lock rescaled to this zoom
             msg = {"type": "stereo_collimation", "score": 0.0, "dx_inf": round(calib["dx_inf"] * z, 2), "win": 0,
-                   "ts": round(time.time(), 3), "zoom": round(z, 3)}
+                   "ts": round(time.time(), 3), "zoom": round(z, 3), "offset": [round(ox, 1), round(oy, 1)]}
             if last_out is not None and time.monotonic() - last_lock[1] < CONT_MAX_AGE_S:
-                msg.update({"lock": True, "dx": round(last_out[0] * z, 2), "dy": round(last_out[1] * z, 2),
+                msg.update({"lock": True, "dx": round((last_out[0] - ox) * z, 2),
+                            "dy": round((last_out[1] - oy) * z, 2),
                             "dist_mm": round(last_out[2], 1) if last_out[2] else None, "why": "zoom"})
                 last_lock = (last_lock[0], time.monotonic())
             else:
-                msg.update({"lock": False, "dx": round(calib["dx_inf"] * z, 2), "dy": round(calib["dy_off"] * z, 2),
-                            "dist_mm": None, "why": "zoom"})
+                msg.update({"lock": False, "dx": round((calib["dx_inf"] - ox) * z, 2),
+                            "dy": round((calib["dy_off"] - oy) * z, 2), "dist_mm": None, "why": "zoom"})
             if ws is not None:
                 try:
                     ws.send(json.dumps(msg))
@@ -372,13 +406,13 @@ def main():
                         pass
                     ws = None
             continue
-        prev = last_lock[0] * z if time.monotonic() - last_lock[1] < CONT_MAX_AGE_S else None
+        prev = (last_lock[0] - ox) * z if time.monotonic() - last_lock[1] < CONT_MAX_AGE_S else None
         dx, dy, score, ok, why, win = match(fl, fr, prev, z)
         if ok:
-            dx, dy = dx / z, dy / z          # zoom-1 pixels from here on
+            dx, dy = dx / z + ox, dy / z + oy   # TRUE disparity in zoom-1 pixels from here on
 
         msg = {"type": "stereo_collimation", "score": round(score, 3), "dx_inf": round(calib["dx_inf"] * z, 2),
-               "win": win, "ts": round(time.time(), 3), "zoom": round(z, 3)}
+               "win": win, "ts": round(time.time(), 3), "zoom": round(z, 3), "offset": [round(ox, 1), round(oy, 1)]}
         if ok:
             last_lock = (dx, time.monotonic())
             dy_hist = (dy_hist + [dy])[-DY_LEARN_N:]
@@ -396,7 +430,8 @@ def main():
             d = calib["dx_inf"] - mdx
             dist = F_PX * BASELINE_MM / d if d > 0.5 else None
             last_out = (mdx, mdy, dist)
-            msg.update({"lock": True, "dx": round(mdx * z, 2), "dy": round(mdy * z, 2),
+            # residual in the (shifted) cam1 stream: what the viewer still has to converge
+            msg.update({"lock": True, "dx": round((mdx - ox) * z, 2), "dy": round((mdy - oy) * z, 2),
                         "dist_mm": round(dist, 1) if dist else None})
             if why:
                 msg["why"] = why
@@ -417,8 +452,19 @@ def main():
                         return
         else:
             hist = []
-            msg.update({"lock": False, "dx": round(calib["dx_inf"] * z, 2), "dy": round(calib["dy_off"] * z, 2),
-                        "dist_mm": None, "why": why})
+            msg.update({"lock": False, "dx": round((calib["dx_inf"] - ox) * z, 2),
+                        "dy": round((calib["dy_off"] - oy) * z, 2), "dist_mm": None, "why": why})
+
+        # sensor convergence: move cam1's crop onto the locked object (or back to infinity without a lock)
+        want = None
+        if ok:
+            want = (mdx, mdy)
+        elif time.monotonic() - last_lock[1] > CONV_RELEASE_S:
+            want = (calib["dx_inf"], calib["dy_off"])
+        if want is not None:
+            tx, ty = camzoom.off_target
+            if max(abs(want[0] - tx), abs(want[1] - ty)) * z > CONV_SEND_STREAM_PX:
+                camzoom.send_offset(want[0], want[1])
 
         if args.print or (int(time.time()) % 10 == 0 and sl % 5 == 0):
             log(json.dumps(msg))
