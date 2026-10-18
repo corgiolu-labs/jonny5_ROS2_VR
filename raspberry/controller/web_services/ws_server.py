@@ -876,6 +876,19 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
             # Stato zoom VR: il viewer XR notifica il backend a ~10Hz quando l'utente
             # cambia zoom. Il valore viene incluso nei payload di telemetria successivi
             # (campi vr_zoom0 / vr_zoom1) per la visualizzazione su dashboard.
+            # IMU measurement campaign (head_assist_gimbal.set_campaign): on / off / label, reply to the sender
+            if isinstance(data, dict) and data.get("type") == "imu_campaign":
+                try:
+                    if "on" in data:
+                        res = _gimbal.set_campaign(bool(data.get("on")), str(data.get("label", "")))
+                    else:
+                        _gimbal.set_campaign_label(str(data.get("label", "")))
+                        res = {"label": str(data.get("label", ""))}
+                    await websocket.send(json.dumps(dict(res, type="imu_campaign_state")))
+                except Exception as e:
+                    logger.warning("[CAMPAIGN] %s", e)
+                continue
+
             # Camera brightness slider of the native Quest app (tools/cam_stream.py, both cameras)
             if isinstance(data, dict) and data.get("type") == "cam_exposure":
                 try:

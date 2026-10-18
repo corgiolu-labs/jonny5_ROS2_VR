@@ -43,8 +43,10 @@ Selected with routing_config.json "assistMode": "gimbal" (other values: "rate" l
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
+import os
 import time
 
 import numpy as np
@@ -313,6 +315,75 @@ class GimbalState:
 _state = GimbalState()
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# measurement campaign (2026-10-18): desired / commanded / firmware / IMU orientation per intent, to decide whether a
+# closed loop on the wrist IMU is worth it (tools/imu_campaign_report.py). Switched on / off with the ws message
+# {"type": "imu_campaign", "on": true|false, "label": "..."}; nothing changes in the motion.
+# ---------------------------------------------------------------------------------------------------------------
+
+CAMPAIGN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "logs", "imu_campaign")
+CAMPAIGN_HZ = 30.0
+_TELEMETRY_PATH = "/dev/shm/j5vr_telemetry.json"
+_campaign = {"f": None, "path": None, "last": 0.0, "n": 0, "label": ""}
+
+
+def set_campaign(on: bool, label: str = "") -> dict:
+    c = _campaign
+    if c["f"] is not None:
+        try:
+            c["f"].close()
+        except OSError:
+            pass
+        logger.info("[CAMPAIGN] stopped: %s (%d samples)", c["path"], c["n"])
+        c["f"] = None
+    if on:
+        os.makedirs(CAMPAIGN_DIR, exist_ok=True)
+        c["path"] = os.path.abspath(os.path.join(CAMPAIGN_DIR, time.strftime("%Y%m%d_%H%M%S") + ".jsonl"))
+        c["f"] = open(c["path"], "a", buffering=1 << 16)
+        c["n"] = 0
+        c["label"] = label
+        logger.info("[CAMPAIGN] recording to %s", c["path"])
+    return {"on": c["f"] is not None, "path": c["path"], "n": c["n"]}
+
+
+def set_campaign_label(label: str) -> None:
+    _campaign["label"] = label
+    logger.info("[CAMPAIGN] label %s", label)
+
+
+def _campaign_log(st, intent, full_v, r_target, physical_tel):
+    c = _campaign
+    if c["f"] is None:
+        return
+    now = time.monotonic()
+    if now - c["last"] < 1.0 / CAMPAIGN_HZ:
+        return
+    c["last"] = now
+    imu = None
+    try:
+        with open(_TELEMETRY_PATH) as f:
+            t = json.load(f)
+        if t.get("imu_valid"):
+            imu = [t.get("imu_q_w"), t.get("imu_q_x"), t.get("imu_q_y"), t.get("imu_q_z"), t.get("imu_sample_counter")]
+    except (OSError, ValueError):
+        pass
+    rec = {"t": round(now, 4), "wall": round(time.time(), 3), "label": c["label"],
+           "goal": st.goal is not None,
+           "head_q": [round(float(intent.get(k, 0.0)), 5) for k in ("quat_w_in", "quat_x_in", "quat_y_in", "quat_z_in")],
+           "head_p": [intent.get("head_px"), intent.get("head_py"), intent.get("head_pz")],
+           "cmd_v": [round(float(v), 3) for v in full_v],
+           "tel_phys": [round(float(v), 2) for v in physical_tel],
+           "target_R": None if r_target is None else [round(float(v), 5) for v in np.asarray(r_target).reshape(-1)],
+           "imu": imu}
+    try:
+        c["f"].write(json.dumps(rec) + "\n")
+        c["n"] += 1
+        if c["n"] % 30 == 0:
+            c["f"].flush()
+    except OSError:
+        pass
+
+
 def notify_headzero_external():
     """Any HEADZERO not issued by us resets the firmware reference: re-zero at the next engage."""
     if _state.phase == "track":
@@ -367,6 +438,10 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
 
     def send_quat(q):
         intent["quat_w"], intent["quat_x"], intent["quat_y"], intent["quat_z"] = (float(v) for v in q)
+
+    for k in ("quat_w", "quat_x", "quat_y", "quat_z"):
+        intent[k + "_in"] = intent.get(k, 1.0 if k == "quat_w" else 0.0)
+    tel_raw = [float(v) for v in physical_six[:6]] if physical_six and len(physical_six) >= 6 else None
 
     if not grip or not physical_six or len(physical_six) < 6:
         if st.phase != "idle":
@@ -458,7 +533,9 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
             st.goal = None
             logger.info("[GIMBAL] point: reached arm virt %s wrist virt %s", [round(v, 1) for v in st.arm_v],
                         [round(v, 1) for v in w_cmd])
-        return _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat)
+        out = _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat)
+        _campaign_log(st, intent, full_v, None, tel_raw)
+        return out
 
     # ---- track
     r_target = r_head @ st.r_head_ref.T @ st.r_cam_ref
@@ -562,6 +639,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     full_v[0:3] = [float(v) for v in st.arm_v]
     full_v[3:6] = w_cmd
     arm_phys, _, _, _ = _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat)
+    _campaign_log(st, intent, full_v, r_target, tel_raw)
 
     if now - st.last_log >= 1.0:
         st.last_log = now
