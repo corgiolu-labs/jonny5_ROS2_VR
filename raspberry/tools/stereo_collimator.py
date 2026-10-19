@@ -126,7 +126,13 @@ CONV_RELEASE_ZOOMED_S = 30.0         # at 6x is 250 px off: releasing to infinit
 # Robustness at high zoom (2026-10-19, the user: "allo zoom massimo tende a sganciare"): false locks at 6x sent
 # the crop offset beyond infinity (+42 px) and dy -70 px, then the real object was outside cam1's crop.
 GATE_DX_INF_PX = 4.0                 # a lock "beyond infinity" (dx > dx_inf + this, zoom-1 px) is impossible
-GATE_DY_PX = 6.0                     # |dy - dy_off| above this (zoom-1 px) is not the same point (cameras are rigid)
+GATE_DY_PX = 6.0                     # |dy - dy_off| above this (zoom-1 px) is not the same point ...
+# ... but the wrist mount flexes with the arm pose (2026-10-19: dy_off -0.5 -> -9.4 px within minutes, then +5
+# at another pose; a stale dy_off then rejected every match): when DY_JUMP_N consecutive strong matches agree
+# on a dy outside the gate (spread < DY_JUMP_SPREAD), that dy becomes the new offset at once.
+DY_JUMP_N = 4
+DY_JUMP_SPREAD = 1.5
+DY_JUMP_SCORE = 0.9
 JUMP_PX = 10.0                       # a jump of the true disparity above this (zoom-1 px) needs a confirmation
 JUMP_CONFIRM_N = 2                   # consecutive consistent matches before a jump is accepted
 JUMP_SCORE_OK = 0.92                 # ... unless the match is this strong (a near object moving: 25 px between
@@ -210,7 +216,10 @@ def ncc(search: np.ndarray, tpl: np.ndarray) -> np.ndarray:
 
 def subpixel(v_m, v_0, v_p) -> float:
     den = v_m - 2 * v_0 + v_p
-    return 0.0 if abs(den) < 1e-9 else 0.5 * (v_m - v_p) / den
+    if abs(den) < 1e-9:
+        return 0.0
+    # a flat / noisy peak gave +-900 px here (2026-10-19): the refinement can only be within the neighbours
+    return max(-1.0, min(1.0, 0.5 * (v_m - v_p) / den))
 
 
 def match(left: np.ndarray, right: np.ndarray, prev_dx=None, zoom: float = 1.0):
@@ -415,6 +424,7 @@ def main():
     last_out = None       # (mdx1, mdy1, dist) of the last lock, zoom-1 px, for the rescaled hold while zooming
     focus = {"dist_mm": None, "t": -1e9, "since": None}   # stereo-driven refocus state
     jump = {"dx": None, "n": 0}                           # pending disparity jump awaiting confirmation
+    dy_rej = []                                           # dy of consecutive vertical-gate rejections (tele px)
     lock_prev = None                                      # for the lock / unlock event log
     gate_log_t = 0.0
     eq = {"ratio": None, "sent": None}                   # brightness equalisation (cam1 gain_ratio)
@@ -495,7 +505,20 @@ def main():
             else:
                 dy_exp = calib["dy_off"] + DY_SLOPE * (dx - DX_FAR_REF)
                 if abs(dy - dy_exp) > GATE_DY_PX:
-                    gate = f"vertical {dy:+.1f} vs expected {dy_exp:+.1f}"
+                    # consistent strong matches off the expected line: the mount moved, adopt the new offset
+                    dy_rej = (dy_rej + [dy - DY_SLOPE * (dx - DX_FAR_REF)])[-DY_JUMP_N:] if score >= DY_JUMP_SCORE else []
+                    if len(dy_rej) >= DY_JUMP_N and max(dy_rej) - min(dy_rej) < DY_JUMP_SPREAD:
+                        new_off = float(np.median(dy_rej))
+                        log(f"vertical offset jumped: dy_off {calib['dy_off']:+.1f} -> {new_off:+.1f} px (mount moved)")
+                        calib["dy_off"] = new_off
+                        dy_hist = [new_off] * DY_LEARN_MIN
+                        save_dy_off(new_off)
+                        dy_saved, dy_saved_at = new_off, time.monotonic()
+                        dy_rej = []
+                    else:
+                        gate = f"vertical {dy:+.1f} vs expected {dy_exp:+.1f}"
+                else:
+                    dy_rej = []
             if gate is None and last_out is not None and time.monotonic() - last_lock[1] < CONT_MAX_AGE_S \
                     and abs(dx - last_out[0]) > JUMP_PX and score < JUMP_SCORE_OK:
                 # a big jump of the disparity with a so-so score: accept it only when it repeats

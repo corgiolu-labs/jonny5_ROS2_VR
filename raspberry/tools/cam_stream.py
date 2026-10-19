@@ -66,6 +66,7 @@ ANALOGUE_GAIN_MAX = 16.0     # IMX708
 # safety net: after SYNC_TIMEOUT_S without a frame the encoder stops waiting for SyncReady (unsynchronised stereo
 # is far better than one eye).
 SYNC_TIMEOUT_S = 10.0
+PHASE_TOL_MS = 3.0           # stereo phase (sensor timestamps modulo the frame period) above this -> re-sync
 GAIN_REQUEST_MAX = 64.0      # beyond the analogue maximum the ISP applies digital gain
 STATE_DIR = "/dev/shm"
 # Sensor modes (UDP {"mode": name}, both cameras): "tele" = the 2x2-binned centre crop at 90 fps (what the
@@ -515,8 +516,8 @@ def main():
 
     start_streaming()
 
-    def switch_mode(name: str) -> bool:
-        if name not in MODES or name == geo["mode"]:
+    def switch_mode(name: str, force: bool = False) -> bool:
+        if name not in MODES or (name == geo["mode"] and not force):
             return False
         t0 = time.monotonic()
         log(f"cam{cam}: switching to mode {name}")
@@ -917,6 +918,7 @@ def main():
     write_state()
     last = time.monotonic()
     syncw = {"t_start": last, "warned": False}   # frame-sync watchdog (reset on a mode switch)
+    phase_mon = {"t": last + 8.0, "bad": 0, "last_resync": last}   # stereo phase check (master), after the sync
     last_applied = state["zoom"]
     last_off = [0.0, 0.0]
     last_write = 0.0
@@ -991,6 +993,11 @@ def main():
                 if "stamp" in msg:
                     E["enc"].stamp_on = bool(msg["stamp"])
                     log(f"cam{cam}: capture stamp {'ON' if E['enc'].stamp_on else 'OFF'}")
+                if "resync" in msg:
+                    if switch_mode(geo["mode"], force=True):
+                        last_applied = -1.0
+                        syncw.update({"t_start": time.monotonic(), "warned": False})
+                        write_state()
                 if "mode" in msg:
                     if switch_mode(str(msg["mode"])):
                         last_applied = -1.0          # re-apply the crop on the next tick
@@ -1030,6 +1037,31 @@ def main():
                 last_off = list(state["off"])
             master_tick()
             refine_tick()
+            if follow < 0 and args.sync == "server" and now - phase_mon["t"] > 2.0:
+                phase_mon["t"] = now
+                try:
+                    with open(os.path.join(STATE_DIR, "jonny5_cam1_zoom.json")) as f:
+                        st1 = json.load(f)
+                    ts0, ts1 = state.get("sensor_ts"), st1.get("sensor_ts")
+                    if ts0 and ts1 and abs(ts0[1] - ts1[1]) < 1.0 and time.time() - float(st1.get("ts", 0)) < 2.0:
+                        period_ms = 1000.0 / geo["fps"]
+                        ph = (abs(int(ts0[0]) - int(ts1[0])) / 1e6) % period_ms
+                        err = min(ph, period_ms - ph)
+                        phase_mon["bad"] = phase_mon["bad"] + 1 if err > PHASE_TOL_MS else 0
+                        if phase_mon["bad"] >= 3 and now - phase_mon["last_resync"] > 20.0:
+                            phase_mon["last_resync"] = now
+                            phase_mon["bad"] = 0
+                            log(f"cam{cam}: stereo phase {err:.1f} ms off (period {period_ms:.1f}): re-syncing both cameras")
+                            # the sync server first, the client once the server streams again (the client
+                            # locks onto the server's timing: restarted first it synced to the old one)
+                            if switch_mode(geo["mode"], force=True):
+                                last_applied = -1.0
+                                syncw.update({"t_start": time.monotonic(), "warned": False})
+                                write_state()
+                            time.sleep(0.3)
+                            sock.sendto(b'{"resync": 1}', ("127.0.0.1", CTL_PORT_BASE + 1))
+                except (OSError, ValueError, TypeError):
+                    pass
             if follow < 0 and calib_dirty["dirty"] and now - calib_dirty["t"] > 30.0:
                 calib_dirty["t"] = now
                 save_match_calib()
