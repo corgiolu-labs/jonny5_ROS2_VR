@@ -308,6 +308,7 @@ def save_calib(dx_inf: float, dy_off: float, distance_mm: float, dx_meas: float)
 # ---------------------------------------------------------------------------------------------------------------
 
 def save_dy_off(dy_off: float):
+    dy_off = max(-15.0, min(15.0, float(dy_off)))
     try:
         c = json.loads(CALIB_PATH.read_text())
     except Exception:
@@ -545,7 +546,10 @@ def main():
                "mode_scale": round(s_px, 4)}
         if ok:
             last_lock = (dx, time.monotonic())
-            dy_hist = (dy_hist + [dy])[-DY_LEARN_N:]
+            # the vertical offset is learned from STRONG locks only: on a dark / flat scene (17 lux, 2026-10-19)
+            # the 0.9 matches were noise and dragged dy_off to -18 px
+            if score >= DY_JUMP_SCORE:
+                dy_hist = (dy_hist + [dy])[-DY_LEARN_N:]
             if len(dy_hist) >= DY_LEARN_MIN:
                 dy_learn = float(np.median(dy_hist))
                 if (abs(dy_learn - dy_saved) > DY_SAVE_DELTA
