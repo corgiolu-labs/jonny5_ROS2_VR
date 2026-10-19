@@ -189,7 +189,10 @@ class SpiDriverNode(Node):
             if self._status_every and (self._tick_count % self._status_every == 0):
                 self._request_status()
             else:
-                self.bridge.send_setpoint_once()
+                # The STM32 slave prepares its TX buffer *after* parsing the RX frame,
+                # so the 0x03 STATUS reply shows up on the transfer *following* the
+                # request, i.e. on this setpoint exchange. Parse it here too.
+                self._parse_status_reply(self.bridge.send_setpoint_once())
         except Exception as exc:  # keep the node alive on transient SPI errors
             self.get_logger().warning(f"SPI tick failed: {exc}")
 
@@ -209,6 +212,10 @@ class SpiDriverNode(Node):
         rx = self.bridge.spi_worker.transfer(tx)
         self.bridge.sequence_counter = (seq + 1) & 0xFFFF
         rxc = self._extract_rx(rx) if rx and len(rx) >= 64 else rx
+        self._parse_status_reply(rxc)
+
+    def _parse_status_reply(self, rxc) -> None:
+        """Parse the firmware diag block if `rxc` is a 0x03 STATUS reply (any transfer)."""
         if not rxc or len(rxc) < 64 or rxc[0:2] != b"J5" or rxc[3] != 0x03:
             return
         pl = rxc[8:62]
@@ -222,6 +229,9 @@ class SpiDriverNode(Node):
             "armed": bool(diag & (1 << 2)),
             "freeze": bool(diag & (1 << 3)),
             "guard": bool(diag & (1 << 4)),
+            # firmware estop.c: bit5 = E-STOP line open, bit6 = ESTOP_BYPASS active
+            "estop_line": bool(diag & (1 << 5)),
+            "estop_bypass": bool(diag & (1 << 6)),
         }
         self._publish_status()
 
@@ -288,7 +298,10 @@ class SpiDriverNode(Node):
             msg.input_active = bool(d["input"])
             msg.movement_allowed = bool(d["armed"] and not d["freeze"])
             msg.state = "IDLE" if d["armed"] else "SAFE"
-            flags = [n for n, on in (("freeze", d["freeze"]), ("guard", d["guard"])) if on]
+            # E-STOP engaged = line open and not bypassed (firmware estop_is_active())
+            msg.estop_active = bool(d.get("estop_line") and not d.get("estop_bypass"))
+            flags = [n for n, on in (("freeze", d["freeze"]), ("guard", d["guard"]),
+                                     ("estop", d.get("estop_line")), ("estop_bypass", d.get("estop_bypass"))) if on]
             suffix = (" [" + ",".join(flags) + "]") if flags else ""
             msg.detail = ("diag from 0x03 STATUS; SAFE/IDLE/STOPPED FSM not on wire "
                           "(state approx from armed bit)" + suffix)
