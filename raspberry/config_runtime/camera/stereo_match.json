@@ -1,12 +1,12 @@
 {
-  "lens_delta": -2.5,
-  "lens_delta_n": 5,
-  "gain_ratio": 1.0667,
+  "lens_delta": -1.537,
+  "lens_delta_n": 43,
+  "gain_ratio": 1.1631,
   "colour_ratio": [
     1.0,
     1.0
   ],
-  "saved_at": "2026-10-19T13:59:59",
-  "master_offset": 2.5,
-  "master_offset_n": 3
+  "saved_at": "2026-10-19T20:12:40",
+  "master_offset": 1.083,
+  "master_offset_n": 32
 }

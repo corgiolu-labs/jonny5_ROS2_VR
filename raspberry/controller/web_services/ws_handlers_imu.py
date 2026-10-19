@@ -139,6 +139,24 @@ def _send_cam_ev(ev: float) -> None:
         pass
 
 
+def set_cam_focus(value) -> None:
+    """Focus slider of the Quest app (cam_focus): true dioptres (0 = infinity .. 6 = 17 cm) or "auto".
+    Sent to cam0 only: cam1 follows the master (tools/cam_stream.py --follow)."""
+    global _cam_zoom_sock
+    if value == "auto":
+        v = "auto"
+    elif isinstance(value, (int, float)) and value == value:
+        v = max(0.0, min(8.0, float(value)))
+    else:
+        return
+    try:
+        if _cam_zoom_sock is None:
+            _cam_zoom_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _cam_zoom_sock.sendto(json.dumps({"focus": v}).encode(), ("127.0.0.1", _CAM_ZOOM_PORT_BASE))
+    except OSError:
+        pass
+
+
 def set_cam_exposure(ev) -> None:
     """Brightness slider of the Quest app (cam_exposure): stops relative to the probed exposure, -2 .. +2."""
     if isinstance(ev, (int, float)) and ev == ev:

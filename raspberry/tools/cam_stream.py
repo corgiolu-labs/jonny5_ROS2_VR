@@ -100,6 +100,15 @@ REFINE_MAX_EXT = 4           # extra sweeps when the best is at the border
 STEREO_STATE_PATH = "/dev/shm/jonny5_stereo.json"
 STEREO_SEED_MAX_AGE_S = 2.0
 MASTER_OFFSET_ALPHA = 0.25
+# Each module's LensPosition is a LINEAR function of the true dioptres (measured 2026-10-19: cam0 3.0 at 2.7 m
+# and 3.7 at ~60 cm -> slope ~0.55; cam1 0.6 and 2.0 -> slope ~1.0): lens = a + b * d. The fit is learned from
+# (stereo distance, refined lens) pairs at low zoom (least squares on the last FIT_N pairs, needs a spread of
+# FIT_MIN_SPAN dioptres); until then the defaults below. Used by the manual focus slider and the seeded AF.
+FIT_DEFAULT_MASTER = (2.8, 0.55)
+FIT_DEFAULT_FOLLOWER = (0.35, 1.0)
+FIT_N = 16
+FIT_MIN_SPAN = 0.8
+FIT_MIN_PAIRS = 4
 REFINE_MIN_SHARP = 12.0      # best step below this (after the zoom downsampling): no usable detail, keep the start
 REFINE_REGION_FRAC = 0.5     # sharpness region: central fraction of the stream
 LEARN_MAX_ZOOM = 2.0         # lens_delta is learned only at low zoom (at 6x a 25 % window is 128 sensor px)
@@ -497,7 +506,9 @@ def main():
                 "af_state": int(md.get("AfState", 0) or 0),
                 "ct": int(md.get("ColourTemperature", 0) or 0),
                 "lux": round(float(md.get("Lux", 0.0) or 0.0), 1),
-                "af_req": af["seq"], "af_done": af.get("done_seq", 0), "af_lens": af.get("lens_done")}
+                "af_req": af["seq"], "af_done": af.get("done_seq", 0), "af_lens": af.get("lens_done"),
+                "af_manual": bool(af.get("manual", False)), "focus_d": af.get("focus_d"),
+                "af_seed": af.get("seed"), "af_d": af.get("lens_d")}
 
     def write_state():
         try:
@@ -533,20 +544,41 @@ def main():
             pass
         return None
 
+    fit_key = "follower_fit" if follow >= 0 else "master_fit"
+    pairs_key = "follower_pairs" if follow >= 0 else "master_pairs"
+
+    def lens_of(d: float) -> float:
+        a, b = match_calib.get(fit_key) or (FIT_DEFAULT_FOLLOWER if follow >= 0 else FIT_DEFAULT_MASTER)
+        return max(0.0, min(12.0, float(a) + float(b) * float(d)))
+
+    def learn_pair(d: float, lens: float):
+        """(true dioptres, refined lens) -> least-squares line over the last FIT_N pairs (needs a spread)."""
+        pairs = [pr for pr in (match_calib.get(pairs_key) or []) if isinstance(pr, (list, tuple)) and len(pr) == 2]
+        pairs = (pairs + [[round(float(d), 3), round(float(lens), 3)]])[-FIT_N:]
+        match_calib[pairs_key] = pairs
+        calib_dirty["dirty"] = True
+        ds = np.array([pr[0] for pr in pairs]); ls = np.array([pr[1] for pr in pairs])
+        if len(pairs) >= FIT_MIN_PAIRS and ds.max() - ds.min() >= FIT_MIN_SPAN:
+            b, a = np.polyfit(ds, ls, 1)
+            if 0.2 <= b <= 2.5 and -2.0 <= a <= 6.0:
+                match_calib[fit_key] = [round(float(a), 3), round(float(b), 3)]
+                log(f"cam{cam}: lens fit updated: lens = {a:.2f} + {b:.2f} * dioptres ({len(pairs)} pairs)")
+
     def af_trigger(window=None):
         crop_now = state.get("crop_applied") or crop_for(state["zoom"], state["off"])[0]
         cx0, cy0, cw, ch = crop_now
         opts = window if isinstance(window, dict) else {}
         seed = stereo_seed()
         af["seed"] = seed
+        af["manual"] = False
         if follow < 0 and state["zoom"] > LEARN_MAX_ZOOM and seed is not None and not opts.get("pdaf"):
             # zoomed in: no PDAF, refine by contrast from the stereo distance
             af["seq"] += 1
             af["t"] = time.monotonic()
             af["pdaf_pending"] = False
-            start = seed + float(match_calib.get("master_offset", 0.0))
-            log(f"cam{cam}: AF #{af['seq']} ({opts.get('src', '?')}) from the stereo seed {seed:.2f} + offset "
-                f"{float(match_calib.get('master_offset', 0.0)):+.2f} = {start:.2f} (zoom {state['zoom']:.1f}, no PDAF)")
+            start = lens_of(seed)
+            log(f"cam{cam}: AF #{af['seq']} ({opts.get('src', '?')}) from the stereo seed {seed:.2f} dioptres -> lens "
+                f"{start:.2f} (zoom {state['zoom']:.1f}, no PDAF)")
             start_refine(start, master_af_done)
             return
         if isinstance(window, dict):
@@ -667,6 +699,9 @@ def main():
 
     def master_af_done(best, ok, res):
         af["lens_done"] = round(float(best), 3)
+        # the same focus in true dioptres (inverse of this module's fit): the follower converts it with its own
+        a0, b0 = match_calib.get("master_fit") or FIT_DEFAULT_MASTER
+        af["lens_d"] = round(max(0.0, (float(best) - float(a0)) / max(0.1, float(b0))), 3)
         af["done_seq"] = af["seq"]
         seed = af.get("seed")
         if ok and seed is not None and state["zoom"] <= LEARN_MAX_ZOOM:
@@ -678,6 +713,7 @@ def main():
             match_calib["master_offset_n"] = n + 1
             calib_dirty["dirty"] = True
             log(f"cam{cam}: lens {best:.2f} vs stereo {seed:.2f} dioptres: master_offset -> {off_new:+.2f} (n={n + 1})")
+            learn_pair(seed, best)
 
     def master_tick():
         """After the PDAF settles (or times out) refine by contrast, then publish af_done for the follower."""
@@ -697,7 +733,9 @@ def main():
 
     # ---- stereo follower (cam1): copy the master's exposure / colour, cross-check the focus
     match_calib = {"lens_delta": 0.0, "lens_delta_n": 0, "gain_ratio": 1.0, "colour_ratio": [1.0, 1.0],
-                   "master_offset": 0.0, "master_offset_n": 0}
+                   "master_offset": 0.0, "master_offset_n": 0,
+                   "master_fit": list(FIT_DEFAULT_MASTER), "follower_fit": list(FIT_DEFAULT_FOLLOWER),
+                   "master_pairs": [], "follower_pairs": []}
     try:
         with open(args.match_calib) as f:
             match_calib.update({k: v for k, v in json.load(f).items() if k in match_calib})
@@ -714,8 +752,8 @@ def main():
                     cur = json.load(f)
             except (OSError, ValueError):
                 cur = {}
-            mine = ("master_offset", "master_offset_n") if follow < 0 else \
-                ("lens_delta", "lens_delta_n", "gain_ratio", "colour_ratio")
+            mine = ("master_offset", "master_offset_n", "master_fit", "master_pairs") if follow < 0 else \
+                ("lens_delta", "lens_delta_n", "gain_ratio", "colour_ratio", "follower_fit", "follower_pairs")
             cur.update({k: match_calib[k] for k in mine})
             cur["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             with open(tmp, "w") as f:
@@ -726,8 +764,10 @@ def main():
         except OSError as e:
             log(f"cam{cam}: calibration save failed {e!r}")
 
-    def follower_af_done(ml):
+    def follower_af_done(ml, seed=None):
         def cb(best, ok, res):
+            if ok and seed is not None and state["zoom"] <= LEARN_MAX_ZOOM:
+                learn_pair(seed, best)
             if ok and state["zoom"] > LEARN_MAX_ZOOM:
                 log(f"cam{cam}: focus {best:.2f} = master {ml:.2f} {best - ml:+.2f} (zoom {state['zoom']:.1f}: not learned)")
             elif ok:
@@ -791,8 +831,18 @@ def main():
             elif done != last_done:
                 last_done = done
                 ml = m.get("af_lens")
-                if ml is not None and not refine["active"]:
-                    start_refine(float(ml) + float(match_calib["lens_delta"]), follower_af_done(float(ml)))
+                fd = m.get("focus_d")
+                sd = m.get("af_seed")
+                if ml is not None and m.get("af_manual"):
+                    refine["active"] = False
+                    refine["collect"] = False
+                    want = lens_of(float(fd)) if fd is not None else float(ml) + float(match_calib["lens_delta"])
+                    lens_set(want)
+                    log(f"cam{cam}: manual focus: lens {want:.2f} for {fd} dioptres (master {float(ml):.2f})")
+                elif ml is not None and not refine["active"]:
+                    ad = m.get("af_d")
+                    start = lens_of(float(sd)) if sd is not None else                         (lens_of(float(ad)) if ad is not None else float(ml) + float(match_calib["lens_delta"]))
+                    start_refine(start, follower_af_done(float(ml), None if sd is None else float(sd)))
             if calib_dirty["dirty"] and time.monotonic() - calib_dirty["t"] > 30.0:
                 calib_dirty["t"] = time.monotonic()
                 save_match_calib()
@@ -837,6 +887,31 @@ def main():
                         af["t"] = time.monotonic()      # the master's af_done drives our refinement
                     else:
                         af_trigger(msg["af"] if isinstance(msg["af"], dict) else None)
+                if "focus" in msg and follow < 0:
+                    fv = msg["focus"]
+                    if fv == "auto" or fv is None:
+                        af_trigger({"src": "slider-auto"})
+                    else:
+                        try:
+                            d = max(0.0, min(8.0, float(fv)))
+                        except (TypeError, ValueError):
+                            d = None
+                        if d is not None:
+                            # manual: true dioptres + this module's LensPosition scale offset; the follower
+                            # sets master + lens_delta without a contrast refinement (deterministic)
+                            refine["active"] = False
+                            refine["collect"] = False
+                            af["manual"] = True
+                            af["focus_d"] = d
+                            af["pdaf_pending"] = False
+                            af["seq"] += 1
+                            af["t"] = time.monotonic()
+                            start = lens_of(d)
+                            lens_set(start)
+                            af["lens_done"] = round(start, 3)
+                            af["done_seq"] = af["seq"]
+                            log(f"cam{cam}: manual focus {d:.2f} dioptres ({1000.0 / d if d > 0 else float('inf'):.0f} mm) "
+                                f"-> lens {start:.2f}")
                 if "lens" in msg and math.isfinite(float(msg["lens"])):
                     lens_set(float(msg["lens"]))
                     log(f"cam{cam}: lens {float(msg['lens']):.2f} (manual)")

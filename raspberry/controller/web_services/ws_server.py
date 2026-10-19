@@ -891,6 +891,13 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
                     logger.warning("[CAMPAIGN] %s", e)
                 continue
 
+            # Camera focus slider of the native Quest app (tools/cam_stream.py: cam0, cam1 follows)
+            if isinstance(data, dict) and data.get("type") == "cam_focus":
+                try:
+                    _imu.set_cam_focus(data.get("dioptres", "auto") if not data.get("auto") else "auto")
+                except Exception:
+                    pass
+                continue
             # Camera brightness slider of the native Quest app (tools/cam_stream.py, both cameras)
             if isinstance(data, dict) and data.get("type") == "cam_exposure":
                 try:

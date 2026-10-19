@@ -539,8 +539,11 @@ def main():
             msg.update({"lock": False, "dx": round((calib["dx_inf"] - ox) * z, 2),
                         "dy": round((calib["dy_off"] - oy) * z, 2), "dist_mm": None, "why": why})
 
-        # focus follows the stereo distance (both cameras, same window) when it has settled on a new value
-        if ok and last_out is not None and last_out[2]:
+        # focus follows the stereo distance (both cameras, same window) when it has settled on a new value;
+        # not while the operator holds the focus slider (cam0 meta af_manual)
+        st0 = _read_state(CAM_ZOOM_PATH)
+        focus_manual = bool(((st0 or {}).get("meta") or {}).get("af_manual"))
+        if ok and last_out is not None and last_out[2] and not focus_manual:
             dist = max(AF_DIST_MM[0], min(AF_DIST_MM[1], float(last_out[2])))
             now_m = time.monotonic()
             d_now = 1000.0 / dist
