@@ -66,7 +66,9 @@ ANALOGUE_GAIN_MAX = 16.0     # IMX708
 # safety net: after SYNC_TIMEOUT_S without a frame the encoder stops waiting for SyncReady (unsynchronised stereo
 # is far better than one eye).
 SYNC_TIMEOUT_S = 10.0
-PHASE_TOL_MS = 3.0           # stereo phase (sensor timestamps modulo the frame period) above this -> re-sync
+PHASE_TOL_MS = 6.0           # stereo phase (sensor timestamps modulo the frame period) above this -> re-sync
+PHASE_BAD_N = 5              # ... for this many 2 s checks in a row (a re-sync restarts both streams: 2 s of black)
+PHASE_RESYNC_MIN_S = 120.0   # and not more often than this (the pairing tolerates a few ms; keyframes stay aligned)
 GAIN_REQUEST_MAX = 64.0      # beyond the analogue maximum the ISP applies digital gain
 STATE_DIR = "/dev/shm"
 # Sensor modes (UDP {"mode": name}, both cameras): "tele" = the 2x2-binned centre crop at 90 fps (what the
@@ -1048,7 +1050,10 @@ def main():
                         ph = (abs(int(ts0[0]) - int(ts1[0])) / 1e6) % period_ms
                         err = min(ph, period_ms - ph)
                         phase_mon["bad"] = phase_mon["bad"] + 1 if err > PHASE_TOL_MS else 0
-                        if phase_mon["bad"] >= 3 and now - phase_mon["last_resync"] > 20.0:
+                        phase_mon["log_n"] = phase_mon.get("log_n", 0) + 1
+                        if phase_mon["log_n"] % 15 == 0 or err > PHASE_TOL_MS:
+                            log(f"cam{cam}: stereo phase {err:.2f} ms (period {period_ms:.2f})")
+                        if phase_mon["bad"] >= PHASE_BAD_N and now - phase_mon["last_resync"] > PHASE_RESYNC_MIN_S:
                             phase_mon["last_resync"] = now
                             phase_mon["bad"] = 0
                             log(f"cam{cam}: stereo phase {err:.1f} ms off (period {period_ms:.1f}): re-syncing both cameras")
