@@ -95,6 +95,7 @@ ZOOM_SETTLE_S = 0.35
 CAM1_STATE_PATH = "/dev/shm/jonny5_cam1_zoom.json"
 CAM1_CTL = ("127.0.0.1", 5601)
 CAM0_CTL = ("127.0.0.1", 5600)
+STEREO_STATE_PATH = "/dev/shm/jonny5_stereo.json"   # last measurement (lock, dist_mm) for cam_stream's AF seed
 # Focus follows the stereo distance (2026-10-19): the cameras are one-shot AF (tools/cam_stream.py {"af": 1} to
 # both, same window = the crosshair). When the locked distance under the crosshair differs from the distance of
 # the last focus by AF_DIOPTRE_DELTA dioptres for AF_STABLE_S, both cameras refocus (not while the zoom moves).
@@ -592,6 +593,13 @@ def main():
             if max(abs(want[0] - tx), abs(want[1] - ty)) * z > CONV_SEND_STREAM_PX:
                 camzoom.send_offset(want[0], want[1])
 
+        try:
+            with open(STEREO_STATE_PATH + ".tmp", "w") as f:
+                json.dump({"lock": bool(msg.get("lock")), "dist_mm": msg.get("dist_mm"), "zoom": round(z, 3),
+                           "ts": round(time.time(), 3)}, f)
+            os.replace(STEREO_STATE_PATH + ".tmp", STEREO_STATE_PATH)
+        except OSError:
+            pass
         if args.print or (int(time.time()) % 10 == 0 and sl % 5 == 0):
             log(json.dumps(msg))
         if ws is not None:

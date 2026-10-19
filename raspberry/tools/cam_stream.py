@@ -93,7 +93,18 @@ REFINE_N = 5
 REFINE_SETTLE_S = 0.12       # lens settle before measuring a step
 REFINE_FRAMES = 3            # frames averaged per step
 REFINE_MIN_RATIO = 1.08      # max/min sharpness across the steps below this: no peak (flat / dark), keep the start
-REFINE_MAX_EXT = 2           # extra sweeps when the best is at the border
+REFINE_MAX_EXT = 4           # extra sweeps when the best is at the border
+# Stereo seed: the collimator writes its lock to STEREO_STATE_PATH; zoomed in (> LEARN_MAX_ZOOM) the master
+# skips the PDAF (at 6x it landed 1.5 dioptres off) and refines from 1000 / dist_mm + master_offset, the
+# learned offset of its LensPosition scale (cam0 reads ~2.5 for a true 0.5), measured at low zoom.
+STEREO_STATE_PATH = "/dev/shm/jonny5_stereo.json"
+STEREO_SEED_MAX_AGE_S = 2.0
+MASTER_OFFSET_ALPHA = 0.25
+REFINE_MIN_SHARP = 12.0      # best step below this (after the zoom downsampling): no usable detail, keep the start
+REFINE_REGION_FRAC = 0.5     # sharpness region: central fraction of the stream
+LEARN_MAX_ZOOM = 2.0         # lens_delta is learned only at low zoom (at 6x a 25 % window is 128 sensor px)
+AF_WINDOW_MIN_FRAC = 0.25    # PDAF window never smaller than this fraction of the FULL field (zoomed in, the
+                             # crop is tiny: at 6x the PDAF landed 1.5 dioptres off)
 AF_WINDOW_FRAC = 0.25        # AF window: central fraction of the crop (the crosshair)
 
 
@@ -429,8 +440,12 @@ def main():
             with MappedArray(request, "lores" if hires else "main") as m:
                 y = m.array[:args.height, :args.width]
                 hh, ww = args.height, args.width
-                c = np.asarray(y[int(hh * 0.375): int(hh * 0.625), int(ww * 0.375): int(ww * 0.625)],
-                               dtype=np.float32)
+                f0, f1 = (1.0 - REFINE_REGION_FRAC) / 2.0, (1.0 + REFINE_REGION_FRAC) / 2.0
+                c = np.asarray(y[int(hh * f0): int(hh * f1), int(ww * f0): int(ww * f1)], dtype=np.float32)
+            k = max(1, int(round(state["zoom"])))
+            if k > 1:
+                ch_, cw_ = (c.shape[0] // k) * k, (c.shape[1] // k) * k
+                c = c[:ch_, :cw_].reshape(ch_ // k, k, cw_ // k, k).mean(axis=(1, 3))
             lap = c[:-2, 1:-1] + c[2:, 1:-1] + c[1:-1, :-2] + c[1:-1, 2:] - 4.0 * c[1:-1, 1:-1]
             refine["acc"].append(float(lap.var()))
         except Exception:
@@ -503,10 +518,33 @@ def main():
 
     scm = picam2.camera_properties.get("ScalerCropMaximum")
 
+    def stereo_seed():
+        """1000 / dist_mm of the collimator's fresh lock (true dioptres), or None."""
+        try:
+            with open(STEREO_STATE_PATH) as f:
+                st_ = json.load(f)
+            if st_.get("lock") and st_.get("dist_mm") and time.time() - float(st_.get("ts", 0)) < STEREO_SEED_MAX_AGE_S:
+                return 1000.0 / max(100.0, float(st_["dist_mm"]))
+        except (OSError, ValueError, TypeError):
+            pass
+        return None
+
     def af_trigger(window=None):
         crop_now = state.get("crop_applied") or crop_for(state["zoom"], state["off"])[0]
         cx0, cy0, cw, ch = crop_now
         opts = window if isinstance(window, dict) else {}
+        seed = stereo_seed()
+        af["seed"] = seed
+        if follow < 0 and state["zoom"] > LEARN_MAX_ZOOM and seed is not None and not opts.get("pdaf"):
+            # zoomed in: no PDAF, refine by contrast from the stereo distance
+            af["seq"] += 1
+            af["t"] = time.monotonic()
+            af["pdaf_pending"] = False
+            start = seed + float(match_calib.get("master_offset", 0.0))
+            log(f"cam{cam}: AF #{af['seq']} from the stereo seed {seed:.2f} + offset "
+                f"{float(match_calib.get('master_offset', 0.0)):+.2f} = {start:.2f} (zoom {state['zoom']:.1f}, no PDAF)")
+            start_refine(start, master_af_done)
+            return
         if isinstance(window, dict):
             window = window.get("window")
         if window and len(window) >= 4:
@@ -516,8 +554,11 @@ def main():
             ww = max(32, int(float(window[2]) * kx))
             wh = max(32, int(float(window[3]) * ky))
         else:
-            ww, wh = int(cw * AF_WINDOW_FRAC), int(ch * AF_WINDOW_FRAC)
-            wx, wy = int(cx0 + (cw - ww) / 2), int(cy0 + (ch - wh) / 2)
+            ww = int(max(cw * AF_WINDOW_FRAC, full[2] * AF_WINDOW_MIN_FRAC))
+            wh = int(max(ch * AF_WINDOW_FRAC, full[3] * AF_WINDOW_MIN_FRAC))
+            wx, wy = int(cx0 + cw / 2 - ww / 2), int(cy0 + ch / 2 - wh / 2)
+            wx = max(int(full[0]), min(int(full[0] + full[2]) - ww, wx))
+            wy = max(int(full[1]), min(int(full[1] + full[3]) - wh, wy))
         if scm and not opts.get("sensor_window") and opts.get("relative", True):
             # libcamera: AfWindows are pixels WITHIN the ScalerCropMaximum rectangle (relative to its origin)
             wx, wy = wx - int(scm[0]), wy - int(scm[1])
@@ -540,6 +581,7 @@ def main():
             af["mode"] = "auto"
             af["seq"] += 1
             af["t"] = time.monotonic()
+            af["pdaf_pending"] = follow < 0      # the master refines by contrast once the PDAF settles
             log(f"cam{cam}: AF #{af['seq']} " + ("metering auto" if "AfWindows" not in ctl_af
                                                  else f"window {(wx, wy, ww, wh)}")
                 + (f" range {rng}" if rng else "") + f" (ScalerCropMaximum {scm})")
@@ -590,11 +632,19 @@ def main():
         refine["active"] = False
         b = int(np.argmax(res))
         ratio = max(res) / max(1e-6, min(res))
-        if ratio < REFINE_MIN_RATIO:
+        if ratio < REFINE_MIN_RATIO or max(res) < REFINE_MIN_SHARP:
             lens_set(refine["centre"])
-            log(f"cam{cam}: refine: flat ({[round(v) for v in res]}), lens {refine['centre']:.2f} kept")
+            log(f"cam{cam}: refine: {'flat' if ratio < REFINE_MIN_RATIO else 'no detail'} "
+                f"({[round(v) for v in res]}), lens {refine['centre']:.2f} kept")
             if refine["cb"]:
                 refine["cb"](refine["centre"], False, res)
+            return
+        if b in (0, len(res) - 1) and refine["ext"] >= REFINE_MAX_EXT:
+            # still at the border after the extensions (or at the lens range limit): not a real peak
+            lens_set(steps[b])
+            log(f"cam{cam}: refine: no peak within range ({[round(v) for v in res]}), lens {steps[b]:.2f}")
+            if refine["cb"]:
+                refine["cb"](steps[b], False, res)
             return
         if b in (0, len(res) - 1) and refine["ext"] < REFINE_MAX_EXT:
             log(f"cam{cam}: refine: best at the border ({[round(v) for v in res]}), extending")
@@ -614,6 +664,16 @@ def main():
     def master_af_done(best, ok, res):
         af["lens_done"] = round(float(best), 3)
         af["done_seq"] = af["seq"]
+        seed = af.get("seed")
+        if ok and seed is not None and state["zoom"] <= LEARN_MAX_ZOOM:
+            off_old = float(match_calib.get("master_offset", 0.0))
+            n = int(match_calib.get("master_offset_n", 0))
+            pair = float(best) - float(seed)
+            off_new = pair if n == 0 else off_old + MASTER_OFFSET_ALPHA * (pair - off_old)
+            match_calib["master_offset"] = round(off_new, 3)
+            match_calib["master_offset_n"] = n + 1
+            calib_dirty["dirty"] = True
+            log(f"cam{cam}: lens {best:.2f} vs stereo {seed:.2f} dioptres: master_offset -> {off_new:+.2f} (n={n + 1})")
 
     def master_tick():
         """After the PDAF settles (or times out) refine by contrast, then publish af_done for the follower."""
@@ -632,7 +692,8 @@ def main():
             start_refine(float(lp), master_af_done)
 
     # ---- stereo follower (cam1): copy the master's exposure / colour, cross-check the focus
-    match_calib = {"lens_delta": 0.0, "lens_delta_n": 0, "gain_ratio": 1.0, "colour_ratio": [1.0, 1.0]}
+    match_calib = {"lens_delta": 0.0, "lens_delta_n": 0, "gain_ratio": 1.0, "colour_ratio": [1.0, 1.0],
+                   "master_offset": 0.0, "master_offset_n": 0}
     try:
         with open(args.match_calib) as f:
             match_calib.update({k: v for k, v in json.load(f).items() if k in match_calib})
@@ -644,8 +705,17 @@ def main():
         try:
             os.makedirs(os.path.dirname(args.match_calib), exist_ok=True)
             tmp = args.match_calib + ".tmp"
+            try:
+                with open(args.match_calib) as f:
+                    cur = json.load(f)
+            except (OSError, ValueError):
+                cur = {}
+            mine = ("master_offset", "master_offset_n") if follow < 0 else \
+                ("lens_delta", "lens_delta_n", "gain_ratio", "colour_ratio")
+            cur.update({k: match_calib[k] for k in mine})
+            cur["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             with open(tmp, "w") as f:
-                json.dump(dict(match_calib, saved_at=time.strftime("%Y-%m-%dT%H:%M:%S")), f, indent=2)
+                json.dump(cur, f, indent=2)
             os.replace(tmp, args.match_calib)
             calib_dirty["dirty"] = False
             log(f"cam{cam}: stereo match calibration saved {match_calib}")
@@ -654,7 +724,9 @@ def main():
 
     def follower_af_done(ml):
         def cb(best, ok, res):
-            if ok:
+            if ok and state["zoom"] > LEARN_MAX_ZOOM:
+                log(f"cam{cam}: focus {best:.2f} = master {ml:.2f} {best - ml:+.2f} (zoom {state['zoom']:.1f}: not learned)")
+            elif ok:
                 d_old = float(match_calib["lens_delta"])
                 n = int(match_calib.get("lens_delta_n", 0))
                 pair = float(best) - float(ml)
@@ -761,7 +833,6 @@ def main():
                         af["t"] = time.monotonic()      # the master's af_done drives our refinement
                     else:
                         af_trigger(msg["af"] if isinstance(msg["af"], dict) else None)
-                        af["pdaf_pending"] = True
                 if "lens" in msg and math.isfinite(float(msg["lens"])):
                     lens_set(float(msg["lens"]))
                     log(f"cam{cam}: lens {float(msg['lens']):.2f} (manual)")
@@ -812,6 +883,9 @@ def main():
                 last_off = list(state["off"])
             master_tick()
             refine_tick()
+            if follow < 0 and calib_dirty["dirty"] and now - calib_dirty["t"] > 30.0:
+                calib_dirty["t"] = now
+                save_match_calib()
             if now - last_write > META_WRITE_S:
                 write_state()
                 last_write = now
