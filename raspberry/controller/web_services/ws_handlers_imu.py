@@ -421,7 +421,8 @@ _SERVO_KEYS = ("servo_deg_B", "servo_deg_S", "servo_deg_G",
                "servo_deg_Y", "servo_deg_P", "servo_deg_R")
 _SPI_DIAG_KEYS = ("imu_sample_counter", "imu_sample_delta",
                    "imu_sample_repeated", "imu_sample_jump", "imu_rate_hz_est",
-                   "rt_loop_period_us", "rt_loop_hz_est")
+                   "rt_loop_period_us", "rt_loop_hz_est",
+                   "estop_active", "estop_bypass")   # firmware diag bits 5 / 6 (estop.c)
 
 
 def _debounce_imu_valid(telemetry_fresh: bool, telemetry: dict) -> None:

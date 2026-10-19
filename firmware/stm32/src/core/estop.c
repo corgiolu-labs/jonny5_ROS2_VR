@@ -65,6 +65,40 @@ static volatile bool estop_debounced_state = false;
 static volatile bool estop_notify_engage_pending = false;
 static volatile bool estop_notify_clear_pending  = false;
 
+/* Bypass temporaneo (vedi estop.h): linea ignorata fino a estop_bypass_until. */
+#define ESTOP_BYPASS_MAX_MIN     120U
+#define ESTOP_BYPASS_DEFAULT_MIN 30U
+static volatile bool estop_bypass_on = false;
+static volatile int64_t estop_bypass_until = 0;
+static volatile bool estop_notify_bypass_expired_pending = false;
+
+bool estop_bypass_active(void)
+{
+    return estop_bypass_on && (k_uptime_get() < estop_bypass_until);
+}
+
+int32_t estop_bypass_remaining_s(void)
+{
+    if (!estop_bypass_active()) { return 0; }
+    return (int32_t)((estop_bypass_until - k_uptime_get() + 999) / 1000);
+}
+
+int32_t estop_bypass_set(bool on, uint32_t minutes)
+{
+    if (!on)
+    {
+        if (estop_bypass_on) { LOG_WRN("[ESTOP] bypass OFF"); }
+        estop_bypass_on = false;
+        return 0;
+    }
+    if (minutes == 0U) { minutes = ESTOP_BYPASS_DEFAULT_MIN; }
+    if (minutes > ESTOP_BYPASS_MAX_MIN) { minutes = ESTOP_BYPASS_MAX_MIN; }
+    estop_bypass_until = k_uptime_get() + (int64_t)minutes * 60000;
+    estop_bypass_on = true;
+    LOG_WRN("[ESTOP] BYPASS ON per %u min: linea E-STOP IGNORATA", (unsigned)minutes);
+    return (int32_t)minutes * 60;
+}
+
 /* Sequenza di stop, identica al ramo UART STOP ma senza parser. Tutte chiamate
  * non-bloccanti (scritture PWM/stato): sicura nel tick 1 kHz.
  * servo_disable_all() qui e' idempotente rispetto alla barriera STOPPED del
@@ -152,7 +186,14 @@ void estop_poll_tick(void)
         {
             estop_debounced_state = raw_active;
             estop_debounce_counter = 0U;
-            if (raw_active)
+            if (estop_bypass_active())
+            {
+                /* Bypass: la linea viene solo tracciata (telemetria), nessuna
+                 * azione; alla scadenza del bypass lo stato corrente si applica. */
+                LOG_WRN("[ESTOP] linea %s (bypass attivo: ignorata)",
+                        raw_active ? "aperta" : "chiusa");
+            }
+            else if (raw_active)
             {
                 /* Fronte di ATTIVAZIONE: coppia via SUBITO nel tick; la
                  * notifica "ESTOP" e' solo un flag, emesso dal main loop
@@ -172,10 +213,20 @@ void estop_poll_tick(void)
         }
     }
 
+    /* Scadenza del bypass: come una pressione del fungo se la linea e' aperta
+     * (robot fermo, il Pi riceve ESTOP_BYPASS_EXPIRED + ESTOP). */
+    if (estop_bypass_on && !estop_bypass_active())
+    {
+        estop_bypass_on = false;
+        estop_notify_bypass_expired_pending = true;
+        LOG_WRN("[ESTOP] bypass SCADUTO: linea E-STOP di nuovo attiva");
+        if (estop_debounced_state) { estop_notify_engage_pending = true; }
+    }
+
     /* Latch mentre ATTIVO: ri-forza STOPPED se qualcuno ha tentato SAFE/ENABLE
      * via UART o se la auto-transizione SAFE->IDLE e' scattata nel frattempo.
-     * Copre anche il caso fungo gia' premuto al boot. */
-    if (estop_debounced_state &&
+     * Copre anche il caso fungo gia' premuto al boot. Sospeso dal bypass. */
+    if (estop_is_active() &&
         state_machine_get_state() != STATE_STOPPED)
     {
         estop_engage();
@@ -183,6 +234,11 @@ void estop_poll_tick(void)
 }
 
 bool estop_is_active(void)
+{
+    return estop_debounced_state && !estop_bypass_active();
+}
+
+bool estop_line_active(void)
 {
     return estop_debounced_state;
 }
@@ -196,6 +252,11 @@ void estop_notify_poll(void)
      * di emissione e' scelto in modo che l'ULTIMO token corrisponda allo stato
      * debounced corrente: il Pi resta coerente. Formato invariato:
      * "ESTOP\n" / "ESTOP_CLEAR\n" senza seq. */
+    if (estop_notify_bypass_expired_pending)
+    {
+        estop_notify_bypass_expired_pending = false;
+        uart_send_unsolicited("ESTOP_BYPASS_EXPIRED");
+    }
     const bool eng = estop_notify_engage_pending;
     const bool clr = estop_notify_clear_pending;
     if (!eng && !clr)
@@ -245,8 +306,30 @@ bool estop_is_active(void)
     return false;
 }
 
+bool estop_line_active(void)
+{
+    return false;
+}
+
 void estop_notify_poll(void)
 {
+}
+
+int32_t estop_bypass_set(bool on, uint32_t minutes)
+{
+    ARG_UNUSED(on);
+    ARG_UNUSED(minutes);
+    return -1;
+}
+
+bool estop_bypass_active(void)
+{
+    return false;
+}
+
+int32_t estop_bypass_remaining_s(void)
+{
+    return 0;
 }
 
 #endif /* DT_NODE_EXISTS(ESTOP_NODE) */

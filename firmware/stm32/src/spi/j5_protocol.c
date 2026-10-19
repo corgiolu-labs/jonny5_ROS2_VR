@@ -16,6 +16,7 @@
 #include "imu/imu.h"
 #include "servo/servo_control.h"
 #include "core/rt_loop.h"
+#include "core/estop.h"
 #include <zephyr/sys/printk.h>
 
 /* Dump per-frame [VR_RX]/[IK_RX] su console: printk SINCRONI nel thread SPI
@@ -254,7 +255,8 @@ void j5ik_parse_payload(const uint8_t *p)
  *   46-47: vr_heartbeat (BE)
  *   48:    mode
  *   49:    0x00 (riservato)
- *   50-51: diag_mask BE (bit0=deadman, 1=input_active, 2=armed, 3=freeze, 4=guard_seen)
+ *   50-51: diag_mask BE (bit0=deadman, 1=input_active, 2=armed, 3=freeze, 4=guard_seen,
+ *          5=estop_line_active, 6=estop_bypass_active)
  *   52-53: 0x00 (riservato)
  */
 void j5vr_fill_tx_telemetry(uint8_t *payload)
@@ -276,6 +278,8 @@ void j5vr_fill_tx_telemetry(uint8_t *payload)
         if (g_vr_armed)                   { diag |= (1U << 2); }
         if (g_vr_freeze_active)           { diag |= (1U << 3); }
         if (g_vr_guard_block_count != 0U) { diag |= (1U << 4); }
+        if (estop_line_active())          { diag |= (1U << 5); }
+        if (estop_bypass_active())        { diag |= (1U << 6); }
         payload[50] = (uint8_t)(diag >> 8);
         payload[51] = (uint8_t)(diag & 0xFF);
     }

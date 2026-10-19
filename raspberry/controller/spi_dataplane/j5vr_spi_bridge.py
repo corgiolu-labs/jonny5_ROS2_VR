@@ -283,6 +283,8 @@ class J5VRSPIBridge:
                     # Invariante: il payload deve essere sempre 54 byte (8..61).
                     assert len(payload) == 54, "[SPI][ASSERT] payload J5VR/TELEMETRY deve essere lungo 54 byte"
                     # Diagnostica STM32 -> RPI (ultimi 8 byte payload): hb, mode, grip, diag_mask, ack
+                    estop_active = None   # diag bit5: E-STOP line open (button pressed / box unplugged)
+                    estop_bypass = None   # diag bit6: ESTOP_BYPASS active (firmware ignores the line)
                     try:
                         hb = ((payload[46] << 8) | payload[47]) & 0xFFFF
                         m = int(payload[48]) & 0xFF
@@ -293,6 +295,8 @@ class J5VRSPIBridge:
                         d_armed = 1 if (diag & (1 << 2)) else 0
                         d_freeze = 1 if (diag & (1 << 3)) else 0
                         d_guard = 1 if (diag & (1 << 4)) else 0
+                        estop_active = 1 if (diag & (1 << 5)) else 0
+                        estop_bypass = 1 if (diag & (1 << 6)) else 0
                         prev = self._rx_diag_prev
                         cur = (hb, m, g, diag, frame_type_rx)
                         if prev != cur and (self._frame_count % 5 == 0):
@@ -420,6 +424,8 @@ class J5VRSPIBridge:
                                 "assist_state": None,
                                 "deadman_active": None,
                                 "movement_allowed": None,
+                                "estop_active": estop_active,
+                                "estop_bypass": estop_bypass,
                                 "fault_code": None,
                                 "flags_echo": None,
                                 "rx_classification": None,

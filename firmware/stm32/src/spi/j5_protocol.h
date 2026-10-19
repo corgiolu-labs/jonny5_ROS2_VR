@@ -138,7 +138,8 @@ void j5ik_parse_payload(const uint8_t *p);
  *   46-47: vr_heartbeat (BE)
  *   48:    mode
  *   49:    0x00 (riservato)
- *   50-51: diag_mask BE (bit0=deadman, 1=input_active, 2=armed, 3=freeze, 4=guard_seen)
+ *   50-51: diag_mask BE (bit0=deadman, 1=input_active, 2=armed, 3=freeze, 4=guard_seen,
+ *          5=estop_line_active, 6=estop_bypass_active)
  *   52-53: 0x00 (riservato)
  */
 void j5vr_fill_tx_telemetry(uint8_t *payload);

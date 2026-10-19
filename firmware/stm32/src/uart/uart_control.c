@@ -46,6 +46,7 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -290,6 +291,50 @@ static void uart_process_command(uint32_t seq, const char *cmd)
      * per non rompere il boot-sync del Pi; PP1/PP2 hanno un gate dedicato nel
      * loro ramo (blocca solo duty>0, lascia duty=0 e PP?). Sul F446
      * estop_is_active() e' lo stub che ritorna sempre false: nessun cambio. */
+    /* --- E-STOP: query e bypass temporaneo (prima del gate: devono
+     * funzionare anche a fungo attivo). "ESTOP_BYPASS ON [min]" ignora la
+     * linea fino alla scadenza (default 30, max 120 min), "ESTOP_BYPASS OFF"
+     * la riattiva subito. Dopo ON il robot resta STOPPED: recovery SAFE ->
+     * ENABLE come dopo un rilascio. Sul F446 (nessun E-STOP HW): ERR. */
+    if (strcmp(cmd, "ESTOP?") == 0)
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "ESTOP active=%u line=%u bypass=%u remaining=%ld",
+                 estop_is_active() ? 1U : 0U, estop_line_active() ? 1U : 0U,
+                 estop_bypass_active() ? 1U : 0U, (long)estop_bypass_remaining_s());
+        uart_send_response_with_seq(seq, buf);
+        return;
+    }
+    if (strncmp(cmd, "ESTOP_BYPASS", 12) == 0)
+    {
+        const char *arg = cmd + 12;
+        while (*arg == ' ') { arg++; }
+        if (strncmp(arg, "OFF", 3) == 0)
+        {
+            int32_t r = estop_bypass_set(false, 0U);
+            uart_send_response_with_seq(seq, (r < 0) ? "ERR ESTOP_NO_HW" : "OK ESTOP_BYPASS OFF");
+            return;
+        }
+        if (strncmp(arg, "ON", 2) == 0)
+        {
+            uint32_t minutes = (uint32_t)strtoul(arg + 2, NULL, 10);
+            int32_t r = estop_bypass_set(true, minutes);
+            if (r < 0)
+            {
+                uart_send_response_with_seq(seq, "ERR ESTOP_NO_HW");
+            }
+            else
+            {
+                char buf[40];
+                snprintf(buf, sizeof(buf), "OK ESTOP_BYPASS ON %ld", (long)r);
+                uart_send_response_with_seq(seq, buf);
+            }
+            return;
+        }
+        uart_send_response_with_seq(seq, "ERR ESTOP_BYPASS_ARG");
+        return;
+    }
+
     if (estop_is_active() &&
         (strncmp(cmd, "ENABLE", 6) == 0 ||
          strcmp(cmd, "HOME") == 0 ||
