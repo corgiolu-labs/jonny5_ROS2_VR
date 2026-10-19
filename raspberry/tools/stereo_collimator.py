@@ -94,6 +94,19 @@ ZOOM_SETTLE_S = 0.35
 # when the residual is large (each change pauses the matching for ZOOM_SETTLE_S).
 CAM1_STATE_PATH = "/dev/shm/jonny5_cam1_zoom.json"
 CAM1_CTL = ("127.0.0.1", 5601)
+CAM0_CTL = ("127.0.0.1", 5600)
+# Focus follows the stereo distance (2026-10-19): the cameras are one-shot AF (tools/cam_stream.py {"af": 1} to
+# both, same window = the crosshair). When the locked distance under the crosshair differs from the distance of
+# the last focus by AF_DIOPTRE_DELTA dioptres for AF_STABLE_S, both cameras refocus (not while the zoom moves).
+AF_DIOPTRE_DELTA = 0.35
+AF_STABLE_S = 1.0
+AF_MIN_INTERVAL_S = 3.0
+AF_DIST_MM = (120.0, 6000.0)
+# Brightness equalisation of the two eyes: mean grey of the central region of each keyframe (same object under the
+# crosshair when locked); the ratio, slowly filtered, becomes cam1's gain_ratio (cam_stream.py follower).
+EQ_ALPHA = 0.03
+EQ_SEND_DELTA = 0.01
+EQ_RANGE = (0.6, 1.6)
 CONV_SEND_STREAM_PX = 12.0
 CONV_RELEASE_S = 3.0
 
@@ -312,6 +325,19 @@ class CamZoom:
         stable = abs(z - target) < 0.005 and now - self.changed_at > ZOOM_SETTLE_S
         return z, off, stable
 
+    def send_af(self):
+        for addr in (CAM0_CTL, CAM1_CTL):
+            try:
+                self.sock.sendto(b'{"af": 1}', addr)
+            except OSError:
+                pass
+
+    def send_gain_ratio(self, g):
+        try:
+            self.sock.sendto(json.dumps({"gain_ratio": round(float(g), 4)}).encode(), CAM1_CTL)
+        except OSError:
+            pass
+
     def send_offset(self, ox, oy):
         try:
             self.sock.sendto(json.dumps({"offset": [round(ox, 2), round(oy, 2)]}).encode(), CAM1_CTL)
@@ -350,6 +376,15 @@ def main():
     calib_samples: list = []
     camzoom = CamZoom()
     last_out = None       # (mdx1, mdy1, dist) of the last lock, zoom-1 px, for the rescaled hold while zooming
+    focus = {"dist_mm": None, "t": -1e9, "since": None}   # stereo-driven refocus state
+    eq = {"ratio": None, "sent": None}                   # brightness equalisation (cam1 gain_ratio)
+    try:
+        st1 = json.loads(open(CAM1_STATE_PATH).read())
+        g0 = ((st1.get("match") or {}).get("gain_ratio"))
+        if g0:
+            eq["ratio"] = eq["sent"] = float(g0)
+    except Exception:
+        pass
 
     def ws_reader(sock):
         try:
@@ -454,6 +489,38 @@ def main():
             hist = []
             msg.update({"lock": False, "dx": round((calib["dx_inf"] - ox) * z, 2),
                         "dy": round((calib["dy_off"] - oy) * z, 2), "dist_mm": None, "why": why})
+
+        # focus follows the stereo distance (both cameras, same window) when it has settled on a new value
+        if ok and last_out is not None and last_out[2]:
+            dist = max(AF_DIST_MM[0], min(AF_DIST_MM[1], float(last_out[2])))
+            now_m = time.monotonic()
+            d_now = 1000.0 / dist
+            d_ref = 1000.0 / focus["dist_mm"] if focus["dist_mm"] else None
+            if d_ref is None or abs(d_now - d_ref) > AF_DIOPTRE_DELTA:
+                focus["since"] = focus["since"] if focus["since"] is not None else now_m
+                if now_m - focus["since"] >= (0.0 if d_ref is None else AF_STABLE_S) \
+                        and now_m - focus["t"] >= AF_MIN_INTERVAL_S:
+                    camzoom.send_af()
+                    log(f"refocus: crosshair at {dist:.0f} mm (focus was "
+                        f"{'none' if not focus['dist_mm'] else '%.0f mm' % focus['dist_mm']})")
+                    focus.update({"dist_mm": dist, "t": now_m, "since": None})
+            else:
+                focus["since"] = None
+        # brightness equalisation: the same object is under both crosshairs when locked
+        if ok:
+            hh, ww = fl.shape[0], fl.shape[1]
+            cl = fl[hh // 4: 3 * hh // 4, ww // 4: 3 * ww // 4]
+            cr = fr[hh // 4: 3 * hh // 4, ww // 4: 3 * ww // 4]
+            ml_, mr_ = float(np.mean(cl)), float(np.mean(cr))
+            if 16.0 < ml_ < 235.0 and 16.0 < mr_ < 235.0:
+                # grey levels are gamma encoded (~0.45): the linear-light ratio is what the gain must correct
+                want = (eq["ratio"] or 1.0) * (ml_ / mr_) ** (1.0 / 0.45)
+                want = max(EQ_RANGE[0], min(EQ_RANGE[1], want))
+                eq["ratio"] = want if eq["ratio"] is None else eq["ratio"] + EQ_ALPHA * (want - eq["ratio"])
+                if eq["sent"] is None or abs(eq["ratio"] - eq["sent"]) > EQ_SEND_DELTA:
+                    camzoom.send_gain_ratio(eq["ratio"])
+                    eq["sent"] = eq["ratio"]
+                msg["eq"] = [round(ml_, 1), round(mr_, 1), round(eq["ratio"], 3)]
 
         # sensor convergence: move cam1's crop onto the locked object (or back to infinity without a lock)
         want = None

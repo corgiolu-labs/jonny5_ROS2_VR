@@ -24,7 +24,10 @@ SYNC="${SYNC:-1}"
 # by ws-teleop over UDP (the Quest app's zoom). CAPTURE=rpicam: the previous rpicam-vid capture (no live zoom).
 CAPTURE="${CAPTURE:-picamera2}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-MATCH="${MATCH:-cam0}"
+# MATCH=master (default since 2026-10-19): no boot probe; cam0 runs auto exposure / white balance and one-shot
+# AF on request, cam1 follows cam0 (tools/cam_stream.py --follow 0: same shutter / gains / colour, focus
+# cross-checked against cam0). MATCH=cam0: the old 4 s probe, then both cameras frozen (each on its own focus).
+MATCH="${MATCH:-master}"
 PROBE_S="${PROBE_S:-4}"
 command -v rpicam-vid >/dev/null || { echo "ERR: rpicam-vid not found" >&2; exit 1; }
 
@@ -60,7 +63,13 @@ print("%d %.3f %.3f %.3f %.2f" % (int(e["ExposureTime"]), float(e["AnalogueGain"
                                  cg[0], cg[1], float(e.get("LensPosition", 1.0))))
 PY
 }
+declare -A FOLLOW_ARGS=([0]="" [1]="")
 case "$MATCH" in
+  master)
+    MANUAL_ARGS="--autofocus-mode auto --autofocus-range normal"
+    FOLLOW_ARGS[1]="--follow 0"
+    echo "cam0 master (auto exposure / AWB, one-shot AF), cam1 follows cam0"
+    ;;
   cam0)
     echo "probing both cameras (auto exposure / AWB / AF) for ${PROBE_S}s..."
     probe_cam 0 & P0=$!
@@ -103,7 +112,7 @@ start_cam() {
   local cam="$1"
   if [ "$CAPTURE" = "picamera2" ]; then
     # same options as rpicam-vid below (LENS_ARGS is not passed there either: continuous AF on both cameras)
-    python3 "$HERE/raspberry/tools/cam_stream.py" --camera "$cam"         --width "$W" --height "$H" --fps "$FPS" --bitrate "$BITRATE" --intra "$INTRA"         $MANUAL_ARGS ${SYNC_ARGS[$cam]:-}         -o "$MTX/cam$cam" >"/tmp/video_capture_cam$cam.log" 2>&1 &
+    python3 "$HERE/raspberry/tools/cam_stream.py" --camera "$cam"         --width "$W" --height "$H" --fps "$FPS" --bitrate "$BITRATE" --intra "$INTRA"         $MANUAL_ARGS ${SYNC_ARGS[$cam]:-} ${FOLLOW_ARGS[$cam]:-}         -o "$MTX/cam$cam" >"/tmp/video_capture_cam$cam.log" 2>&1 &
     PIDS+=($!)
     echo "cam$cam -> $MTX/cam$cam  (picamera2, ${W}x${H} @ ${FPS} fps, $BITRATE bit/s, IDR every $INTRA, live zoom)"
     return

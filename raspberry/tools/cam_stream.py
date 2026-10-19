@@ -68,6 +68,24 @@ ANALOGUE_GAIN_MAX = 16.0     # IMX708
 SYNC_TIMEOUT_S = 10.0
 GAIN_REQUEST_MAX = 64.0      # beyond the analogue maximum the ISP applies digital gain
 STATE_DIR = "/dev/shm"
+# Stereo matching (2026-10-19): cam0 is the MASTER (auto exposure / white balance, one-shot AF on request), cam1
+# FOLLOWS it (--follow 0): it copies the master's shutter, gains and colour gains from the master's state file (so
+# both eyes always have the same brightness and colour, also outdoors when the light changes) and after each AF
+# request both cameras focus on the same window; cam1 cross-checks its lens position against the master's
+# (+ the learned lens_delta of the two actuators) and falls back to the master's when its own AF went elsewhere
+# (the old boot probe left cam0 at 4.9 dioptres and cam1 at 0.9 for the whole session: one blurred eye at zoom).
+# Calibration file (lens_delta, gain_ratio, colour_ratio), learned at runtime:
+MATCH_CALIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config_runtime", "camera",
+                                "stereo_match.json")
+META_WRITE_S = 0.05          # master state file rate (the follower polls it)
+# The two modules' LensPosition scales differ (measured 2026-10-19 on a 2 m scene: cam0 sharpest at 3.0
+# "dioptres", cam1 at 0.5): each camera keeps its OWN one-shot AF result; lens_delta (cam1 - cam0) is learned
+# from the pairs where both focused and is only used as the fallback when cam1's AF fails.
+LENS_PAIR_TOL = 1.0          # a new pair updates lens_delta only within this of the learned value (outliers)
+LENS_DELTA_ALPHA = 0.25      # learning rate of lens_delta from accepted AF pairs
+AF_SETTLE_S = 3.0            # max wait for both AFs after a trigger
+AF_MIN_S = 1.0               # a terminal AfState this soon after the trigger is the previous one (stale)
+AF_WINDOW_FRAC = 0.25        # AF window: central fraction of the crop (the crosshair)
 
 
 def log(*a):
@@ -192,6 +210,9 @@ def main():
     ap.add_argument("--autofocus-mode", choices=("default", "manual", "auto", "continuous"), default="default")
     ap.add_argument("--autofocus-range", default="normal")
     ap.add_argument("--roi", default="", help="ignored: the zoom is driven over UDP")
+    ap.add_argument("--follow", type=int, default=-1,
+                    help="follow this camera's exposure / white balance / focus (stereo slave), see MATCH_CALIB_PATH")
+    ap.add_argument("--match-calib", default=MATCH_CALIB_PATH)
     ap.add_argument("--sync", choices=("server", "client", "off"), default="off")
     ap.add_argument("--zoom", type=float, default=1.0, help="initial zoom")
     ap.add_argument("--hires", type=int, default=1, help="1: main = sensor size for snapshots, video from lores")
@@ -214,6 +235,9 @@ def main():
         ctrl.update({"AfMode": controls.AfModeEnum.Continuous})
     elif args.autofocus_mode == "auto":
         ctrl.update({"AfMode": controls.AfModeEnum.Auto})
+    follow = int(args.follow)
+    if follow >= 0:
+        log(f"cam{cam}: stereo follower of cam{follow} (exposure, white balance, focus cross-check)")
     if args.sync != "off":
         ctrl["SyncMode"] = (controls.rpi.SyncModeEnum.Server if args.sync == "server"
                             else controls.rpi.SyncModeEnum.Client)
@@ -417,6 +441,19 @@ def main():
     tmp_path = state_path + ".tmp"
     stop = threading.Event()
 
+    def meta_now():
+        md = state.get("md") or {}
+        cg = md.get("ColourGains")
+        return {"shutter": int(md.get("ExposureTime", 0) or 0),
+                "gain": round(float(md.get("AnalogueGain", 0.0) or 0.0), 4),
+                "dgain": round(float(md.get("DigitalGain", 1.0) or 1.0), 4),
+                "cg": [round(float(v), 4) for v in cg] if cg else None,
+                "lens": None if md.get("LensPosition") is None else round(float(md["LensPosition"]), 3),
+                "af_state": int(md.get("AfState", 0) or 0),
+                "ct": int(md.get("ColourTemperature", 0) or 0),
+                "lux": round(float(md.get("Lux", 0.0) or 0.0), 1),
+                "af_req": af["seq"]}
+
     def write_state():
         try:
             with open(tmp_path, "w") as f:
@@ -425,10 +462,170 @@ def main():
                            "offset_target": [round(v, 2) for v in state["off_t"]],
                            "sensor_ts": state.get("sensor_ts"),
                            "ev": round(expo["ev"], 3),
+                           "meta": meta_now(),
+                           "follow": follow,
+                           "match": match_calib if follow >= 0 else None,
                            "ts": round(time.time(), 3)}, f)
             os.replace(tmp_path, state_path)
         except OSError:
             pass
+
+    # ---- one-shot autofocus on request (UDP {"af": 1} or {"af": {"window": [x, y, w, h]}} in stream px):
+    # both cameras get the same request from ws-teleop / the stereo collimator and focus on the same window
+    # (default: the central AF_WINDOW_FRAC of the current crop = the crosshair).
+    af = {"seq": 0, "t": 0.0, "mode": args.autofocus_mode}
+
+    def af_trigger(window=None):
+        crop_now = state.get("crop_applied") or crop_for(state["zoom"], state["off"])[0]
+        cx0, cy0, cw, ch = crop_now
+        if window and len(window) >= 4:
+            kx, ky = cw / float(args.width), ch / float(args.height)
+            wx = int(cx0 + float(window[0]) * kx)
+            wy = int(cy0 + float(window[1]) * ky)
+            ww = max(32, int(float(window[2]) * kx))
+            wh = max(32, int(float(window[3]) * ky))
+        else:
+            ww, wh = int(cw * AF_WINDOW_FRAC), int(ch * AF_WINDOW_FRAC)
+            wx, wy = int(cx0 + (cw - ww) / 2), int(cy0 + (ch - wh) / 2)
+        try:
+            picam2.set_controls({"AfMode": controls.AfModeEnum.Auto, "AfMetering": controls.AfMeteringEnum.Windows,
+                                 "AfWindows": [(wx, wy, ww, wh)], "AfTrigger": controls.AfTriggerEnum.Start})
+            af["mode"] = "auto"
+            af["seq"] += 1
+            af["t"] = time.monotonic()
+            log(f"cam{cam}: AF #{af['seq']} window {(wx, wy, ww, wh)}")
+        except Exception as e:
+            log(f"cam{cam}: AF trigger failed {e!r}")
+
+    def lens_set(d: float):
+        try:
+            picam2.set_controls({"AfMode": controls.AfModeEnum.Manual, "LensPosition": float(d)})
+            af["mode"] = "manual"
+        except Exception as e:
+            log(f"cam{cam}: lens set failed {e!r}")
+
+    # ---- stereo follower (cam1): copy the master's exposure / colour, cross-check the focus
+    match_calib = {"lens_delta": 0.0, "lens_delta_n": 0, "gain_ratio": 1.0, "colour_ratio": [1.0, 1.0]}
+    try:
+        with open(args.match_calib) as f:
+            match_calib.update({k: v for k, v in json.load(f).items() if k in match_calib})
+    except (OSError, ValueError):
+        pass
+    calib_dirty = {"t": 0.0, "dirty": False}
+
+    def save_match_calib():
+        try:
+            os.makedirs(os.path.dirname(args.match_calib), exist_ok=True)
+            tmp = args.match_calib + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(dict(match_calib, saved_at=time.strftime("%Y-%m-%dT%H:%M:%S")), f, indent=2)
+            os.replace(tmp, args.match_calib)
+            calib_dirty["dirty"] = False
+            log(f"cam{cam}: stereo match calibration saved {match_calib}")
+        except OSError as e:
+            log(f"cam{cam}: calibration save failed {e!r}")
+
+    def follow_loop():
+        master_path = os.path.join(STATE_DIR, f"jonny5_cam{follow}_zoom.json")
+        last_m = None          # last applied (shutter, gain, cg)
+        last_mtime = 0.0
+        manual_on = False
+        pend = None            # AF cross-check pending: {"req", "t0", "own_seq", "scanned"}
+        last_af_req = None
+        first = True
+        while not stop.is_set():
+            time.sleep(0.02)
+            try:
+                mt = os.path.getmtime(master_path)
+                if mt == last_mtime:
+                    continue
+                last_mtime = mt
+                with open(master_path) as f:
+                    m = (json.load(f).get("meta") or {})
+            except (OSError, ValueError):
+                continue
+            if not m.get("shutter") or not m.get("gain"):
+                continue
+            # exposure + colour: the master's values, scaled by the learned sensor-to-sensor ratios
+            gain = float(m["gain"]) * float(m.get("dgain", 1.0)) * float(match_calib["gain_ratio"])
+            gain = max(1.0, min(GAIN_REQUEST_MAX, gain))
+            cg = m.get("cg")
+            ctl = {}
+            if not manual_on:
+                ctl.update({"AeEnable": False, "AwbEnable": False})
+            cur = (int(m["shutter"]), round(gain, 3), tuple(round(float(v), 3) for v in cg) if cg else None)
+            if cur != last_m:
+                ctl.update({"ExposureTime": max(50, int(m["shutter"])), "AnalogueGain": float(gain)})
+                if cg:
+                    cr = match_calib["colour_ratio"]
+                    ctl["ColourGains"] = (float(cg[0]) * float(cr[0]), float(cg[1]) * float(cr[1]))
+                try:
+                    picam2.set_controls(ctl)
+                    if not manual_on:
+                        manual_on = True
+                        log(f"cam{cam}: following cam{follow}: shutter {cur[0]} us gain {cur[1]} cg {cur[2]}")
+                except Exception as e:
+                    log(f"cam{cam}: follow set failed {e!r}")
+                last_m = cur
+            # focus cross-check after an AF request (the same request reaches both cameras)
+            req = m.get("af_req")
+            if first:
+                first = False
+                last_af_req = req          # the request counter as found at start is not a new request
+            elif req is not None and req != last_af_req:
+                last_af_req = req
+                pend = {"req": req, "t0": time.monotonic(), "own_seq": af["seq"], "scanned": False}
+            if pend is not None:
+                own = state.get("md") or {}
+                own_state = int(own.get("AfState", 0) or 0)       # 1 scanning, 2 focused, 3 failed
+                m_state = int(m.get("af_state", 0) or 0)
+                now_f = time.monotonic()
+                waited = now_f - pend["t0"]
+                if own_state == 1:
+                    pend["scanned"] = True
+                # our own request usually lands BEFORE the master's file shows its counter (same UDP burst):
+                # count a trigger of ours from up to 1 s before the pending check started
+                own_triggered = af["seq"] > pend["own_seq"] or (af["seq"] > 0 and af["t"] >= pend["t0"] - 1.0)
+                since_own = (now_f - af["t"]) if own_triggered else 0.0
+                settled = own_triggered and (pend["scanned"] or since_own >= AF_MIN_S) \
+                    and own_state in (2, 3) and m_state in (2, 3)
+                if settled or waited > AF_SETTLE_S:
+                    pend = None
+                    ml, ol = m.get("lens"), own.get("LensPosition")
+                    if ml is None or ol is None:
+                        continue
+                    ml, ol = float(ml), float(ol)
+                    d_old = float(match_calib["lens_delta"])
+                    if own_state == 2 and own_triggered:
+                        # own AF succeeded: keep it; learn the actuator delta from the pair
+                        if m_state == 2:
+                            pair = ol - ml
+                            if match_calib.get("lens_delta_n", 0) == 0 or abs(pair - d_old) <= LENS_PAIR_TOL:
+                                d_new = pair if match_calib.get("lens_delta_n", 0) == 0 \
+                                    else d_old + LENS_DELTA_ALPHA * (pair - d_old)
+                                match_calib["lens_delta"] = round(d_new, 3)
+                                match_calib["lens_delta_n"] = int(match_calib.get("lens_delta_n", 0)) + 1
+                                calib_dirty["dirty"] = True
+                                log(f"cam{cam}: AF ok lens {ol:.2f} (master {ml:.2f}): delta {d_new:+.2f} "
+                                    f"(n={match_calib['lens_delta_n']})")
+                            else:
+                                log(f"cam{cam}: AF ok lens {ol:.2f} but pair delta {pair:+.2f} far from the learned "
+                                    f"{d_old:+.2f}: kept own, not learned")
+                        else:
+                            log(f"cam{cam}: AF ok lens {ol:.2f} (master not focused, state {m_state})")
+                    elif m_state == 2:
+                        want = ml + d_old
+                        lens_set(want)
+                        log(f"cam{cam}: AF {'failed' if own_state == 3 else 'not run'} (lens {ol:.2f}): set "
+                            f"{want:.2f} = master {ml:.2f} {d_old:+.2f}")
+                    else:
+                        log(f"cam{cam}: AF: neither focused (own {own_state}, master {m_state}), lens {ol:.2f} kept")
+            if calib_dirty["dirty"] and time.monotonic() - calib_dirty["t"] > 30.0:
+                calib_dirty["t"] = time.monotonic()
+                save_match_calib()
+
+    if follow >= 0:
+        threading.Thread(target=follow_loop, name="follow", daemon=True).start()
 
     write_state()
     last = time.monotonic()
@@ -457,7 +654,26 @@ def main():
                 if "ev" in msg:
                     ev = float(msg["ev"])
                     if math.isfinite(ev) and abs(ev - expo["ev"]) > 1e-3:
-                        apply_ev(ev)
+                        if follow >= 0:
+                            expo["ev"] = ev     # the follower copies the master's resulting exposure
+                        else:
+                            apply_ev(ev)
+                if "af" in msg:
+                    w = msg["af"].get("window") if isinstance(msg["af"], dict) else None
+                    af_trigger(w)
+                if "lens" in msg and math.isfinite(float(msg["lens"])):
+                    lens_set(float(msg["lens"]))
+                    log(f"cam{cam}: lens {float(msg['lens']):.2f} (manual)")
+                if "gain_ratio" in msg and follow >= 0:
+                    g = float(msg["gain_ratio"])
+                    if math.isfinite(g) and 0.5 <= g <= 2.0 and abs(g - match_calib["gain_ratio"]) > 1e-3:
+                        match_calib["gain_ratio"] = round(g, 4)
+                        calib_dirty["dirty"] = True
+                if "colour_ratio" in msg and follow >= 0:
+                    r, b = (float(v) for v in msg["colour_ratio"][:2])
+                    if all(math.isfinite(v) and 0.5 <= v <= 2.0 for v in (r, b)):
+                        match_calib["colour_ratio"] = [round(r, 4), round(b, 4)]
+                        calib_dirty["dirty"] = True
                 if "stamp" in msg:
                     enc.stamp_on = bool(msg["stamp"])
                     log(f"cam{cam}: capture stamp {'ON' if enc.stamp_on else 'OFF'}")
@@ -493,7 +709,7 @@ def main():
                 state["crop_applied"] = crop
                 last_applied = state["zoom"]
                 last_off = list(state["off"])
-            if now - last_write > 0.1:
+            if now - last_write > META_WRITE_S:
                 write_state()
                 last_write = now
     except KeyboardInterrupt:

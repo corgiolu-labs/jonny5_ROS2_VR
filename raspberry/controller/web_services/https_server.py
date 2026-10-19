@@ -940,39 +940,38 @@ class J5HTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": str(e)}).encode())
 
     def _handle_post_refocus_cameras(self):
-        """Trigger refocus hardware AF: lancia jonny5-refocus-cams.service che restarta
-        MediaMTX e fa re-init libcamera AF su entrambe le cam. Debounce server-side 3s
-        per evitare burst di restart su click multipli rapidi."""
-        import subprocess
+        """Refocus: one-shot autofocus on BOTH cameras (tools/cam_stream.py UDP {"af": 1}, same window = the
+        crosshair; cam1 cross-checks its lens against cam0's). Until 2026-10-19 this restarted MediaMTX and the
+        capture (10 s of black, the boot probe then froze each camera on its own focus). Debounce 1 s."""
+        import socket as _socket
         import time as _time
         cls = type(self)
         now = _time.monotonic()
         last = getattr(cls, "_last_refocus_ts", 0.0)
-        if (now - last) < 3.0:
+        if (now - last) < 1.0:
             self.send_response(429)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(b'{"ok":false,"error":"cooldown 3s"}')
+            self.wfile.write(b'{"ok":false,"error":"cooldown 1s"}')
             return
         cls._last_refocus_ts = now
         try:
-            subprocess.run(
-                ["sudo", "-n", "/usr/bin/systemctl", "start", "jonny5-refocus-cams.service"],
-                check=True, timeout=5, capture_output=True,
-            )
+            sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            for cam in (0, 1):
+                sock.sendto(b'{"af": 1}', ("127.0.0.1", 5600 + cam))
+            sock.close()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-        except subprocess.CalledProcessError as e:
-            err = (e.stderr or b"").decode("utf-8", "replace") or str(e)
+            self.wfile.write(b'{"ok":true,"mode":"af"}')
+        except OSError as e:
             self.send_response(500)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(json.dumps({"ok": False, "error": err}).encode())
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode())
         except Exception as e:
             self.send_response(500)
             self.send_header("Content-Type", "application/json")
