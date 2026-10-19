@@ -81,10 +81,19 @@ META_WRITE_S = 0.05          # master state file rate (the follower polls it)
 # The two modules' LensPosition scales differ (measured 2026-10-19 on a 2 m scene: cam0 sharpest at 3.0
 # "dioptres", cam1 at 0.5): each camera keeps its OWN one-shot AF result; lens_delta (cam1 - cam0) is learned
 # from the pairs where both focused and is only used as the fallback when cam1's AF fails.
-LENS_PAIR_TOL = 1.0          # a new pair updates lens_delta only within this of the learned value (outliers)
-LENS_DELTA_ALPHA = 0.25      # learning rate of lens_delta from accepted AF pairs
-AF_SETTLE_S = 3.0            # max wait for both AFs after a trigger
-AF_MIN_S = 1.0               # a terminal AfState this soon after the trigger is the previous one (stale)
+# Measured 2026-10-19 (lens sweeps vs the Laplacian sharpness of the crosshair region): cam0's PDAF lands on its
+# sharpness peak (3.05-3.16 vs peak 3.2), cam1's PDAF is biased by +0.8 (1.30-1.34 vs peak 0.5). So only the
+# master runs the PDAF; both cameras then REFINE by contrast (a short lens sweep around the start position on the
+# live frames) and the follower starts its sweep at master + lens_delta (delta learned from the refined pairs).
+LENS_DELTA_ALPHA = 0.25      # learning rate of lens_delta from refined pairs
+AF_SETTLE_S = 3.0            # max wait for the PDAF after a trigger
+AF_MIN_S = 0.5               # a terminal AfState this soon after the trigger is the previous one (stale)
+REFINE_SPAN = 0.3            # contrast refinement: +-span around the start, REFINE_N steps
+REFINE_N = 5
+REFINE_SETTLE_S = 0.12       # lens settle before measuring a step
+REFINE_FRAMES = 3            # frames averaged per step
+REFINE_MIN_RATIO = 1.08      # max/min sharpness across the steps below this: no peak (flat / dark), keep the start
+REFINE_MAX_EXT = 2           # extra sweeps when the best is at the border
 AF_WINDOW_FRAC = 0.25        # AF window: central fraction of the crop (the crosshair)
 
 
@@ -308,6 +317,8 @@ def main():
             gop["last"] = g
             enc.force_key_frame()
 
+    refine = {"active": False, "collect": False, "acc": []}   # filled in below (contrast refinement)
+
     # ---- brightness (UDP {"ev": stops}), see the module docstring
     shutter_max = int(1e6 / args.fps) - 400
     expo = {"ev": 0.0, "log_after": None}
@@ -411,9 +422,24 @@ def main():
         snap_sock.sendto(json.dumps({"still_done": sid, "path": snap_path, "scale": k, "x0": x0 - ax, "y0": y0 - ay,
                                      "w": int(g.shape[1]), "h": int(g.shape[0]), "ms": ms}).encode(), addr)
 
+    def measure_sharpness(request):
+        if not refine["collect"]:
+            return
+        try:
+            with MappedArray(request, "lores" if hires else "main") as m:
+                y = m.array[:args.height, :args.width]
+                hh, ww = args.height, args.width
+                c = np.asarray(y[int(hh * 0.375): int(hh * 0.625), int(ww * 0.375): int(ww * 0.625)],
+                               dtype=np.float32)
+            lap = c[:-2, 1:-1] + c[2:, 1:-1] + c[1:-1, :-2] + c[1:-1, 2:] - 4.0 * c[1:-1, 1:-1]
+            refine["acc"].append(float(lap.var()))
+        except Exception:
+            pass
+
     def pre_callback(request):
         align_keyframes(request)
         take_snapshot(request)
+        measure_sharpness(request)
 
     picam2.pre_callback = pre_callback
     if args.sync != "off":
@@ -452,7 +478,7 @@ def main():
                 "af_state": int(md.get("AfState", 0) or 0),
                 "ct": int(md.get("ColourTemperature", 0) or 0),
                 "lux": round(float(md.get("Lux", 0.0) or 0.0), 1),
-                "af_req": af["seq"]}
+                "af_req": af["seq"], "af_done": af.get("done_seq", 0), "af_lens": af.get("lens_done")}
 
     def write_state():
         try:
@@ -475,9 +501,14 @@ def main():
     # (default: the central AF_WINDOW_FRAC of the current crop = the crosshair).
     af = {"seq": 0, "t": 0.0, "mode": args.autofocus_mode}
 
+    scm = picam2.camera_properties.get("ScalerCropMaximum")
+
     def af_trigger(window=None):
         crop_now = state.get("crop_applied") or crop_for(state["zoom"], state["off"])[0]
         cx0, cy0, cw, ch = crop_now
+        opts = window if isinstance(window, dict) else {}
+        if isinstance(window, dict):
+            window = window.get("window")
         if window and len(window) >= 4:
             kx, ky = cw / float(args.width), ch / float(args.height)
             wx = int(cx0 + float(window[0]) * kx)
@@ -487,13 +518,31 @@ def main():
         else:
             ww, wh = int(cw * AF_WINDOW_FRAC), int(ch * AF_WINDOW_FRAC)
             wx, wy = int(cx0 + (cw - ww) / 2), int(cy0 + (ch - wh) / 2)
+        if scm and not opts.get("sensor_window") and opts.get("relative", True):
+            # libcamera: AfWindows are pixels WITHIN the ScalerCropMaximum rectangle (relative to its origin)
+            wx, wy = wx - int(scm[0]), wy - int(scm[1])
+        ctl_af = {"AfMode": controls.AfModeEnum.Auto, "AfTrigger": controls.AfTriggerEnum.Start}
+        if opts.get("metering") == "auto":
+            ctl_af["AfMetering"] = controls.AfMeteringEnum.Auto
+        else:
+            if opts.get("sensor_window"):
+                wx, wy, ww, wh = (int(v) for v in opts["sensor_window"][:4])
+            ctl_af.update({"AfMetering": controls.AfMeteringEnum.Windows, "AfWindows": [(wx, wy, ww, wh)]})
+        rng = opts.get("range")
+        if rng in ("normal", "macro", "full"):
+            ctl_af["AfRange"] = {"normal": controls.AfRangeEnum.Normal, "macro": controls.AfRangeEnum.Macro,
+                                 "full": controls.AfRangeEnum.Full}[rng]
+        if opts.get("speed") in ("normal", "fast"):
+            ctl_af["AfSpeed"] = (controls.AfSpeedEnum.Fast if opts["speed"] == "fast"
+                                 else controls.AfSpeedEnum.Normal)
         try:
-            picam2.set_controls({"AfMode": controls.AfModeEnum.Auto, "AfMetering": controls.AfMeteringEnum.Windows,
-                                 "AfWindows": [(wx, wy, ww, wh)], "AfTrigger": controls.AfTriggerEnum.Start})
+            picam2.set_controls(ctl_af)
             af["mode"] = "auto"
             af["seq"] += 1
             af["t"] = time.monotonic()
-            log(f"cam{cam}: AF #{af['seq']} window {(wx, wy, ww, wh)}")
+            log(f"cam{cam}: AF #{af['seq']} " + ("metering auto" if "AfWindows" not in ctl_af
+                                                 else f"window {(wx, wy, ww, wh)}")
+                + (f" range {rng}" if rng else "") + f" (ScalerCropMaximum {scm})")
         except Exception as e:
             log(f"cam{cam}: AF trigger failed {e!r}")
 
@@ -503,6 +552,84 @@ def main():
             af["mode"] = "manual"
         except Exception as e:
             log(f"cam{cam}: lens set failed {e!r}")
+
+    # ---- contrast refinement: short lens sweep around a start position, measured on the live frames
+    refine.update({"steps": [], "i": 0, "res": [], "t_set": 0.0, "centre": 0.0, "ext": 0, "cb": None, "t0": 0.0})
+
+    def start_refine(centre: float, cb=None, ext: int = 0):
+        centre = max(0.0, min(12.0, float(centre)))
+        steps = [max(0.0, min(12.0, centre + REFINE_SPAN * (2.0 * k / (REFINE_N - 1) - 1.0))) for k in range(REFINE_N)]
+        refine.update({"active": True, "collect": False, "acc": [], "steps": steps, "i": 0, "res": [],
+                       "centre": centre, "ext": ext, "cb": cb, "t0": time.monotonic()})
+        lens_set(steps[0])
+        refine["t_set"] = time.monotonic()
+
+    def refine_tick():
+        if not refine["active"]:
+            return
+        now_r = time.monotonic()
+        if now_r - refine["t_set"] < REFINE_SETTLE_S:
+            return
+        refine["collect"] = True
+        if len(refine["acc"]) < REFINE_FRAMES:
+            if now_r - refine["t_set"] > 1.0:       # no frames (encoder stalled?): give up
+                refine.update({"active": False, "collect": False})
+                lens_set(refine["centre"])
+                log(f"cam{cam}: refine aborted (no frames)")
+            return
+        refine["collect"] = False
+        refine["res"].append(float(np.mean(refine["acc"][:REFINE_FRAMES])))
+        refine["acc"] = []
+        refine["i"] += 1
+        if refine["i"] < len(refine["steps"]):
+            lens_set(refine["steps"][refine["i"]])
+            refine["t_set"] = now_r
+            return
+        # done: pick the best step, parabolic sub-step, border -> extend the sweep
+        res, steps = refine["res"], refine["steps"]
+        refine["active"] = False
+        b = int(np.argmax(res))
+        ratio = max(res) / max(1e-6, min(res))
+        if ratio < REFINE_MIN_RATIO:
+            lens_set(refine["centre"])
+            log(f"cam{cam}: refine: flat ({[round(v) for v in res]}), lens {refine['centre']:.2f} kept")
+            if refine["cb"]:
+                refine["cb"](refine["centre"], False, res)
+            return
+        if b in (0, len(res) - 1) and refine["ext"] < REFINE_MAX_EXT:
+            log(f"cam{cam}: refine: best at the border ({[round(v) for v in res]}), extending")
+            start_refine(steps[b], refine["cb"], refine["ext"] + 1)
+            return
+        best = steps[b]
+        if 0 < b < len(res) - 1:
+            d = (res[b - 1] - res[b + 1]) / (2.0 * (res[b - 1] - 2.0 * res[b] + res[b + 1]) or 1e-6)
+            if abs(d) < 1.0:
+                best = steps[b] + d * (steps[1] - steps[0])
+        lens_set(best)
+        log(f"cam{cam}: refine: lens {best:.2f} (start {refine['centre']:.2f}, {[round(v) for v in res]}, "
+            f"{round((time.monotonic() - refine['t0']) * 1000)} ms)")
+        if refine["cb"]:
+            refine["cb"](best, True, res)
+
+    def master_af_done(best, ok, res):
+        af["lens_done"] = round(float(best), 3)
+        af["done_seq"] = af["seq"]
+
+    def master_tick():
+        """After the PDAF settles (or times out) refine by contrast, then publish af_done for the follower."""
+        if follow >= 0 or not af.get("pdaf_pending"):
+            return
+        md = state.get("md") or {}
+        st_af = int(md.get("AfState", 0) or 0)
+        dt_af = time.monotonic() - af["t"]
+        if (dt_af >= AF_MIN_S and st_af in (2, 3)) or dt_af > AF_SETTLE_S:
+            af["pdaf_pending"] = False
+            lp = md.get("LensPosition")
+            if lp is None:
+                af["done_seq"] = af["seq"]
+                return
+            log(f"cam{cam}: PDAF {'focused' if st_af == 2 else 'failed/timeout'} at {float(lp):.2f}, refining")
+            start_refine(float(lp), master_af_done)
 
     # ---- stereo follower (cam1): copy the master's exposure / colour, cross-check the focus
     match_calib = {"lens_delta": 0.0, "lens_delta_n": 0, "gain_ratio": 1.0, "colour_ratio": [1.0, 1.0]}
@@ -525,14 +652,27 @@ def main():
         except OSError as e:
             log(f"cam{cam}: calibration save failed {e!r}")
 
+    def follower_af_done(ml):
+        def cb(best, ok, res):
+            if ok:
+                d_old = float(match_calib["lens_delta"])
+                n = int(match_calib.get("lens_delta_n", 0))
+                pair = float(best) - float(ml)
+                d_new = pair if n == 0 else d_old + LENS_DELTA_ALPHA * (pair - d_old)
+                match_calib["lens_delta"] = round(d_new, 3)
+                match_calib["lens_delta_n"] = n + 1
+                calib_dirty["dirty"] = True
+                log(f"cam{cam}: focus {best:.2f} = master {ml:.2f} {pair:+.2f} (lens_delta -> {d_new:+.2f}, n={n + 1})")
+            else:
+                log(f"cam{cam}: focus kept at master {ml:.2f} {float(match_calib['lens_delta']):+.2f} (no contrast peak)")
+        return cb
+
     def follow_loop():
         master_path = os.path.join(STATE_DIR, f"jonny5_cam{follow}_zoom.json")
         last_m = None          # last applied (shutter, gain, cg)
         last_mtime = 0.0
         manual_on = False
-        pend = None            # AF cross-check pending: {"req", "t0", "own_seq", "scanned"}
-        last_af_req = None
-        first = True
+        last_done = None
         while not stop.is_set():
             time.sleep(0.02)
             try:
@@ -567,59 +707,16 @@ def main():
                 except Exception as e:
                     log(f"cam{cam}: follow set failed {e!r}")
                 last_m = cur
-            # focus cross-check after an AF request (the same request reaches both cameras)
-            req = m.get("af_req")
-            if first:
-                first = False
-                last_af_req = req          # the request counter as found at start is not a new request
-            elif req is not None and req != last_af_req:
-                last_af_req = req
-                pend = {"req": req, "t0": time.monotonic(), "own_seq": af["seq"], "scanned": False}
-            if pend is not None:
-                own = state.get("md") or {}
-                own_state = int(own.get("AfState", 0) or 0)       # 1 scanning, 2 focused, 3 failed
-                m_state = int(m.get("af_state", 0) or 0)
-                now_f = time.monotonic()
-                waited = now_f - pend["t0"]
-                if own_state == 1:
-                    pend["scanned"] = True
-                # our own request usually lands BEFORE the master's file shows its counter (same UDP burst):
-                # count a trigger of ours from up to 1 s before the pending check started
-                own_triggered = af["seq"] > pend["own_seq"] or (af["seq"] > 0 and af["t"] >= pend["t0"] - 1.0)
-                since_own = (now_f - af["t"]) if own_triggered else 0.0
-                settled = own_triggered and (pend["scanned"] or since_own >= AF_MIN_S) \
-                    and own_state in (2, 3) and m_state in (2, 3)
-                if settled or waited > AF_SETTLE_S:
-                    pend = None
-                    ml, ol = m.get("lens"), own.get("LensPosition")
-                    if ml is None or ol is None:
-                        continue
-                    ml, ol = float(ml), float(ol)
-                    d_old = float(match_calib["lens_delta"])
-                    if own_state == 2 and own_triggered:
-                        # own AF succeeded: keep it; learn the actuator delta from the pair
-                        if m_state == 2:
-                            pair = ol - ml
-                            if match_calib.get("lens_delta_n", 0) == 0 or abs(pair - d_old) <= LENS_PAIR_TOL:
-                                d_new = pair if match_calib.get("lens_delta_n", 0) == 0 \
-                                    else d_old + LENS_DELTA_ALPHA * (pair - d_old)
-                                match_calib["lens_delta"] = round(d_new, 3)
-                                match_calib["lens_delta_n"] = int(match_calib.get("lens_delta_n", 0)) + 1
-                                calib_dirty["dirty"] = True
-                                log(f"cam{cam}: AF ok lens {ol:.2f} (master {ml:.2f}): delta {d_new:+.2f} "
-                                    f"(n={match_calib['lens_delta_n']})")
-                            else:
-                                log(f"cam{cam}: AF ok lens {ol:.2f} but pair delta {pair:+.2f} far from the learned "
-                                    f"{d_old:+.2f}: kept own, not learned")
-                        else:
-                            log(f"cam{cam}: AF ok lens {ol:.2f} (master not focused, state {m_state})")
-                    elif m_state == 2:
-                        want = ml + d_old
-                        lens_set(want)
-                        log(f"cam{cam}: AF {'failed' if own_state == 3 else 'not run'} (lens {ol:.2f}): set "
-                            f"{want:.2f} = master {ml:.2f} {d_old:+.2f}")
-                    else:
-                        log(f"cam{cam}: AF: neither focused (own {own_state}, master {m_state}), lens {ol:.2f} kept")
+            # focus: when the master has finished (PDAF + refinement) start our contrast refinement from
+            # master + lens_delta (our own PDAF is biased, see the header)
+            done = m.get("af_done")
+            if last_done is None:
+                last_done = done                       # the counter as found at start is not a new focus
+            elif done != last_done:
+                last_done = done
+                ml = m.get("af_lens")
+                if ml is not None and not refine["active"]:
+                    start_refine(float(ml) + float(match_calib["lens_delta"]), follower_af_done(float(ml)))
             if calib_dirty["dirty"] and time.monotonic() - calib_dirty["t"] > 30.0:
                 calib_dirty["t"] = time.monotonic()
                 save_match_calib()
@@ -659,8 +756,12 @@ def main():
                         else:
                             apply_ev(ev)
                 if "af" in msg:
-                    w = msg["af"].get("window") if isinstance(msg["af"], dict) else None
-                    af_trigger(w)
+                    if follow >= 0:
+                        af["seq"] += 1
+                        af["t"] = time.monotonic()      # the master's af_done drives our refinement
+                    else:
+                        af_trigger(msg["af"] if isinstance(msg["af"], dict) else None)
+                        af["pdaf_pending"] = True
                 if "lens" in msg and math.isfinite(float(msg["lens"])):
                     lens_set(float(msg["lens"]))
                     log(f"cam{cam}: lens {float(msg['lens']):.2f} (manual)")
@@ -709,6 +810,8 @@ def main():
                 state["crop_applied"] = crop
                 last_applied = state["zoom"]
                 last_off = list(state["off"])
+            master_tick()
+            refine_tick()
             if now - last_write > META_WRITE_S:
                 write_state()
                 last_write = now
