@@ -536,7 +536,10 @@ async def handle_uart_cmd(websocket, data: dict) -> None:
         "HYBRID DISABLE",
         "PP?",                # Pick&Place: lettura stato duty cycle
         "HEADZERO",           # zero del riferimento testa (viewer XR nativo al cambio modo / gimbal assist)
+        "ESTOP?",             # stato del fungo E-STOP hardware (linea, bypass, secondi residui)
     }
+    # ESTOP_BYPASS ON [min] / OFF: bypass temporaneo del fungo (prove sul campo senza il box, firmware estop.c)
+    _is_estop_bypass = cmd_upper.startswith("ESTOP_BYPASS ") and len(cmd.strip()) > 13
     # SETPOSE accetta un payload variabile: "SETPOSE B S G Y P R vel PLANNER"
     _is_setpose = (cmd_upper.startswith("SETPOSE ") and len(cmd.strip()) > 8) or \
                   (cmd_upper.startswith("SETPOSE_T ") and len(cmd.strip()) > 10)
@@ -550,7 +553,8 @@ async def handle_uart_cmd(websocket, data: dict) -> None:
     _is_pickplace = (cmd_upper.startswith("PP1 ") or cmd_upper.startswith("PP2 ")) \
                     and len(cmd.strip()) > 4
 
-    if cmd_upper in _simple_cmds or _is_setpose or _is_setpose_hr or _is_joint_limits or _is_vr_params or _is_pickplace:
+    if cmd_upper in _simple_cmds or _is_setpose or _is_setpose_hr or _is_joint_limits or _is_vr_params or _is_pickplace \
+            or _is_estop_bypass:
         # Recovery sicuro post-STOP/UNKNOWN:
         # se arriva ENABLE con stato non consistente, forza SAFE->ENABLE
         # e un AUTO_HOME dolce e deterministico a 6 giunti.

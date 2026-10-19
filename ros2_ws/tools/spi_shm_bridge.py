@@ -85,6 +85,10 @@ class SpiShmBridge(Node):
             "rt_loop_period_us": int(m.rt_loop_period_us),
             "frame_type": int(m.frame_type),
             "diag_mask": int(m.diag_mask),
+            # firmware estop.c (j5_protocol.c diag bits): 5 = E-STOP line open (button pressed / box unplugged),
+            # 6 = ESTOP_BYPASS active; ws-teleop forwards them to the Quest app
+            "estop_active": bool(int(m.diag_mask) & (1 << 5)),
+            "estop_bypass": bool(int(m.diag_mask) & (1 << 6)),
         }
         # Diagnostica rate (la pagina test legge rt_loop_hz_est e imu_rate_hz_est):
         # nel legacy queste le calcola j5vr_spi_bridge; nello stack ROS2 le ricavo qui.
