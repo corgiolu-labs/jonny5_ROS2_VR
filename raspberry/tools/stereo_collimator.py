@@ -106,7 +106,10 @@ AF_DIST_MM = (120.0, 6000.0)
 # crosshair when locked); the ratio, slowly filtered, becomes cam1's gain_ratio (cam_stream.py follower).
 EQ_ALPHA = 0.03
 EQ_SEND_DELTA = 0.01
-EQ_RANGE = (0.6, 1.6)
+EQ_RANGE = (0.7, 1.4)
+EQ_MIN_SCORE = 0.85                  # compare the two MATCHED template windows (same object), not the frame
+EQ_MAX_STEP = 0.02                   # centres (parallax: at 40 cm the centres see different things, the
+                                     # ratio drifted to 0.70 on 2026-10-19)
 CONV_SEND_STREAM_PX = 12.0
 CONV_RELEASE_S = 3.0                 # at low zoom: back to infinity this long after the last lock
 CONV_HOLD_ZOOM = 1.5                 # above this sensor zoom the crop offset is HELD without a lock (a near object
@@ -551,17 +554,24 @@ def main():
                     focus.update({"dist_mm": dist, "t": now_m, "since": None})
             else:
                 focus["since"] = None
-        # brightness equalisation: the same object is under both crosshairs when locked
-        if ok:
+        # brightness equalisation on the two MATCHED windows (the same object in both cameras)
+        if ok and score >= EQ_MIN_SCORE and win > 0:
             hh, ww = fl.shape[0], fl.shape[1]
-            cl = fl[hh // 4: 3 * hh // 4, ww // 4: 3 * ww // 4]
-            cr = fr[hh // 4: 3 * hh // 4, ww // 4: 3 * ww // 4]
-            ml_, mr_ = float(np.mean(cl)), float(np.mean(cr))
-            if 16.0 < ml_ < 235.0 and 16.0 < mr_ < 235.0:
+            cy_, cx_ = hh // 2, ww // 2
+            tp = max(8, int(win) // 2)                      # template side at half resolution
+            # residual position of the template in cam1's stream (half-res px): msg dx/dy are stream px
+            rdx, rdy = int(round(float(msg.get("dx", 0.0)) / 2.0)), int(round(float(msg.get("dy", 0.0)) / 2.0))
+            cl = fl[cy_ - tp // 2: cy_ + tp // 2, cx_ - tp // 2: cx_ + tp // 2]
+            ry0, rx0 = cy_ + rdy - tp // 2, cx_ + rdx - tp // 2
+            cr = fr[max(0, ry0): ry0 + tp, max(0, rx0): rx0 + tp]
+            ml_, mr_ = float(np.mean(cl)), float(np.mean(cr)) if cr.size else 0.0
+            if cr.shape == cl.shape and 24.0 < ml_ < 225.0 and 24.0 < mr_ < 225.0:
                 # grey levels are gamma encoded (~0.45): the linear-light ratio is what the gain must correct
                 want = (eq["ratio"] or 1.0) * (ml_ / mr_) ** (1.0 / 0.45)
                 want = max(EQ_RANGE[0], min(EQ_RANGE[1], want))
-                eq["ratio"] = want if eq["ratio"] is None else eq["ratio"] + EQ_ALPHA * (want - eq["ratio"])
+                step = EQ_ALPHA * (want - (eq["ratio"] if eq["ratio"] is not None else want))
+                step = max(-EQ_MAX_STEP, min(EQ_MAX_STEP, step))
+                eq["ratio"] = want if eq["ratio"] is None else eq["ratio"] + step
                 if eq["sent"] is None or abs(eq["ratio"] - eq["sent"]) > EQ_SEND_DELTA:
                     camzoom.send_gain_ratio(eq["ratio"])
                     eq["sent"] = eq["ratio"]
