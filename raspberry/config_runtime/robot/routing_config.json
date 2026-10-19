@@ -179,7 +179,16 @@
   },
   "gimbalPrediction": {
     "enable": true,
-    "lead_s": 0.20,
-    "max_deg": 12.0
+    "lead_s": 0.2,
+    "max_deg": 12.0,
+    "yaw_lead_s": 0.12,
+    "brake": true,
+    "base_tau_s": 0.12
+  },
+  "gimbalImuTrim": {
+    "enable": true,
+    "tau_s": 1.0,
+    "deadband_deg": 0.7,
+    "max_deg": 8.0
   }
 }

@@ -44,6 +44,18 @@ orientation is computed from the head orientation PREDICTED lead_s ahead: angula
 difference over PRED_WIN_S of the intent arrival times, smoothed), applied for lead_s, faded out below a few deg/s
 (no amplified micro-motion while holding still) and capped at max_deg (no big overshoot when the head stops).
 
+Spring on yaw stops (2026-10-18, user): turning the head and stopping, base + wrist yaw went past and came back.
+Two causes, both handled: (1) the prediction kept going ~0.1 s after the stop -> the yaw part (about the vertical)
+has its own lead (yaw_lead_s) and the prediction is braked by the speed over the last PRED_SHORT_S; (2) the wrist
+compensated the base as if it were already at its target, but the base (whole arm) is slower than the wrist ->
+the wrist IK uses a first-order model of the real base position (base_tau_s).
+
+IMU trim (routing_config "gimbalImuTrim"): with the firmware pose and the IMU still, the gravity direction measured
+by the wrist BNO085 (mounting + base tilt from config_runtime/imu/imu_ee_mount.json) is compared with the one the
+kinematics predicts; the difference phi = g_meas x g_fk (tool frame, pitch / roll part only: yaw is not observable
+from gravity and the magnetometer yaw is unreliable) is low-passed (tau_s), with a dead band and a cap, and the
+target is commanded as R_target . exp(-trim). The campaign measured 2.7 deg RMS (p95 5.5) of such static error.
+
 Selected with routing_config.json "assistMode": "gimbal" (other values: "rate" legacy, "dls").
 """
 from __future__ import annotations
@@ -92,6 +104,20 @@ PRED_WIN_S = 0.08           # angular velocity over this window (intent arrival 
 PRED_TAU_S = 0.03           # smoothing of the angular velocity
 PRED_W_LO, PRED_W_HI = 4.0, 20.0   # deg/s: no prediction below LO, full above HI (smoothstep in between)
 PRED_MAX_DEG = 12.0
+PRED_YAW_LEAD_S = 0.12      # lead of the yaw part (about the vertical): base + wrist yaw sprang back at stops
+PRED_SHORT_S = 0.035        # brake: speed over the last samples, the prediction scales with short / smoothed speed
+BASE_TAU_S = 0.12           # first-order lag of the real base (whole arm) behind its target, for the wrist IK
+
+# IMU trim (routing_config "gimbalImuTrim": enable, tau_s, deadband_deg, max_deg)
+TRIM_TAU_S = 1.0
+TRIM_DEADBAND_DEG = 0.7
+TRIM_MAX_DEG = 6.0
+TRIM_STILL_S = 0.4          # firmware pose and IMU (nearly) unchanged for this long
+TRIM_STILL_DEG = 1.5        # the telemetry reports whole servo degrees: any settling is >= 1 deg
+TRIM_SERVO_LAG_S = 0.2      # the IMU is compared with the firmware pose this much earlier (servo lag, campaign)
+_MOUNT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "config_runtime", "imu",
+                           "imu_ee_mount.json")
+_mount_cache = {"mtime": None, "M": None, "T": None}
 
 # XR (x right, y up, z back) -> robot base (x forward, y left, z up)
 _C = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
@@ -327,6 +353,10 @@ class GimbalState:
         self.w_f = np.zeros(3)       # smoothed head angular velocity, rad/s (robot base frame)
         self.w_t = 0.0
         self.pred_deg = 0.0
+        self.base_est = None         # modelled real base position (rad), see BASE_TAU_S
+        self.trim = np.zeros(3)      # IMU trim (rotation vector, tool frame, rad)
+        self.trim_hist = []          # (t, firmware virt[6], R_imu) for the stillness test
+        self.trim_t = 0.0
 
 
 _state = GimbalState()
@@ -393,6 +423,8 @@ def _campaign_log(st, intent, full_v, r_target, physical_tel, r_target_raw=None)
            "target_R": None if r_target is None else [round(float(v), 5) for v in np.asarray(r_target).reshape(-1)],
            "target_raw_R": None if r_target_raw is None else [round(float(v), 5) for v in np.asarray(r_target_raw).reshape(-1)],
            "pred_deg": round(float(st.pred_deg), 2),
+           "trim_deg": [round(math.degrees(float(v)), 3) for v in st.trim],
+           "base_est": None if st.base_est is None else round(math.degrees(st.base_est) + 90.0, 3),
            "imu": imu}
     try:
         c["f"].write(json.dumps(rec) + "\n")
@@ -447,11 +479,105 @@ def _predict_head(st, r_head, now, cfg):
     speed = math.degrees(float(np.linalg.norm(st.w_f)))
     x = max(0.0, min(1.0, (speed - PRED_W_LO) / (PRED_W_HI - PRED_W_LO)))
     fade = x * x * (3.0 - 2.0 * x)
-    ang = min(float(cfg.get("max_deg", PRED_MAX_DEG)), speed * float(cfg.get("lead_s", PRED_LEAD_S)) * fade)
+    # brake: when the head stops, the smoothed velocity lags ~0.1 s; the speed over the last few samples drops at
+    # once and scales the prediction down
+    brake = 1.0
+    if cfg.get("brake", True):
+        short = None
+        for t_o, r_o in hist:
+            if now - t_o >= PRED_SHORT_S:
+                short = (t_o, r_o)
+        if short is not None:
+            s_short = math.degrees(float(np.linalg.norm(_log_map(r_head @ short[1].T)))) / max(1e-3, now - short[0])
+            brake = min(1.0, s_short / max(1e-6, speed))
+    # yaw (about the vertical) with its own, shorter lead
+    w_v = np.array([0.0, 0.0, st.w_f[2]])
+    w_h = st.w_f - w_v
+    rv = (w_h * float(cfg.get("lead_s", PRED_LEAD_S)) + w_v * float(cfg.get("yaw_lead_s", PRED_YAW_LEAD_S))) \
+        * fade * brake
+    ang = math.degrees(float(np.linalg.norm(rv)))
+    cap = float(cfg.get("max_deg", PRED_MAX_DEG))
+    if ang > cap:
+        rv = rv * (cap / ang)
+        ang = cap
     st.pred_deg = ang
-    if ang < 1e-3 or speed < 1e-6:
+    if ang < 1e-3:
         return r_head
-    return _exp_map(st.w_f / np.linalg.norm(st.w_f) * math.radians(ang)) @ r_head
+    return _exp_map(rv) @ r_head
+
+
+def _imu_mount():
+    """(M, T): IMU mounting (R_imu = W . R_tool . M) and base tilt rotation, from imu_ee_mount.json."""
+    c = _mount_cache
+    try:
+        mt = os.path.getmtime(_MOUNT_PATH)
+    except OSError:
+        return None, None
+    if mt != c["mtime"]:
+        try:
+            with open(_MOUNT_PATH) as f:
+                d = json.load(f)
+            c["M"] = _quat_to_mat(*d["quat_wxyz"])
+            tx, ty = (math.radians(float(v)) for v in d.get("base_tilt_deg", [0.0, 0.0])[:2])
+            c["T"] = _exp_map(np.array([tx, ty, 0.0]))
+            c["mtime"] = mt
+        except (OSError, ValueError, KeyError, TypeError):
+            return None, None
+    return c["M"], c["T"]
+
+
+def _read_imu():
+    try:
+        with open(_TELEMETRY_PATH) as f:
+            t = json.load(f)
+        if t.get("imu_valid"):
+            return _quat_to_mat(t["imu_q_w"], t["imu_q_x"], t["imu_q_y"], t["imu_q_z"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def _imu_trim(st, virt_fw, now, cfg):
+    """Update the IMU trim (see the module docstring) and return it as a rotation matrix to apply on the right of
+    the target."""
+    cfg = cfg or {}
+    if not cfg.get("enable", False):
+        st.trim = np.zeros(3)
+        return np.eye(3)
+    m, tilt = _imu_mount()
+    r_imu = _read_imu()
+    if m is not None and r_imu is not None:
+        h = st.trim_hist
+        h.append((now, np.asarray(virt_fw, dtype=float), r_imu))
+        while h and now - h[0][0] > TRIM_STILL_S + TRIM_SERVO_LAG_S + 0.2:
+            h.pop(0)
+        # firmware pose TRIM_SERVO_LAG_S ago (where the servos are now) and the window before it: nearly constant;
+        # IMU over the last TRIM_STILL_S: nearly constant
+        lagged = [x for x in h if now - x[0] >= TRIM_SERVO_LAG_S]
+        win_fw = [x for x in lagged if now - x[0] <= TRIM_SERVO_LAG_S + TRIM_STILL_S]
+        win_imu = [x for x in h if now - x[0] <= TRIM_STILL_S]
+        if lagged and len(win_fw) >= 3 and len(win_imu) >= 3 and now - win_imu[0][0] >= TRIM_STILL_S * 0.7:
+            v = np.array([x[1] for x in win_fw])
+            imu_still = all(math.degrees(float(np.linalg.norm(_log_map(win_imu[0][2].T @ x[2])))) < TRIM_STILL_DEG
+                            for x in win_imu)
+            if float(np.max(np.ptp(v, axis=0))) < TRIM_STILL_DEG and imu_still:
+                z = np.array([0.0, 0.0, 1.0])
+                r_fk = cam_rotation(np.radians(np.asarray(lagged[-1][1], dtype=float) - 90.0))
+                g_fk = r_fk.T @ (tilt.T @ z)
+                g_m = m @ (r_imu.T @ z)
+                phi = np.cross(g_m, g_fk)                        # tool frame, perpendicular to gravity
+                dt = min(0.1, max(0.0, now - st.trim_t)) if st.trim_t else 0.0
+                st.trim_t = now
+                if math.degrees(float(np.linalg.norm(phi - st.trim))) > float(cfg.get("deadband_deg", TRIM_DEADBAND_DEG)):
+                    a = 1.0 - math.exp(-dt / float(cfg.get("tau_s", TRIM_TAU_S))) if dt > 0 else 0.0
+                    st.trim = st.trim + a * (phi - st.trim)
+                cap = math.radians(float(cfg.get("max_deg", TRIM_MAX_DEG)))
+                n = float(np.linalg.norm(st.trim))
+                if n > cap:
+                    st.trim = st.trim * (cap / n)
+            else:
+                st.trim_t = 0.0
+    return _exp_map(-st.trim)
 
 
 def notify_headzero_external():
@@ -501,7 +627,7 @@ def _head_pos(intent: dict):
 
 
 def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], uart_manager, grip: bool,
-         pos_cfg: dict | None = None, pred_cfg: dict | None = None):
+         pos_cfg: dict | None = None, pred_cfg: dict | None = None, trim_cfg: dict | None = None):
     """Returns (arm_physical[3] | None, grip_active, hold_active, target_id) and rewrites intent quat_* ."""
     st = _state
     lim = _ha._joint_limits_dict(limits_src)
@@ -552,6 +678,9 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         st.head_hist = []
         st.w_f = np.zeros(3)
         st.w_t = 0.0
+        st.base_est = None
+        st.trim_hist = []
+        st.trim_t = 0.0
         logger.info("[GIMBAL] engage: HEADZERO, arm virt %s", [round(float(v), 1) for v in virt[:3]])
     if st.phase == "zeroing":
         send_quat(st.q_hold)
@@ -611,10 +740,21 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         return out
 
     # ---- track
+    now_p = time.monotonic()
     r_target_raw = r_head @ st.r_head_ref.T @ st.r_cam_ref
-    r_head_p = _predict_head(st, r_head, time.monotonic(), pred_cfg)
-    r_target = r_head_p @ st.r_head_ref.T @ st.r_cam_ref
-    q4, q5, q6 = wrist_ik(qm[:3], r_target)
+    r_head_p = _predict_head(st, r_head, now_p, pred_cfg)
+    virt_fw = settings_manager.physical_to_virtual(list(tel_raw), offsets, dirs) if tel_raw else list(virt)
+    r_target = r_head_p @ st.r_head_ref.T @ st.r_cam_ref @ _imu_trim(st, virt_fw, now_p, trim_cfg)
+    # wrist IK on the modelled REAL base position: the base (whole arm) lags its target more than the wrist
+    tau_b = float((pred_cfg or {}).get("base_tau_s", BASE_TAU_S))
+    if st.base_est is None or tau_b <= 0:
+        st.base_est = float(qm[0])
+    else:
+        dtb = min(0.1, max(0.0, now_p - st.last_t)) if st.last_t else 0.0
+        st.base_est += (float(qm[0]) - st.base_est) * (1.0 - math.exp(-dtb / tau_b))
+    qm_w = np.array(qm, dtype=float)
+    qm_w[0] = st.base_est
+    q4, q5, q6 = wrist_ik(qm_w[:3], r_target)
     w_deg = np.degrees([q4, q5, q6]) + 90.0          # wrist virtual
     # routing_config limits are PHYSICAL servo degrees (the firmware clamps there): convert them to virtual with
     # offsets / dirs. Using them as virtual was wrong for the reversed joints (pitch dir -1: physical 35..120 is
@@ -624,7 +764,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     w_cmd = [float(np.clip(w_deg[i], w_lo[i], w_hi[i])) for i in range(3)]
     if abs(w_cmd[0] - w_deg[0]) > 0.05:
         # wrist yaw at its limit (and the base too, or still catching up): re-solve pitch / roll for that yaw
-        p5, p6 = wrist_pitch_roll_for_yaw(qm[:3], r_target, math.radians(w_cmd[0] - 90.0))
+        p5, p6 = wrist_pitch_roll_for_yaw(qm_w[:3], r_target, math.radians(w_cmd[0] - 90.0))
         w_cmd[1] = float(np.clip(math.degrees(p5) + 90.0, w_lo[1], w_hi[1]))
         w_cmd[2] = float(np.clip(math.degrees(p6) + 90.0, w_lo[2], w_hi[2]))
 
