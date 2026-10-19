@@ -233,12 +233,14 @@ def read_servo():
 
 
 def read_zoom_state():
-    """(zoom, cam1 offset [ox, oy] zoom-1 px) from cam_stream.py's state files, (1, [0, 0]) when unknown."""
-    z, off = 1.0, [0.0, 0.0]
+    """(zoom, cam1 offset [ox, oy] zoom-1 px, mode scale) from cam_stream.py's state files; the scale is the
+    current mode's stream px per tele px (1 in the 90 fps mode, 0.665 in wide): the calibration is in tele px."""
+    z, off, scale = 1.0, [0.0, 0.0], 1.0
     try:
         st = json.loads(Path(sc.CAM_ZOOM_PATH).read_text())
         if time.time() - float(st.get("ts", 0)) < 3.0:
             z = float(st.get("zoom", 1.0))
+            scale = sc.f_px_of(float(st.get("hfov", sc.HFOV_DEG) or sc.HFOV_DEG)) / sc.F_PX
     except Exception:
         pass
     try:
@@ -247,7 +249,7 @@ def read_zoom_state():
             off = [float(v) for v in st.get("offset", [0.0, 0.0])[:2]]
     except Exception:
         pass
-    return max(1.0, z), off
+    return max(1.0, z), off, scale
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -306,8 +308,10 @@ class Service:
             out["why"] = "nessun video"
             return out
         left, bgr, right, tf = fr
-        zoom, off = read_zoom_state()
+        zoom, off, s_px = read_zoom_state()
+        f_px = sc.F_PX * s_px                  # focal length in the current mode's stream px
         out["zoom"] = round(zoom, 3)
+        out["mode_scale"] = round(s_px, 4)
         out["servo"] = read_servo()        # arm pose at the analysis: the viewer hides the overlay when it moves
         t1 = time.monotonic()
         objs = self.det(bgr)
@@ -337,7 +341,7 @@ class Service:
             dxs = sorted(m[0] for m in meas)
             dys = sorted(m[1] for m in meas)
             dx_s, dy_s = dxs[len(dxs) // 2], dys[len(dys) // 2]
-            d_true = dx_s / zoom + off[0]                      # zoom-1 px
+            d_true = (dx_s / zoom + off[0]) / s_px             # zoom-1 TELE px (the calibration's unit)
             d = self.calib["dx_inf"] - d_true
             if d > 0.5:
                 dist = sc.F_PX * sc.BASELINE_MM / d
@@ -347,8 +351,8 @@ class Service:
         if dist is not None:
             target["dist_mm"] = round(dist, 0)
             # optical axis of cam0 through the stream centre; zoom-1 px = (stream - centre) / zoom
-            x = (u - CX) / zoom * dist / sc.F_PX
-            y = (v - CY) / zoom * dist / sc.F_PX
+            x = (u - CX) / zoom * dist / f_px
+            y = (v - CY) / zoom * dist / f_px
             target["cam_xyz_mm"] = [round(x, 1), round(y, 1), round(dist, 1)]
         out["target"] = target
         out["ok"] = dist is not None or tgt is not None

@@ -891,6 +891,13 @@ async def handle_client(websocket, path=None):  # path è opzionale nelle nuove 
                     logger.warning("[CAMPAIGN] %s", e)
                 continue
 
+            # Camera sensor mode (Grandangolo) of the native Quest app: tele (90 fps crop) / wide (66 deg, 56 fps)
+            if isinstance(data, dict) and data.get("type") == "cam_mode":
+                try:
+                    _imu.set_cam_mode(data.get("mode"))
+                except Exception:
+                    pass
+                continue
             # Camera focus slider of the native Quest app (tools/cam_stream.py: cam0, cam1 follows)
             if isinstance(data, dict) and data.get("type") == "cam_focus":
                 try:

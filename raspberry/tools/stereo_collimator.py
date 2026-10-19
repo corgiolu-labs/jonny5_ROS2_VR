@@ -57,8 +57,16 @@ from websockets.sync.client import connect  # noqa: E402
 CALIB_PATH = RASPBERRY / "config_runtime" / "video" / "stereo_calib.json"
 
 W, H = 800, 450
-HFOV_DEG = 46.8                      # 66 deg lens on the 3072x1728 sensor crop of the 90/120 fps mode
+HFOV_DEG = 46.8                      # 66 deg lens on the 3072x1728 sensor crop of the 90/120 fps mode ("tele")
 F_PX = (W / 2) / math.tan(math.radians(HFOV_DEG / 2))
+# Wide mode (tools/cam_stream.py {"mode": "wide"}: the whole sensor, 66 deg): the stream pixels are coarser by
+# s = f_wide / f_tele (0.665). All the geometry below (calibration, history, dy learning, distance) stays in
+# TELE pixels: the measured disparities are divided by s, the outputs (messages, crop offset) multiplied back.
+# s comes from cam0's state file (hfov) every keyframe, so the mode can change at any time.
+
+
+def f_px_of(hfov_deg: float) -> float:
+    return (W / 2) / math.tan(math.radians(hfov_deg / 2))
 BASELINE_MM = 63.0
 
 # matching, at half resolution (400x225)
@@ -324,6 +332,8 @@ class CamZoom:
         self.off = (0.0, 0.0)
         self.off_target = (0.0, 0.0)
         self.changed_at = 0.0
+        self.scale = 1.0        # current-mode stream px per tele px (f_mode / f_tele)
+        self.hfov = HFOV_DEG
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def read(self):
@@ -332,6 +342,12 @@ class CamZoom:
         if st:
             z = float(st.get("zoom", 1.0))
             target = float(st.get("target", z))
+            hf = float(st.get("hfov", HFOV_DEG) or HFOV_DEG)
+            if abs(hf - self.hfov) > 0.01:
+                self.hfov = hf
+                self.scale = f_px_of(hf) / F_PX
+                self.changed_at = time.monotonic()      # a mode switch: let the crops settle like a zoom
+                log(f"camera mode: hfov {hf:.1f} deg, scale {self.scale:.3f} tele px")
         off, off_t = (0.0, 0.0), (0.0, 0.0)
         st1 = _read_state(CAM1_STATE_PATH)
         if st1 and "offset" in st1:
@@ -443,18 +459,21 @@ def main():
             continue
         last_seq = (sl, srq)
         z, (ox, oy), z_stable = camzoom.read()
+        s_px = camzoom.scale                 # current-mode px per tele px (1 in tele mode)
+        ox, oy = ox / s_px, oy / s_px        # cam1 crop offset in TELE px from here on
         if not z_stable:
             # zoom / crop moving: these keyframes mix crops, do not match; send the last lock rescaled to this zoom
-            msg = {"type": "stereo_collimation", "score": 0.0, "dx_inf": round(calib["dx_inf"] * z, 2), "win": 0,
-                   "ts": round(time.time(), 3), "zoom": round(z, 3), "offset": [round(ox, 1), round(oy, 1)]}
+            msg = {"type": "stereo_collimation", "score": 0.0, "dx_inf": round(calib["dx_inf"] * z * s_px, 2), "win": 0,
+                   "ts": round(time.time(), 3), "zoom": round(z, 3), "offset": [round(ox * s_px, 1), round(oy * s_px, 1)],
+                   "mode_scale": round(s_px, 4)}
             if last_out is not None and time.monotonic() - last_lock[1] < CONT_MAX_AGE_S:
-                msg.update({"lock": True, "dx": round((last_out[0] - ox) * z, 2),
-                            "dy": round((last_out[1] - oy) * z, 2),
+                msg.update({"lock": True, "dx": round((last_out[0] - ox) * z * s_px, 2),
+                            "dy": round((last_out[1] - oy) * z * s_px, 2),
                             "dist_mm": round(last_out[2], 1) if last_out[2] else None, "why": "zoom"})
                 last_lock = (last_lock[0], time.monotonic())
             else:
-                msg.update({"lock": False, "dx": round((calib["dx_inf"] - ox) * z, 2),
-                            "dy": round((calib["dy_off"] - oy) * z, 2), "dist_mm": None, "why": "zoom"})
+                msg.update({"lock": False, "dx": round((calib["dx_inf"] - ox) * z * s_px, 2),
+                            "dy": round((calib["dy_off"] - oy) * z * s_px, 2), "dist_mm": None, "why": "zoom"})
             if ws is not None:
                 try:
                     ws.send(json.dumps(msg))
@@ -465,10 +484,10 @@ def main():
                         pass
                     ws = None
             continue
-        prev = (last_lock[0] - ox) * z if time.monotonic() - last_lock[1] < CONT_MAX_AGE_S else None
+        prev = (last_lock[0] - ox) * z * s_px if time.monotonic() - last_lock[1] < CONT_MAX_AGE_S else None
         dx, dy, score, ok, why, win = match(fl, fr, prev, z)
         if ok:
-            dx, dy = dx / z + ox, dy / z + oy   # TRUE disparity in zoom-1 pixels from here on
+            dx, dy = dx / z / s_px + ox, dy / z / s_px + oy   # TRUE disparity in zoom-1 TELE pixels from here on
             # plausibility: never beyond infinity, never off the cameras' vertical line
             gate = None
             if dx > calib["dx_inf"] + GATE_DX_INF_PX:
@@ -495,8 +514,9 @@ def main():
                     gate_log_t = time.monotonic()
                     log(f"rejected lock at zoom {z:.2f}: {gate}, score {score:.2f}")
 
-        msg = {"type": "stereo_collimation", "score": round(score, 3), "dx_inf": round(calib["dx_inf"] * z, 2),
-               "win": win, "ts": round(time.time(), 3), "zoom": round(z, 3), "offset": [round(ox, 1), round(oy, 1)]}
+        msg = {"type": "stereo_collimation", "score": round(score, 3), "dx_inf": round(calib["dx_inf"] * z * s_px, 2),
+               "win": win, "ts": round(time.time(), 3), "zoom": round(z, 3), "offset": [round(ox * s_px, 1), round(oy * s_px, 1)],
+               "mode_scale": round(s_px, 4)}
         if ok:
             last_lock = (dx, time.monotonic())
             dy_hist = (dy_hist + [dy])[-DY_LEARN_N:]
@@ -515,7 +535,7 @@ def main():
             dist = F_PX * BASELINE_MM / d if d > 0.5 else None
             last_out = (mdx, mdy, dist)
             # residual in the (shifted) cam1 stream: what the viewer still has to converge
-            msg.update({"lock": True, "dx": round((mdx - ox) * z, 2), "dy": round((mdy - oy) * z, 2),
+            msg.update({"lock": True, "dx": round((mdx - ox) * z * s_px, 2), "dy": round((mdy - oy) * z * s_px, 2),
                         "dist_mm": round(dist, 1) if dist else None})
             if why:
                 msg["why"] = why
@@ -536,8 +556,8 @@ def main():
                         return
         else:
             hist = []
-            msg.update({"lock": False, "dx": round((calib["dx_inf"] - ox) * z, 2),
-                        "dy": round((calib["dy_off"] - oy) * z, 2), "dist_mm": None, "why": why})
+            msg.update({"lock": False, "dx": round((calib["dx_inf"] - ox) * z * s_px, 2),
+                        "dy": round((calib["dy_off"] - oy) * z * s_px, 2), "dist_mm": None, "why": why})
 
         # focus follows the stereo distance (both cameras, same window) when it has settled on a new value;
         # not while the operator holds the focus slider (cam0 meta af_manual)
@@ -593,8 +613,9 @@ def main():
                 f"score {score:.2f} win {win} {why or ''} dist {msg.get('dist_mm')}")
         if want is not None:
             tx, ty = camzoom.off_target
-            if max(abs(want[0] - tx), abs(want[1] - ty)) * z > CONV_SEND_STREAM_PX:
-                camzoom.send_offset(want[0], want[1])
+            tx, ty = tx / s_px, ty / s_px
+            if max(abs(want[0] - tx), abs(want[1] - ty)) * z * s_px > CONV_SEND_STREAM_PX:
+                camzoom.send_offset(want[0] * s_px, want[1] * s_px)
 
         try:
             with open(STEREO_STATE_PATH + ".tmp", "w") as f:

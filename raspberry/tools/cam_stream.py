@@ -68,6 +68,12 @@ ANALOGUE_GAIN_MAX = 16.0     # IMX708
 SYNC_TIMEOUT_S = 10.0
 GAIN_REQUEST_MAX = 64.0      # beyond the analogue maximum the ISP applies digital gain
 STATE_DIR = "/dev/shm"
+# Sensor modes (UDP {"mode": name}, both cameras): "tele" = the 2x2-binned centre crop at 90 fps (what the
+# capture is launched with: --sensor/--fps), "wide" = the whole sensor binned (66 deg of the lens) at 56 fps.
+# Switching reconfigures the camera (~2 s, the RTSP publish restarts, the viewer reconnects). The state file
+# carries mode / hfov / fps for the collimator, the vision service, ws-teleop and the viewer.
+MODES = {"tele": {"sensor": None, "fps": None, "hfov": 46.8},
+         "wide": {"sensor": (2304, 1296), "fps": 56.0, "hfov": 66.0}}
 # Stereo matching (2026-10-19): cam0 is the MASTER (auto exposure / white balance, one-shot AF on request), cam1
 # FOLLOWS it (--follow 0): it copies the master's shutter, gains and colour gains from the master's state file (so
 # both eyes always have the same brightness and colour, also outdoors when the light changes) and after each AF
@@ -242,6 +248,7 @@ def main():
     ap.add_argument("--follow", type=int, default=-1,
                     help="follow this camera's exposure / white balance / focus (stereo slave), see MATCH_CALIB_PATH")
     ap.add_argument("--match-calib", default=MATCH_CALIB_PATH)
+    ap.add_argument("--mode", choices=tuple(MODES), default="tele", help="initial sensor mode")
     ap.add_argument("--sync", choices=("server", "client", "off"), default="off")
     ap.add_argument("--zoom", type=float, default=1.0, help="initial zoom")
     ap.add_argument("--hires", type=int, default=1, help="1: main = sensor size for snapshots, video from lores")
@@ -249,8 +256,12 @@ def main():
     args = ap.parse_args()
 
     cam = args.camera
-    sw, sh = (int(v) for v in args.sensor.lower().split("x"))
+    sw0, sh0 = (int(v) for v in args.sensor.lower().split("x"))
+    MODES["tele"]["sensor"] = (sw0, sh0)
+    MODES["tele"]["fps"] = float(args.fps)
     picam2 = Picamera2(cam)
+    geo = {"mode": args.mode, "sw": sw0, "sh": sh0, "fps": float(args.fps), "hfov": MODES[args.mode]["hfov"],
+           "full": None, "smin": None, "k": 1.0, "period_ns": 1e9 / float(args.fps), "hires": False}
     ctrl = {"FrameRate": args.fps, "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off}
     if args.shutter > 0:
         ctrl.update({"AeEnable": False, "ExposureTime": args.shutter, "AnalogueGain": max(1.0, args.gain)})
@@ -270,30 +281,39 @@ def main():
     if args.sync != "off":
         ctrl["SyncMode"] = (controls.rpi.SyncModeEnum.Server if args.sync == "server"
                             else controls.rpi.SyncModeEnum.Client)
-    hires = bool(args.hires) and (sw, sh) != (args.width, args.height)
-    if hires:
-        streams = {"main": {"size": (sw, sh), "format": "YUV420"},
-                   "lores": {"size": (args.width, args.height), "format": "YUV420"}}
-    else:
-        streams = {"main": {"size": (args.width, args.height), "format": "YUV420"}}
-    cfg = picam2.create_video_configuration(
-        **streams,
-        sensor={"output_size": (sw, sh), "bit_depth": 10},
-        controls=ctrl, buffer_count=6)
-    picam2.configure(cfg)
+    def configure(mode_name: str):
+        """Configure the camera for a sensor mode and refresh the geometry (crop limits, px scale, fps)."""
+        m = MODES[mode_name]
+        sw, sh = m["sensor"]
+        fps = float(m["fps"])
+        ctrl["FrameRate"] = fps
+        hires = bool(args.hires) and (sw, sh) != (args.width, args.height)
+        if hires:
+            streams = {"main": {"size": (sw, sh), "format": "YUV420"},
+                       "lores": {"size": (args.width, args.height), "format": "YUV420"}}
+        else:
+            streams = {"main": {"size": (args.width, args.height), "format": "YUV420"}}
+        cfg = picam2.create_video_configuration(
+            **streams,
+            sensor={"output_size": (sw, sh), "bit_depth": 10},
+            controls=ctrl, buffer_count=6)
+        picam2.configure(cfg)
+        # crop limits of this sensor mode (sensor pixel array coordinates)
+        smin, smax, _sdef = picam2.camera_controls["ScalerCrop"]
+        geo.update({"mode": mode_name, "sw": sw, "sh": sh, "fps": fps, "hfov": m["hfov"], "full": smax,
+                    "smin": smin, "k": smax[2] / float(args.width), "period_ns": 1e9 / fps, "hires": hires})
+        log(f"cam{cam}: mode {mode_name}: sensor {picam2.camera_configuration()['sensor']}, crop max {smax}, "
+            f"min {smin}, {fps:.0f} fps, hfov {m['hfov']} deg")
+        mc = picam2.camera_configuration()["main"]
+        log(f"cam{cam}: main stream {mc.get('size')} {mc.get('format')} stride {mc.get('stride')} framesize {mc.get('framesize')}")
 
-    # crop limits of this sensor mode (sensor pixel array coordinates)
-    smin, smax, _sdef = picam2.camera_controls["ScalerCrop"]
-    full = smax  # (x, y, w, h)
-    log(f"cam{cam}: sensor mode {picam2.camera_configuration()['sensor']}, crop max {full}, min {smin}")
-    mc = picam2.camera_configuration()["main"]
-    log(f"cam{cam}: main stream {mc.get('size')} {mc.get('format')} stride {mc.get('stride')} framesize {mc.get('framesize')}")
-
-    k = full[2] / float(args.width)   # sensor pixels per zoom-1 stream pixel
+    configure(args.mode)
+    hires = geo["hires"]
 
     def crop_for(z: float, off=(0.0, 0.0)):
         """ScalerCrop for zoom z with the centre moved by off (zoom-1 px); also returns the offset actually
         applied after clamping to the sensor area."""
+        full, k = geo["full"], geo["k"]
         z = max(1.0, min(ZOOM_MAX, z))
         w = int(round(full[2] / z)) & ~1
         h = int(round(w * args.height / args.width)) & ~1
@@ -316,9 +336,12 @@ def main():
     # time. With a frame counter per encoder (iperiod) the two cameras' IDRs fell on different frames (the
     # encoders start at different times) and matching pairs were rare. The synchronised sensors share the
     # frame timestamps, so the GOP index is taken from SensorTimestamp and an IDR is forced when it changes.
-    enc = LowLatencyH264(bitrate=args.bitrate, repeat=True, iperiod=None, framerate=int(round(args.fps)),
-                         profile="baseline")
-    period_ns = 1e9 / args.fps
+    def make_encoder():
+        return LowLatencyH264(bitrate=args.bitrate, repeat=True, iperiod=None, framerate=int(round(geo["fps"])),
+                              profile="baseline")
+
+    E = {"enc": make_encoder(), "out": None}
+    enc = E["enc"]
     gop = {"last": None}
 
     def align_keyframes(request):
@@ -332,10 +355,10 @@ def main():
             expo["log_after"] = None
             log(f"cam{cam}: ev {expo['ev']:+.2f} -> shutter {md.get('ExposureTime')} us, analogue gain "
                 f"{md.get('AnalogueGain', 0):.2f}, digital gain {md.get('DigitalGain', 0):.2f}")
-        g = int(round(ts / period_ns)) // max(1, args.intra)
+        g = int(round(ts / geo["period_ns"])) // max(1, args.intra)
         if g != gop["last"]:
             gop["last"] = g
-            enc.force_key_frame()
+            E["enc"].force_key_frame()
 
     refine = {"active": False, "collect": False, "acc": []}   # filled in below (contrast refinement)
 
@@ -376,7 +399,7 @@ def main():
         snap["req"] = None
         sid, box, addr = rq
         try:
-            mw, mh = (sw, sh) if hires else (args.width, args.height)
+            mw, mh = (geo["sw"], geo["sh"]) if geo["hires"] else (args.width, args.height)
             k = mw / float(args.width)
             x0 = max(0, int((box[0]) * k)) & ~1
             y0 = max(0, int((box[1]) * k)) & ~1
@@ -450,7 +473,7 @@ def main():
         if not refine["collect"]:
             return
         try:
-            with MappedArray(request, "lores" if hires else "main") as m:
+            with MappedArray(request, "lores" if geo["hires"] else "main") as m:
                 y = m.array[:args.height, :args.width]
                 hh, ww = args.height, args.width
                 f0, f1 = (1.0 - REFINE_REGION_FRAC) / 2.0, (1.0 + REFINE_REGION_FRAC) / 2.0
@@ -470,10 +493,6 @@ def main():
         measure_sharpness(request)
 
     picam2.pre_callback = pre_callback
-    if args.sync != "off":
-        enc.sync_enable = True       # encode only once the cameras report SyncReady
-    # RTP over UDP like rpicam-vid: MediaMTX is configured with rtspTransports [udp] (TCP -> 461 -> EPROTONOSUPPORT)
-    out = PyavOutput(args.output, format="rtsp")
     fatal = {"err": None}
 
     def on_output_error(e):
@@ -481,11 +500,49 @@ def main():
         fatal["err"] = e
         log(f"cam{cam}: output error {e!r}")
 
-    out.error_callback = on_output_error
-    picam2.start_encoder(enc, out, name="lores" if hires else "main")
-    picam2.start()
-    log(f"cam{cam}: streaming {args.width}x{args.height} @ {args.fps} fps, {args.bitrate} bit/s, IDR {args.intra},"
-        f" sync {args.sync} -> {args.output}")
+    def start_streaming():
+        enc_ = E["enc"]
+        if args.sync != "off":
+            enc_.sync_enable = True       # encode only once the cameras report SyncReady
+        # RTP over UDP like rpicam-vid: MediaMTX is configured with rtspTransports [udp] (TCP -> 461 -> EPROTONOSUPPORT)
+        out = PyavOutput(args.output, format="rtsp")
+        out.error_callback = on_output_error
+        E["out"] = out
+        picam2.start_encoder(enc_, out, name="lores" if geo["hires"] else "main")
+        picam2.start()
+        log(f"cam{cam}: streaming {args.width}x{args.height} @ {geo['fps']:.0f} fps, {args.bitrate} bit/s, IDR {args.intra},"
+            f" sync {args.sync} -> {args.output} (mode {geo['mode']})")
+
+    start_streaming()
+
+    def switch_mode(name: str) -> bool:
+        if name not in MODES or name == geo["mode"]:
+            return False
+        t0 = time.monotonic()
+        log(f"cam{cam}: switching to mode {name}")
+        refine["active"] = False
+        refine["collect"] = False
+        af["pdaf_pending"] = False
+        try:
+            picam2.stop_encoder()
+        except Exception as e:
+            log(f"cam{cam}: stop_encoder {e!r}")
+        try:
+            picam2.stop()
+        except Exception as e:
+            log(f"cam{cam}: stop {e!r}")
+        configure(name)
+        E["enc"] = make_encoder()
+        gop["last"] = None
+        crop_now, state["off_applied"] = crop_for(state["zoom"], state["off"])
+        picam2.set_controls({"ScalerCrop": crop_now})
+        state["crop_applied"] = crop_now
+        start_streaming()
+        follow_reset["v"] = True        # the follower re-asserts manual exposure / colour on the new config
+        if follow < 0 and args.shutter <= 0:
+            picam2.set_controls({"AeEnable": True, "AwbEnable": not bool(args.awbgains), "ExposureValue": float(expo["ev"])})
+        log(f"cam{cam}: mode {name} ready in {round((time.monotonic() - t0) * 1000)} ms")
+        return True
 
     # ---- zoom control (UDP) + smoothing loop
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -519,6 +576,7 @@ def main():
                            "sensor_ts": state.get("sensor_ts"),
                            "ev": round(expo["ev"], 3),
                            "meta": meta_now(),
+                           "mode": geo["mode"], "hfov": geo["hfov"], "fps": geo["fps"],
                            "follow": follow,
                            "match": match_calib if follow >= 0 else None,
                            "ts": round(time.time(), 3)}, f)
@@ -590,6 +648,7 @@ def main():
             ww = max(32, int(float(window[2]) * kx))
             wh = max(32, int(float(window[3]) * ky))
         else:
+            full = geo["full"]
             ww = int(max(cw * AF_WINDOW_FRAC, full[2] * AF_WINDOW_MIN_FRAC))
             wh = int(max(ch * AF_WINDOW_FRAC, full[3] * AF_WINDOW_MIN_FRAC))
             wx, wy = int(cx0 + cw / 2 - ww / 2), int(cy0 + ch / 2 - wh / 2)
@@ -742,6 +801,7 @@ def main():
     except (OSError, ValueError):
         pass
     calib_dirty = {"t": 0.0, "dirty": False}
+    follow_reset = {"v": False}
 
     def save_match_calib():
         try:
@@ -802,6 +862,10 @@ def main():
                 continue
             if not m.get("shutter") or not m.get("gain"):
                 continue
+            if follow_reset["v"]:
+                follow_reset["v"] = False
+                manual_on = False
+                last_m = None
             # exposure + colour: the master's values, scaled by the learned sensor-to-sensor ratios
             gain = float(m["gain"]) * float(m.get("dgain", 1.0)) * float(match_calib["gain_ratio"])
             gain = max(1.0, min(GAIN_REQUEST_MAX, gain))
@@ -852,8 +916,7 @@ def main():
 
     write_state()
     last = time.monotonic()
-    t_start = last
-    sync_warned = False
+    syncw = {"t_start": last, "warned": False}   # frame-sync watchdog (reset on a mode switch)
     last_applied = state["zoom"]
     last_off = [0.0, 0.0]
     last_write = 0.0
@@ -926,8 +989,13 @@ def main():
                         match_calib["colour_ratio"] = [round(r, 4), round(b, 4)]
                         calib_dirty["dirty"] = True
                 if "stamp" in msg:
-                    enc.stamp_on = bool(msg["stamp"])
-                    log(f"cam{cam}: capture stamp {'ON' if enc.stamp_on else 'OFF'}")
+                    E["enc"].stamp_on = bool(msg["stamp"])
+                    log(f"cam{cam}: capture stamp {'ON' if E['enc'].stamp_on else 'OFF'}")
+                if "mode" in msg:
+                    if switch_mode(str(msg["mode"])):
+                        last_applied = -1.0          # re-apply the crop on the next tick
+                        syncw.update({"t_start": time.monotonic(), "warned": False})
+                        write_state()
                 if "offset" in msg:
                     ox, oy = (float(v) for v in msg["offset"][:2])
                     if math.isfinite(ox) and math.isfinite(oy):
@@ -937,9 +1005,9 @@ def main():
             except (ValueError, OSError):
                 pass
             now = time.monotonic()
-            if not sync_warned and enc.sync_enable and enc.frames == 0 and now - t_start > SYNC_TIMEOUT_S:
-                sync_warned = True
-                enc.sync_enable = False
+            if not syncw["warned"] and E["enc"].sync_enable and E["enc"].frames == 0 and now - syncw["t_start"] > SYNC_TIMEOUT_S:
+                syncw["warned"] = True
+                E["enc"].sync_enable = False
                 log(f"cam{cam}: no frame sync after {SYNC_TIMEOUT_S:.0f} s (no multicast route?): streaming UNSYNCHRONISED")
             dt = min(0.1, now - last)
             last = now

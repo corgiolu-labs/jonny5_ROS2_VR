@@ -139,6 +139,42 @@ def _send_cam_ev(ev: float) -> None:
         pass
 
 
+# Camera sensor mode (tools/cam_stream.py {"mode": "tele" | "wide"}): from the Quest app's Grandangolo button,
+# sent to both cameras and re-sent every second until cam0's state file reports it (a capture restart comes
+# back in tele). Published in the telemetry as cam_mode / cam_hfov / cam_fps.
+_cam_mode_req: dict = {"mode": None, "sent": 0.0}
+
+
+def _cam_state():
+    try:
+        with open(_CAM_ZOOM_STATE) as f:
+            st = json.load(f)
+        if time.time() - float(st.get("ts", 0)) < 3.0:
+            return st
+    except Exception:
+        pass
+    return None
+
+
+def _send_cam_mode(mode: str) -> None:
+    global _cam_zoom_sock
+    try:
+        if _cam_zoom_sock is None:
+            _cam_zoom_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        data = json.dumps({"mode": mode}).encode()
+        for cam in (0, 1):
+            _cam_zoom_sock.sendto(data, ("127.0.0.1", _CAM_ZOOM_PORT_BASE + cam))
+        _cam_mode_req["sent"] = time.monotonic()
+    except OSError:
+        pass
+
+
+def set_cam_mode(mode) -> None:
+    if mode in ("tele", "wide"):
+        _cam_mode_req["mode"] = mode
+        _send_cam_mode(mode)
+
+
 def set_cam_focus(value) -> None:
     """Focus slider of the Quest app (cam_focus): true dioptres (0 = infinity .. 6 = 17 cm) or "auto".
     Sent to cam0 only: cam1 follows the master (tools/cam_stream.py --follow)."""
@@ -613,6 +649,14 @@ async def imu_debug_loop(get_robot_state) -> None:
                         payload["cam_zoom"] = round(cz, 3)
                     if _cam_zoom_req["zoom"] is not None and time.monotonic() - _cam_zoom_req["sent"] > 1.0:
                         _send_cam_zoom(_cam_zoom_req["zoom"])
+                    cst = _cam_state()
+                    if cst:
+                        payload["cam_mode"] = cst.get("mode", "tele")
+                        payload["cam_hfov"] = cst.get("hfov", 46.8)
+                        payload["cam_fps"] = cst.get("fps")
+                        if (_cam_mode_req["mode"] and cst.get("mode") != _cam_mode_req["mode"]
+                                and time.monotonic() - _cam_mode_req["sent"] > 3.0):
+                            _send_cam_mode(_cam_mode_req["mode"])
                     if _cam_ev_req["ev"] is not None:
                         payload["cam_ev"] = _cam_ev_req["ev"]
                         if time.monotonic() - _cam_ev_req["sent"] > 1.0:
