@@ -117,6 +117,12 @@ GATE_DX_INF_PX = 4.0                 # a lock "beyond infinity" (dx > dx_inf + t
 GATE_DY_PX = 6.0                     # |dy - dy_off| above this (zoom-1 px) is not the same point (cameras are rigid)
 JUMP_PX = 10.0                       # a jump of the true disparity above this (zoom-1 px) needs a confirmation
 JUMP_CONFIRM_N = 2                   # consecutive consistent matches before a jump is accepted
+JUMP_SCORE_OK = 0.92                 # ... unless the match is this strong (a near object moving: 25 px between
+JUMP_CONFIRM_PX = 25.0               # keyframes at 40 cm flapped lock/unlock with a 5 px consistency band)
+# The vertical disparity depends slightly on the depth (cameras not perfectly coplanar): measured 2026-10-19
+# dy = dy_off + DY_SLOPE * (dx - DX_FAR_REF) with dy 2.55 px at 2.7 m (dx -8.5) and 0.6 px at 40 cm (dx -137).
+DY_SLOPE = 0.0147
+DX_FAR_REF = -8.5
 SCORE_MAX = 1.02                     # NCC above 1 = numerically degenerate window (flat): not a match
 
 
@@ -463,17 +469,19 @@ def main():
             gate = None
             if dx > calib["dx_inf"] + GATE_DX_INF_PX:
                 gate = f"beyond infinity (dx {dx:.1f} > dx_inf {calib['dx_inf']:.1f})"
-            elif abs(dy - calib["dy_off"]) > GATE_DY_PX:
-                gate = f"vertical {dy:+.1f} vs dy_off {calib['dy_off']:+.1f}"
+            else:
+                dy_exp = calib["dy_off"] + DY_SLOPE * (dx - DX_FAR_REF)
+                if abs(dy - dy_exp) > GATE_DY_PX:
+                    gate = f"vertical {dy:+.1f} vs expected {dy_exp:+.1f}"
             if gate is None and last_out is not None and time.monotonic() - last_lock[1] < CONT_MAX_AGE_S \
-                    and abs(dx - last_out[0]) > JUMP_PX:
-                # a big jump of the disparity: accept it only when it repeats (JUMP_CONFIRM_N consecutive)
-                if jump["dx"] is not None and abs(dx - jump["dx"]) <= JUMP_PX / 2:
+                    and abs(dx - last_out[0]) > JUMP_PX and score < JUMP_SCORE_OK:
+                # a big jump of the disparity with a so-so score: accept it only when it repeats
+                if jump["dx"] is not None and abs(dx - jump["dx"]) <= JUMP_CONFIRM_PX:
                     jump["n"] += 1
                 else:
                     jump = {"dx": dx, "n": 1}
                 if jump["n"] < JUMP_CONFIRM_N:
-                    gate = f"jump {last_out[0]:.1f} -> {dx:.1f} px ({jump['n']}/{JUMP_CONFIRM_N})"
+                    gate = f"jump {last_out[0]:.1f} -> {dx:.1f} px score {score:.2f} ({jump['n']}/{JUMP_CONFIRM_N})"
             else:
                 jump = {"dx": None, "n": 0}
             if gate is not None:
