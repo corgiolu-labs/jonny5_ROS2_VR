@@ -219,6 +219,16 @@ def match_at(left: np.ndarray, right: np.ndarray, px: float, py: float, zoom: fl
     return None
 
 
+def read_servo():
+    """The 6 servo angles (physical deg) from the telemetry file at this moment, None when unavailable."""
+    try:
+        t = json.loads(Path("/dev/shm/j5vr_telemetry.json").read_text())
+        return [round(float(t[k]), 1) for k in ("servo_deg_B", "servo_deg_S", "servo_deg_G",
+                                                "servo_deg_Y", "servo_deg_P", "servo_deg_R")]
+    except Exception:
+        return None
+
+
 def read_zoom_state():
     """(zoom, cam1 offset [ox, oy] zoom-1 px) from cam_stream.py's state files, (1, [0, 0]) when unknown."""
     z, off = 1.0, [0.0, 0.0]
@@ -295,6 +305,7 @@ class Service:
         left, bgr, right, tf = fr
         zoom, off = read_zoom_state()
         out["zoom"] = round(zoom, 3)
+        out["servo"] = read_servo()        # arm pose at the analysis: the viewer hides the overlay when it moves
         t1 = time.monotonic()
         objs = self.det(bgr)
         t2 = time.monotonic()
