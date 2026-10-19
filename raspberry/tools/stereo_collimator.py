@@ -349,7 +349,7 @@ class CamZoom:
     def send_af(self):
         for addr in (CAM0_CTL, CAM1_CTL):
             try:
-                self.sock.sendto(b'{"af": 1}', addr)
+                self.sock.sendto(b'{"af": {"src": "stereo"}}', addr)
             except OSError:
                 pass
 

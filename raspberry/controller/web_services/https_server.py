@@ -959,7 +959,7 @@ class J5HTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         try:
             sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
             for cam in (0, 1):
-                sock.sendto(b'{"af": 1}', ("127.0.0.1", 5600 + cam))
+                sock.sendto(b'{"af": {"src": "button"}}', ("127.0.0.1", 5600 + cam))
             sock.close()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

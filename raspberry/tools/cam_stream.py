@@ -351,7 +351,7 @@ def main():
             picam2.set_controls({"ExposureTime": max(50, int(round(shutter))), "AnalogueGain": float(gain)})
             log(f"cam{cam}: ev {ev:+.2f} -> request shutter {int(shutter)} us, gain {gain:.2f}")
         else:
-            picam2.set_controls({"ExposureValue": float(ev)})
+            picam2.set_controls({"AeEnable": True, "ExposureValue": float(ev)})
             log(f"cam{cam}: ev {ev:+.2f} (auto exposure, ExposureValue)")
         expo["log_after"] = time.monotonic() + 0.5
 
@@ -411,8 +411,12 @@ def main():
             snap_sock.sendto(json.dumps({"still_done": sid, "error": str(e)}).encode(), addr)
             return
         t1 = time.monotonic()
-        # back in the video mode: zoom crop, brightness and focus mode as before the still
+        # back in the video mode: zoom crop, brightness and focus mode as before the still. The still's
+        # AeEnable / AwbEnable False stuck to the video stream (picamera2 keeps the last controls): the
+        # exposure froze at the still's values, the brightness slider did nothing after a "Leggi HD".
         picam2.set_controls({"ScalerCrop": crop_now})
+        if args.shutter <= 0 and follow < 0:
+            picam2.set_controls({"AeEnable": True, "AwbEnable": not bool(args.awbgains)})
         if args.lens_position is None and args.autofocus_mode in ("continuous", "default"):
             picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous})
         if abs(expo["ev"]) > 1e-3:
@@ -541,7 +545,7 @@ def main():
             af["t"] = time.monotonic()
             af["pdaf_pending"] = False
             start = seed + float(match_calib.get("master_offset", 0.0))
-            log(f"cam{cam}: AF #{af['seq']} from the stereo seed {seed:.2f} + offset "
+            log(f"cam{cam}: AF #{af['seq']} ({opts.get('src', '?')}) from the stereo seed {seed:.2f} + offset "
                 f"{float(match_calib.get('master_offset', 0.0)):+.2f} = {start:.2f} (zoom {state['zoom']:.1f}, no PDAF)")
             start_refine(start, master_af_done)
             return
@@ -582,7 +586,7 @@ def main():
             af["seq"] += 1
             af["t"] = time.monotonic()
             af["pdaf_pending"] = follow < 0      # the master refines by contrast once the PDAF settles
-            log(f"cam{cam}: AF #{af['seq']} " + ("metering auto" if "AfWindows" not in ctl_af
+            log(f"cam{cam}: AF #{af['seq']} ({opts.get('src', '?')}) " + ("metering auto" if "AfWindows" not in ctl_af
                                                  else f"window {(wx, wy, ww, wh)}")
                 + (f" range {rng}" if rng else "") + f" (ScalerCropMaximum {scm})")
         except Exception as e:
