@@ -28,6 +28,9 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # AF on request, cam1 follows cam0 (tools/cam_stream.py --follow 0: same shutter / gains / colour, focus
 # cross-checked against cam0). MATCH=cam0: the old 4 s probe, then both cameras frozen (each on its own focus).
 MATCH="${MATCH:-master}"
+# Sensor mode at boot: wide (66 deg, 56 fps, the operator's choice 2026-10-19) or tele (46.8 deg crop, 90 fps);
+# switchable live from the app (Grandangolo button).
+MODE="${MODE:-wide}"
 PROBE_S="${PROBE_S:-4}"
 command -v rpicam-vid >/dev/null || { echo "ERR: rpicam-vid not found" >&2; exit 1; }
 
@@ -112,7 +115,7 @@ start_cam() {
   local cam="$1"
   if [ "$CAPTURE" = "picamera2" ]; then
     # same options as rpicam-vid below (LENS_ARGS is not passed there either: continuous AF on both cameras)
-    python3 "$HERE/raspberry/tools/cam_stream.py" --camera "$cam"         --width "$W" --height "$H" --fps "$FPS" --bitrate "$BITRATE" --intra "$INTRA"         $MANUAL_ARGS ${SYNC_ARGS[$cam]:-} ${FOLLOW_ARGS[$cam]:-}         -o "$MTX/cam$cam" >"/tmp/video_capture_cam$cam.log" 2>&1 &
+    python3 "$HERE/raspberry/tools/cam_stream.py" --camera "$cam"         --width "$W" --height "$H" --fps "$FPS" --bitrate "$BITRATE" --intra "$INTRA" --mode "$MODE"         $MANUAL_ARGS ${SYNC_ARGS[$cam]:-} ${FOLLOW_ARGS[$cam]:-}         -o "$MTX/cam$cam" >"/tmp/video_capture_cam$cam.log" 2>&1 &
     PIDS+=($!)
     echo "cam$cam -> $MTX/cam$cam  (picamera2, ${W}x${H} @ ${FPS} fps, $BITRATE bit/s, IDR every $INTRA, live zoom)"
     return
