@@ -75,6 +75,11 @@ if [ -f "$NET_DIR/jonny5-mediamtx-network-online.conf" ]; then
   echo "    jonny5-mediamtx: network-online drop-in installed."
 fi
 # Production capture: rpicam-vid (sync + matched exposure) publishing into MediaMTX (profile "relay").
+if [ -f "$REPO_ROOT/raspberry/systemd/jonny5-sync-route.service" ]; then
+  sudo install -m 644 "$REPO_ROOT/raspberry/systemd/jonny5-sync-route.service" /etc/systemd/system/jonny5-sync-route.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now jonny5-sync-route.service >/dev/null 2>&1
+fi
 if [ -f "$REPO_ROOT/raspberry/systemd/jonny5-video-capture.service" ]; then
   sudo install -m 644 "$REPO_ROOT/raspberry/systemd/jonny5-video-capture.service" /etc/systemd/system/jonny5-video-capture.service
   sudo systemctl daemon-reload

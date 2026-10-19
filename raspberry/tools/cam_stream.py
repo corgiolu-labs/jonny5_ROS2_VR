@@ -60,6 +60,12 @@ ZOOM_MAX = 6.0
 ZOOM_TAU_S = 0.15
 EV_MIN, EV_MAX = -2.0, 2.0
 ANALOGUE_GAIN_MAX = 16.0     # IMX708
+# libcamera frame sync (cam0 server -> cam1 client) travels as UDP multicast (239.255.255.250:10000). Stand-alone
+# (no PC on eth0) the Pi has no default route, the server cannot send and the client cannot even join the group,
+# so cam1 never encoded a frame (2026-10-19). jonny5-sync-route.service now routes that group on lo; this is the
+# safety net: after SYNC_TIMEOUT_S without a frame the encoder stops waiting for SyncReady (unsynchronised stereo
+# is far better than one eye).
+SYNC_TIMEOUT_S = 10.0
 GAIN_REQUEST_MAX = 64.0      # beyond the analogue maximum the ISP applies digital gain
 STATE_DIR = "/dev/shm"
 
@@ -79,6 +85,7 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
         self.lat_ms = []
         self.lat_stats = None
         self.stamp_on = False   # glass-to-glass measurement: capture time written into the frame
+        self.frames = 0         # frames handed to the encoder (sync watchdog)
 
     def _start(self):
         super()._start()
@@ -139,6 +146,7 @@ class LowLatencyH264(LibavH264Encoder):  # noqa: D101
         # the string "I", which PyAV 14 rejects (TypeError) and kills the capture.
         if request.stream_map.get(stream) is None:
             return   # full-resolution still in progress (no lores stream in that mode): skip, the video resumes after
+        self.frames += 1
         request.acquire()
         self._request_release_queue.append(request)
         timestamp_us = self._timestamp(request)
@@ -424,6 +432,8 @@ def main():
 
     write_state()
     last = time.monotonic()
+    t_start = last
+    sync_warned = False
     last_applied = state["zoom"]
     last_off = [0.0, 0.0]
     last_write = 0.0
@@ -460,6 +470,10 @@ def main():
             except (ValueError, OSError):
                 pass
             now = time.monotonic()
+            if not sync_warned and enc.sync_enable and enc.frames == 0 and now - t_start > SYNC_TIMEOUT_S:
+                sync_warned = True
+                enc.sync_enable = False
+                log(f"cam{cam}: no frame sync after {SYNC_TIMEOUT_S:.0f} s (no multicast route?): streaming UNSYNCHRONISED")
             dt = min(0.1, now - last)
             last = now
             a = 1.0 - math.exp(-dt / ZOOM_TAU_S)

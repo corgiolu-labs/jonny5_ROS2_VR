@@ -1,0 +1,18 @@
+# JONNY5 - multicast route for the libcamera frame sync between the two cameras (cam0 server -> cam1 client,
+# UDP 239.255.255.250:10000). Both cameras are on this Pi, so the group is routed on the loopback interface:
+# without it, stand-alone (no PC on eth0 = no default route) the server could not send and the client could not
+# join the group, and cam1 never started (2026-10-19). Required by jonny5-video-capture.service.
+[Unit]
+Description=JONNY5 loopback multicast route for the camera frame sync
+Before=jonny5-video-capture.service
+DefaultDependencies=no
+After=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ip link set lo multicast on
+ExecStart=/usr/sbin/ip route replace 239.255.255.250/32 dev lo
+
+[Install]
+WantedBy=multi-user.target

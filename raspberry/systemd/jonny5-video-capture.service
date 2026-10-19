@@ -2,8 +2,8 @@
 # publishing cam0/cam1 to the local MediaMTX (profile "relay"). Installed by ros2_ws/deploy/setup_hotspot.sh.
 [Unit]
 Description=JONNY5 camera capture -> MediaMTX relay (sync + matched exposure)
-After=jonny5-mediamtx.service
-Requires=jonny5-mediamtx.service
+After=jonny5-mediamtx.service jonny5-sync-route.service
+Requires=jonny5-mediamtx.service jonny5-sync-route.service
 PartOf=jonny5-mediamtx.service
 
 [Service]
