@@ -19,6 +19,7 @@ setup(
     entry_points={
         "console_scripts": [
             "ws_teleop_bridge_node = jonny5_teleop_vr.ws_teleop_bridge_node:main",
+            "intent_to_servo_node = jonny5_teleop_vr.intent_to_servo_node:main",
         ],
     },
 )

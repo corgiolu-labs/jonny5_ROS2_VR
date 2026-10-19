@@ -212,6 +212,7 @@ class J5VRFrame:
         payload: Optional[J5VRPayload] = None,
         sequence_counter: int = 0,
         frame_type: int = J5_FRAME_TYPE_J5VR,
+        protocol_version: int = J5_PROTOCOL_VERSION,
     ):
         """
         Crea un frame J5VR.
@@ -220,9 +221,11 @@ class J5VRFrame:
             payload: Payload J5VR (se None, crea payload vuoto)
             sequence_counter: Contatore sequenza (0..65535)
             frame_type: Tipo frame (default J5_FRAME_TYPE_J5VR = 0x04)
+            protocol_version: 1 (default, layout storico) oppure 2
+                (flags=CRC16 e CRC-16 nei byte 62-63, vedi j5_protocol_v2.py)
         """
         self.header = (J5_HEADER_BYTE0, J5_HEADER_BYTE1)
-        self.protocol_version = J5_PROTOCOL_VERSION
+        self.protocol_version = int(protocol_version)
         self.frame_type = frame_type
         self.sequence_counter = sequence_counter & 0xFFFF
         self.payload_len = J5_PROTOCOL_FRAME_SIZE
@@ -266,10 +269,16 @@ class J5VRFrame:
         # reserved (2 byte)
         frame[62] = self.reserved[0]
         frame[63] = self.reserved[1]
-        
+
+        if self.protocol_version == 2:
+            from .j5_protocol_v2 import seal_v2
+
+            return seal_v2(bytes(frame))
         return bytes(frame)
 
-def build_setpoint_frame(shared_state_data: dict, sequence_counter: int = 0) -> J5VRFrame:
+def build_setpoint_frame(
+    shared_state_data: dict, sequence_counter: int = 0, protocol_version: int = J5_PROTOCOL_VERSION
+) -> J5VRFrame:
     """
     Costruisce un frame J5VR a partire dai dati di shared_state.
     
@@ -377,4 +386,9 @@ def build_setpoint_frame(shared_state_data: dict, sequence_counter: int = 0) -> 
         mode5_gomito_deg=mode5_physical[2],
     )
     
-    return J5VRFrame(payload=payload, sequence_counter=sequence_counter, frame_type=J5_FRAME_TYPE_J5VR)
+    return J5VRFrame(
+        payload=payload,
+        sequence_counter=sequence_counter,
+        frame_type=J5_FRAME_TYPE_J5VR,
+        protocol_version=protocol_version,
+    )

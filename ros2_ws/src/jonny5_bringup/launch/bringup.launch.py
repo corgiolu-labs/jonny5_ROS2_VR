@@ -26,6 +26,7 @@ def generate_launch_description():
     spi_device = LaunchConfiguration("spi_device")
     legacy_root = LaunchConfiguration("legacy_root")
     sim_intent = LaunchConfiguration("sim_intent")
+    protocol_version = LaunchConfiguration("protocol_version")
 
     params_file = PathJoinSubstitution([
         FindPackageShare("jonny5_bringup"), "config", "jonny5.params.yaml"
@@ -56,6 +57,11 @@ def generate_launch_description():
             description="Dir containing the legacy 'controller' package. Empty = auto-resolve.",
         ),
         DeclareLaunchArgument(
+            "protocol_version",
+            default_value="1",
+            description="SPI protocol: 1 = legacy, 2 = CRC + TELEMETRY_V2 + joint streaming (v2 firmware).",
+        ),
+        DeclareLaunchArgument(
             "sim_intent",
             default_value="false",
             description="Publish simulated VR intents for dry-run without a headset.",
@@ -78,6 +84,7 @@ def generate_launch_description():
                     "use_mock_spi": ParameterValue(use_mock_spi, value_type=bool),
                     "spi_device": ParameterValue(spi_device, value_type=str),
                     "legacy_root": ParameterValue(legacy_root, value_type=str),
+                    "protocol_version": ParameterValue(protocol_version, value_type=int),
                 },
             ],
         ),

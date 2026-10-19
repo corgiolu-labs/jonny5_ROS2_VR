@@ -1,0 +1,7 @@
+<library path="jonny5_control">
+  <class name="jonny5_control/Jonny5System"
+         type="jonny5_control::Jonny5System"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>JONNY5 6-DoF arm over SPI protocol v2 (J5IK joint streaming, TELEMETRY_V2).</description>
+  </class>
+</library>

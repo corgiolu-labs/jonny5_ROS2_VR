@@ -400,13 +400,7 @@ void assist_v2_raw_handle_control_and_build_telemetry(const uint8_t *rx128, uint
 	}
 	/* Mirror X/Y dal canale ASSIST v2 flags (bit4/bit5) verso stato J5VR
 	 * usato da MANUAL ROLL. Manteniamo invariati gli altri bit di buttons_left. */
-	{
-		uint16_t bl = g_j5vr_latest.buttons_left;
-		bl = (uint16_t)(bl & ~(uint16_t)((1U << 4) | (1U << 5)));
-		if ((flags & (1U << 4)) != 0U) { bl = (uint16_t)(bl | (1U << 4)); }
-		if ((flags & (1U << 5)) != 0U) { bl = (uint16_t)(bl | (1U << 5)); }
-		g_j5vr_latest.buttons_left = bl;
-	}
+	j5vr_latest_set_buttons_xy((uint16_t)(flags & ((1U << 4) | (1U << 5))));
 	fault = ASSIST_V2_FAULT_NONE;
 
 done:

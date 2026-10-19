@@ -56,6 +56,16 @@ bool j5vr_setpose_tick(uint32_t rt_tick);
  */
 void j5vr_setpose_abort(void);
 
+/** true se una traiettoria SETPOSE/HOME/PARK e' in esecuzione. */
+bool j5vr_setpose_is_active(void);
+
+/**
+ * true dopo il primo SETPOSE/HOME/PARK completato dal boot. Prima di allora
+ * gli angoli servo (e la telemetria) sono i default di init, non la posa
+ * reale del braccio: i servo non danno feedback di posizione.
+ */
+bool j5vr_setpose_pose_known(void);
+
 /**
  * Posa assoluta 6-DOF con velocità percentuale e profilo di moto.
  */
@@ -101,5 +111,12 @@ void j5vr_go_setpose_time_f(
  * alcun movimento da sola.
  */
 void j5vr_setpose_request_relax_digital_on_finish(void);
+
+/**
+ * j5vr_setpose_notify_poll — emette su UART le notifiche di fine traiettoria
+ * (SETPOSE_DONE / RELAX_DIGITAL) latchate dal tick RT. Da chiamare dal main
+ * loop: uart_poll_out e' busy-wait e non deve girare nel thread RT a 1 kHz.
+ */
+void j5vr_setpose_notify_poll(void);
 
 #endif /* J5VR_SETPOSE_H */

@@ -9,11 +9,13 @@
 #include "spi/hal_spi_slave.h"
 #include "core/state_machine.h"
 #include "core/estop.h"
+#include "core/hw_watchdog.h"
 #include "core/rt_loop.h"
 #include "uart/uart_control.h"
 #include "imu/imu.h"
 #include "servo/servo_control.h"
 #include "servo/pickplace.h"
+#include "servo/j5vr_setpose.h"
 #include <zephyr/sys/printk.h>
 
 /* Boundary init prima di HAL SPI (POST_KERNEL 50) */
@@ -45,6 +47,7 @@ int main(void)
 
     rt_loop_init();
     rt_loop_start();
+    (void)hw_watchdog_init();   /* opt-in: CONFIG_J5_HW_WATCHDOG; dopo il RT loop che lo alimenta */
     uart_send_unsolicited("BOOT_READY");
 
     printk("[BOOT] RT loop 1kHz started\n");
@@ -52,6 +55,7 @@ int main(void)
     while (1) {
         uart_control_process();
         estop_notify_poll();   /* emette ESTOP/ESTOP_CLEAR pendenti (flag dal RT) */
+        j5vr_setpose_notify_poll(); /* SETPOSE_DONE/RELAX_DIGITAL pendenti (flag dal RT) */
         k_msleep(10);
     }
     return 0;

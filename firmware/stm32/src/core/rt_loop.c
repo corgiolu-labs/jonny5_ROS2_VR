@@ -17,6 +17,7 @@
 #include "core/rt_loop.h"
 #include "core/state_machine.h"
 #include "core/estop.h"
+#include "core/hw_watchdog.h"
 #include "spi/boundary_buffers.h"
 #include "spi/hal_spi_slave.h"
 #include "spi/j5_protocol.h"
@@ -74,6 +75,11 @@ K_SEM_DEFINE(rt_tick_sem, 0, 1);
  * Con step ~43 us non dovrebbe mai accadere: e' la prova quantitativa che il
  * loop non perde tick. Pubblicato nella riga [RTPERF]. */
 static volatile uint32_t rt_tick_overruns;
+
+uint32_t rt_loop_get_overruns(void)
+{
+    return rt_tick_overruns;
+}
 
 static void rt_tick_isr_cb(const struct device *dev, void *user_data)
 {
@@ -216,6 +222,7 @@ volatile uint8_t g_vr_armed = 0;
 volatile uint8_t g_vr_freeze_active = 0;
 volatile uint32_t g_vr_guard_block_count = 0;
 volatile uint8_t g_vr_input_active = 0;
+volatile uint8_t g_j5ik_stream_active = 0;
 
 volatile uint32_t g_imu_thread_ticks = 0;
 volatile uint8_t g_imu_thread_stage = 0;
@@ -249,11 +256,64 @@ static bool center_button_debounced_state = false;
 static system_state_t rt_prev_state = STATE_SAFE;
 /* Reset a ogni nuova entry in STATE_SAFE, cosÃƒÆ’Ã‚Â¬ SAFEÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢IDLE puÃƒÆ’Ã‚Â² avvenire piÃƒÆ’Ã‚Â¹ volte */
 static bool auto_transition_done = false;
+/* vr_heartbeat latchato all'ingresso in STATE_SAFE. g_j5vr_latest non viene mai
+ * azzerato: dopo un watchdog SPI conserva l'ultimo intent (mode/heartbeat != 0),
+ * che da solo farebbe scattare subito l'auto SAFE->IDLE. Il re-arm automatico
+ * richiede quindi frame SPI freschi E un heartbeat avanzato rispetto a questo. */
+static uint16_t safe_entry_heartbeat = 0;
+
+/* JOINT_STREAM (mode 6): target articolari J5IK dal Pi (ROS 2 / ros2_control).
+ * Gating: stato IDLE (garantito dal chiamante) + J5IK valid + bit
+ * J5IK_FLAG_STREAM_ENABLE. Senza consenso i servo vengono disabilitati come nel
+ * disarm VR; con frame piu' vecchi di J5IK_STREAM_TIMEOUT_MS il braccio resta
+ * fermo (nessun nuovo target). Velocita' limitata da j5vr_actuation_apply_desired. */
+static bool stream_servos_off = false;
+/* true se l'ultimo tick IDLE era in mode 6. Uscendo da mode 6 restando in IDLE
+ * (joint_stream/enable false -> il Pi torna ai frame VR) la pipeline VR non
+ * spegne i servo: il suo latch servos_disabled_latched e' rimasto a true da
+ * prima dello streaming. Li spegniamo qui, una volta, al primo tick fuori. */
+static bool stream_mode_prev = false;
+
+static void rt_joint_stream_step(void)
+{
+    struct j5ik_state ik;
+    j5ik_latest_snapshot(&ik);
+
+    g_vr_armed = 0U;
+    g_vr_input_active = 0U;
+    g_vr_freeze_active = 0U;
+
+    const bool enabled = (ik.valid != 0U) &&
+                         (ik.mode == J5_MODE_JOINT_STREAM) &&
+                         ((ik.control_flags & J5IK_FLAG_STREAM_ENABLE) != 0U);
+    if (!enabled)
+    {
+        g_j5ik_stream_active = 0U;
+        if (!stream_servos_off)
+        {
+            servo_disable_all();
+            stream_servos_off = true;
+        }
+        return;
+    }
+
+    const uint32_t age_ms = k_uptime_get_32() - j5ik_last_rx_ms();
+    if (age_ms > J5IK_STREAM_TIMEOUT_MS)
+    {
+        g_j5ik_stream_active = 0U;   /* hold: nessun nuovo target */
+        return;
+    }
+
+    g_j5ik_stream_active = 1U;
+    stream_servos_off = false;
+    j5ik_apply_direct_target(&ik);
+}
 
 static void rt_loop_step(void)
 {
     g_rt_loop_ticks++;
     g_rt_loop_stage = 1;
+    hw_watchdog_feed();   /* no-op senza CONFIG_J5_HW_WATCHDOG */
 
     /* SPI frame watchdog: ogni 100 tick (= 100 ms) verifica che il Pi stia
      * ancora inviando frame. Se il timeout scade e il sistema e' in IDLE,
@@ -277,6 +337,8 @@ static void rt_loop_step(void)
     if (state_machine_get_state() == STATE_STOPPED)
     {
         servo_disable_all();
+        g_j5ik_stream_active = 0U;
+        stream_mode_prev = false;
         return;
     }
 
@@ -285,7 +347,18 @@ static void rt_loop_step(void)
      * ÃƒÆ’Ã‚Â¨ in esecuzione: l'intero blocco STATE_IDLE viene saltato per questo
      * ciclo, la pipeline VR resta intatta (desired_positions[] viene
      * aggiornato dalla traiettoria SETPOSE, non dagli stick VR). */
-    if (j5vr_setpose_tick(g_rt_loop_ticks))
+    /* SETPOSE (HOME/PARK/TELEOPPOSE) parte solo da IDLE: se nel frattempo lo
+     * stato e' uscito da IDLE (watchdog SPI -> SAFE) la traiettoria va annullata,
+     * altrimenti continuerebbe a muovere i servo in SAFE. */
+    if (state_machine_get_state() != STATE_IDLE)
+    {
+        j5vr_setpose_abort();
+        /* Fuori da IDLE i servo sono gia' spenti (SAFE): niente stream attivo
+         * in telemetria e nessuno spegnimento "di uscita" da rifare dopo. */
+        g_j5ik_stream_active = 0U;
+        stream_mode_prev = false;
+    }
+    else if (j5vr_setpose_tick(g_rt_loop_ticks))
     {
         return;
     }
@@ -298,6 +371,9 @@ static void rt_loop_step(void)
     if (cur_state == STATE_SAFE && rt_prev_state != STATE_SAFE)
     {
         auto_transition_done = false;
+        struct j5vr_state entry;
+        j5vr_latest_snapshot(&entry);
+        safe_entry_heartbeat = entry.vr_heartbeat;
     }
     rt_prev_state = cur_state;
 
@@ -309,8 +385,19 @@ static void rt_loop_step(void)
             g_rt_loop_stage = 21;
             {
                 struct j5vr_state j5vr_check;
-                j5vr_check = g_j5vr_latest;
-                if (j5vr_check.mode != 0 || j5vr_check.vr_heartbeat > 0)
+                j5vr_latest_snapshot(&j5vr_check);
+                const bool spi_fresh =
+                    hal_spi_last_frame_age_ms() <= SPI_FRAME_TIMEOUT_MS;
+                const bool hb_advanced =
+                    (j5vr_check.vr_heartbeat != safe_entry_heartbeat);
+                /* JOINT_STREAM (mode 6) non si riarma MAI da solo: dopo SAFE
+                 * (UART SAFE/RESET, recovery E-STOP, watchdog SPI) lo streaming
+                 * dal Pi continua con heartbeat avanzato e riporterebbe il
+                 * braccio all'ultimo target senza un'azione dell'operatore.
+                 * Serve un ENABLE esplicito via UART. */
+                const bool joint_stream = (j5vr_check.mode == J5_MODE_JOINT_STREAM);
+                if (spi_fresh && hb_advanced && !joint_stream &&
+                    (j5vr_check.mode != 0 || j5vr_check.vr_heartbeat > 0))
                 {
                     if (!auto_transition_done)
                     {
@@ -328,8 +415,22 @@ static void rt_loop_step(void)
                 g_rt_loop_stage = 30;
                 bool movement_allowed = state_machine_is_movement_allowed();
                 struct j5vr_state j5vr_current;
-                j5vr_current = g_j5vr_latest;
+                j5vr_latest_snapshot(&j5vr_current);
                 g_rt_loop_stage = 31;
+
+                if (j5vr_current.mode == J5_MODE_JOINT_STREAM)
+                {
+                    stream_mode_prev = true;
+                    rt_joint_stream_step();
+                    break;
+                }
+                g_j5ik_stream_active = 0U;
+                if (stream_mode_prev)
+                {
+                    servo_disable_all();   /* uscita da mode 6 in IDLE: come il disarm VR */
+                    stream_mode_prev = false;
+                }
+                stream_servos_off = false;   /* re-armato al prossimo ingresso in mode 6 */
 
                 bool grip_left = false;
                 bool grip_right = false;

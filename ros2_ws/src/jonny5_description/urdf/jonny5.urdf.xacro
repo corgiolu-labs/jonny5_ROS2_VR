@@ -1,9 +1,22 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="jonny5">
-  <xacro:property name="base_height" value="0.112" />
+  <!-- ros2_control block (off by default: the SPI driver node path does not use it). -->
+  <xacro:arg name="ros2_control" default="false" />
+  <xacro:arg name="mock_hardware" default="true" />
+  <xacro:arg name="spi_device" default="/dev/spidev0.0" />
+  <xacro:arg name="transfer_len" default="128" />
+
+  <!-- Geometry from the POE model used by the legacy FK/IK
+       (raspberry/config_runtime/kinematics/j5_poe_params.json, settings page):
+       shoulder axis at 134.3 mm (22 mm plinth + base_height), elbow 60 mm above it,
+       wrist pitch axis at 381.225 mm, roll axis along x through the pitch point,
+       tool point 57 mm forward of it (M). The yaw axis is vertical through x=0; its
+       height does not change the kinematics (yaw_to_pitch is only for the visual). -->
+  <xacro:property name="base_height" value="0.1123" />
   <xacro:property name="upper_arm" value="0.060" />
-  <xacro:property name="forearm" value="0.173" />
-  <xacro:property name="wrist_stack" value="0.172" />
+  <xacro:property name="elbow_to_pitch" value="0.186925" />
+  <xacro:property name="yaw_to_pitch" value="0.057" />
+  <xacro:property name="forearm" value="${elbow_to_pitch - yaw_to_pitch}" />
   <xacro:property name="tool_x" value="0.057" />
 
   <material name="jonny5_dark"><color rgba="0.08 0.09 0.10 1.0" /></material>
@@ -33,7 +46,12 @@
     <child link="shoulder_link" />
     <origin xyz="0 0 0.022" rpy="0 0 0" />
     <axis xyz="0 0 1" />
-    <limit lower="-0.785398" upper="0.785398" effort="5.0" velocity="2.0" />
+    <!-- Joint limits: intersection of the previous URDF limits and the dashboard
+         limits that ws-teleop loads into the firmware at boot (routing_config.json,
+         physical deg, converted with offsets 100 88 93 95 90 95 and dirs 1 -1 1 1 -1 1).
+         The firmware clamps outside them, so ROS must not command beyond.
+         Base: dashboard 45..135 phys -> -55..+35 deg. -->
+    <limit lower="-0.785398" upper="0.610865" effort="5.0" velocity="2.0" />
   </joint>
 
   <link name="upper_arm_link">
@@ -47,7 +65,8 @@
     <child link="upper_arm_link" />
     <origin xyz="0 0 ${base_height}" rpy="0 0 0" />
     <axis xyz="0 1 0" />
-    <limit lower="-1.047198" upper="0.959931" effort="5.0" velocity="1.5" />
+    <!-- Dashboard 30..145 phys -> -57..+58 deg. -->
+    <limit lower="-0.994838" upper="0.959931" effort="5.0" velocity="1.5" />
   </joint>
 
   <link name="forearm_link">
@@ -61,41 +80,47 @@
     <child link="forearm_link" />
     <origin xyz="0 0 ${upper_arm}" rpy="0 0 0" />
     <axis xyz="0 1 0" />
-    <limit lower="-1.047198" upper="0.959931" effort="5.0" velocity="1.5" />
+    <!-- Dashboard 30..145 phys -> -63..+52 deg. -->
+    <limit lower="-1.047198" upper="0.907571" effort="5.0" velocity="1.5" />
   </joint>
 
-  <link name="wrist_yaw_link"><visual><origin xyz="0 0 ${wrist_stack/3}" /><geometry><box size="0.035 0.035 ${wrist_stack/3}" /></geometry><material name="jonny5_dark" /></visual></link>
+  <link name="wrist_yaw_link"><visual><origin xyz="0 0 ${yaw_to_pitch/2}" /><geometry><box size="0.035 0.035 ${yaw_to_pitch}" /></geometry><material name="jonny5_dark" /></visual></link>
   <joint name="wrist_yaw_joint" type="revolute">
     <parent link="forearm_link" />
     <child link="wrist_yaw_link" />
     <origin xyz="0 0 ${forearm}" rpy="0 0 0" />
     <axis xyz="0 0 1" />
-    <limit lower="-0.785398" upper="0.785398" effort="2.0" velocity="1.5" />
+    <!-- Dashboard 45..135 phys -> -50..+40 deg. -->
+    <limit lower="-0.785398" upper="0.698132" effort="2.0" velocity="1.5" />
   </joint>
 
-  <link name="wrist_pitch_link"><visual><origin xyz="0 0 ${wrist_stack/3}" /><geometry><box size="0.032 0.032 ${wrist_stack/3}" /></geometry><material name="jonny5_signal" /></visual></link>
+  <link name="wrist_pitch_link"><visual><geometry><box size="0.032 0.040 0.032" /></geometry><material name="jonny5_signal" /></visual></link>
   <joint name="wrist_pitch_joint" type="revolute">
     <parent link="wrist_yaw_link" />
     <child link="wrist_pitch_link" />
-    <origin xyz="0 0 ${wrist_stack/3}" rpy="0 0 0" />
+    <origin xyz="0 0 ${yaw_to_pitch}" rpy="0 0 0" />
     <axis xyz="0 1 0" />
-    <limit lower="-0.959931" upper="0.523599" effort="2.0" velocity="1.5" />
+    <!-- Dashboard 35..120 phys (offset 90, dir -1) -> -30..+55 deg; firmware default
+         45..135 -> -45..+45. Intersection: -30..+45 (PARK uses +40, tip down). -->
+    <limit lower="-0.523599" upper="0.785398" effort="2.0" velocity="1.5" />
   </joint>
 
-  <link name="wrist_roll_link"><visual><origin xyz="0 0 ${wrist_stack/3}" /><geometry><box size="0.030 0.030 ${wrist_stack/3}" /></geometry><material name="jonny5_dark" /></visual></link>
+  <link name="wrist_roll_link"><visual><origin xyz="${tool_x/2} 0 0" /><geometry><box size="${tool_x} 0.025 0.025" /></geometry><material name="jonny5_dark" /></visual></link>
   <joint name="wrist_roll_joint" type="revolute">
     <parent link="wrist_pitch_link" />
     <child link="wrist_roll_link" />
-    <origin xyz="0 0 ${wrist_stack/3}" rpy="0 0 0" />
+    <!-- Roll axis (x) passes through the pitch point: no offset. -->
+    <origin xyz="0 0 0" rpy="0 0 0" />
     <axis xyz="1 0 0" />
-    <limit lower="-0.785398" upper="0.785398" effort="2.0" velocity="1.5" />
+    <!-- Dashboard and firmware 45..135 phys (offset 95) -> -50..+40 deg. -->
+    <limit lower="-0.785398" upper="0.698132" effort="2.0" velocity="1.5" />
   </joint>
 
-  <link name="ee_link"><visual><origin xyz="${tool_x/2} 0 0" /><geometry><box size="${tool_x} 0.025 0.025" /></geometry><material name="jonny5_signal" /></visual></link>
+  <link name="ee_link"><visual><geometry><sphere radius="0.008" /></geometry><material name="jonny5_signal" /></visual></link>
   <joint name="tool_joint" type="fixed">
     <parent link="wrist_roll_link" />
     <child link="ee_link" />
-    <origin xyz="0 0 ${wrist_stack/3}" rpy="0 0 0" />
+    <origin xyz="${tool_x} 0 0" rpy="0 0 0" />
   </joint>
 
   <link name="imu_link" />
@@ -118,4 +143,11 @@
     <child link="right_camera_link" />
     <origin xyz="0.045 -0.032 0" rpy="0 0 0" />
   </joint>
+
+  <xacro:if value="$(arg ros2_control)">
+    <xacro:include filename="jonny5.ros2_control.xacro" />
+    <xacro:jonny5_ros2_control mock_hardware="$(arg mock_hardware)"
+                               spi_device="$(arg spi_device)"
+                               transfer_len="$(arg transfer_len)" />
+  </xacro:if>
 </robot>

@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<robot name="jonny5">
+  <!-- Planning group: the 6-DoF chain from the base to the tool flange. -->
+  <group name="arm">
+    <chain base_link="base_link" tip_link="ee_link" />
+  </group>
+
+  <!-- Named poses (rad, 0 = mechanical HOME). -->
+  <group_state name="home" group="arm">
+    <joint name="base_joint" value="0" />
+    <joint name="shoulder_joint" value="0" />
+    <joint name="elbow_joint" value="0" />
+    <joint name="wrist_yaw_joint" value="0" />
+    <joint name="wrist_pitch_joint" value="0" />
+    <joint name="wrist_roll_joint" value="0" />
+  </group_state>
+  <group_state name="ready" group="arm">
+    <joint name="base_joint" value="0" />
+    <joint name="shoulder_joint" value="0.35" />
+    <joint name="elbow_joint" value="0.7" />
+    <joint name="wrist_yaw_joint" value="0" />
+    <joint name="wrist_pitch_joint" value="-0.5" />
+    <joint name="wrist_roll_joint" value="0" />
+  </group_state>
+
+  <!-- Collision matrix: adjacent links always touch in the simplified geometry. -->
+  <disable_collisions link1="base_link" link2="shoulder_link" reason="Adjacent" />
+  <disable_collisions link1="shoulder_link" link2="upper_arm_link" reason="Adjacent" />
+  <disable_collisions link1="upper_arm_link" link2="forearm_link" reason="Adjacent" />
+  <disable_collisions link1="forearm_link" link2="wrist_yaw_link" reason="Adjacent" />
+  <disable_collisions link1="wrist_yaw_link" link2="wrist_pitch_link" reason="Adjacent" />
+  <disable_collisions link1="wrist_pitch_link" link2="wrist_roll_link" reason="Adjacent" />
+  <disable_collisions link1="wrist_roll_link" link2="ee_link" reason="Adjacent" />
+  <!-- The shoulder column is only 6 cm long: base and upper arm can never collide. -->
+  <disable_collisions link1="base_link" link2="upper_arm_link" reason="Never" />
+</robot>

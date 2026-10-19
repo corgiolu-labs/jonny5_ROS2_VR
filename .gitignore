@@ -74,3 +74,4 @@ mediamtx-*.tar.gz
 # --- Deliverable tesi/difesa: SOLO locale, NON pubblicare online ---
 /TESI/
 raspberry/tools/rtp_push
+firmware/stm32/build-zephyr/

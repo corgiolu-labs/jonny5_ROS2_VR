@@ -40,6 +40,11 @@ extern volatile uint8_t g_vr_armed;
 extern volatile uint8_t g_vr_freeze_active;
 extern volatile uint32_t g_vr_guard_block_count;
 extern volatile uint8_t g_vr_input_active;
+/* 1 = mode JOINT_STREAM (J5IK) abilitato e con frame freschi (diag TELEMETRY_V2). */
+extern volatile uint8_t g_j5ik_stream_active;
+
+/* Tick RT persi (IRQ TIM6 arrivato mentre il loop era ancora in esecuzione). */
+uint32_t rt_loop_get_overruns(void);
 
 /* Diagnostica IMU thread liveness */
 extern volatile uint32_t g_imu_thread_ticks;

@@ -153,6 +153,17 @@ typedef struct {
 
 static j5_setpose_state_t g_setpose_state = { .active = false };
 
+/* Notifiche di fine traiettoria: scritte dal tick RT, emesse dal main loop
+ * (j5vr_setpose_notify_poll) come per l'E-STOP. Il flag done_pending viene
+ * alzato per ultimo, dopo i valori. */
+static volatile uint32_t sp_done_elapsed_ms;
+static volatile float    sp_done_vel_max;
+static volatile float    sp_done_acc_max;
+static volatile bool     sp_done_relaxed;
+static volatile bool     sp_done_pending;
+/* Latch: primo SETPOSE completato dal boot (vedi j5vr_setpose_pose_known). */
+static volatile bool     sp_pose_known;
+
 /* Wake-up tap config — DISABILITATO (peggiora reattività globale e
  * non risolve il problema PITCH SDS1601). Codice mantenuto inattivo
  * tramite J5SP_WAKEUP_ENABLED=0 per facile riattivazione futura. */
@@ -225,6 +236,16 @@ void j5vr_setpose_abort(void)
     *pactive = false;
     g_setpose_state.warming_up = false;
     g_setpose_state.relax_digital_on_finish = false;
+}
+
+bool j5vr_setpose_is_active(void)
+{
+    return g_setpose_state.active;
+}
+
+bool j5vr_setpose_pose_known(void)
+{
+    return sp_pose_known;
 }
 
 /* -----------------------------------------------------------------------
@@ -347,14 +368,7 @@ bool j5vr_setpose_tick(uint32_t rt_tick)
     /* Invio telemetria finale via UART non-solicitato */
     if (finished)
     {
-        uint32_t elapsed_ms = dt;
-        char msg[72];
-        snprintf(msg, sizeof(msg),
-                 "SETPOSE_DONE time_ms=%u vel_max=%.1f acc_max=%.1f",
-                 (unsigned)elapsed_ms,
-                 (double)g_setpose_state.max_velocity_deg_s,
-                 (double)g_setpose_state.max_accel_deg_s2);
-        uart_send_unsolicited(msg);
+        bool relaxed = false;
 
         /* Post-completion relax, opt-in. Only HOME sets this flag so SETPOSE /
          * SETPOSE_T / TELEOPPOSE / PARK keep their PWM engaged as before. */
@@ -362,8 +376,17 @@ bool j5vr_setpose_tick(uint32_t rt_tick)
         {
             g_setpose_state.relax_digital_on_finish = false;
             servo_relax_digital();
-            uart_send_unsolicited("RELAX_DIGITAL pitch roll");
+            relaxed = true;
         }
+
+        /* Niente snprintf/uart_poll_out qui (busy-wait a 115200 nel tick RT):
+         * latch dei valori, l'invio lo fa il main loop. */
+        sp_done_elapsed_ms = dt;
+        sp_done_vel_max    = g_setpose_state.max_velocity_deg_s;
+        sp_done_acc_max    = g_setpose_state.max_accel_deg_s2;
+        sp_done_relaxed    = relaxed;
+        sp_pose_known      = true;
+        sp_done_pending    = true;
     }
 
     return true;
@@ -559,4 +582,30 @@ void j5vr_go_setpose_time_f(
     g_setpose_state.relax_digital_on_finish = false;
 
     *pactive = true;
+}
+
+/* -----------------------------------------------------------------------
+ * j5vr_setpose_notify_poll — invio notifiche di fine traiettoria (main loop)
+ * ----------------------------------------------------------------------- */
+void j5vr_setpose_notify_poll(void)
+{
+    if (!sp_done_pending)
+    {
+        return;
+    }
+    const uint32_t elapsed_ms = sp_done_elapsed_ms;
+    const float    vel_max    = sp_done_vel_max;
+    const float    acc_max    = sp_done_acc_max;
+    const bool     relaxed    = sp_done_relaxed;
+    sp_done_pending = false;
+
+    char msg[72];
+    snprintf(msg, sizeof(msg),
+             "SETPOSE_DONE time_ms=%u vel_max=%.1f acc_max=%.1f",
+             (unsigned)elapsed_ms, (double)vel_max, (double)acc_max);
+    uart_send_unsolicited(msg);
+    if (relaxed)
+    {
+        uart_send_unsolicited("RELAX_DIGITAL pitch roll");
+    }
 }

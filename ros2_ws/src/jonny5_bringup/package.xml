@@ -7,6 +7,8 @@
   <license>MIT</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>jonny5_control</exec_depend>
   <exec_depend>jonny5_description</exec_depend>
   <exec_depend>jonny5_hardware</exec_depend>
   <exec_depend>jonny5_sim</exec_depend>

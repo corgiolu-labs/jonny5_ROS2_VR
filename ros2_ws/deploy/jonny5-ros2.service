@@ -5,6 +5,8 @@
 Description=JONNY5 ROS2 control plane (Docker)
 Requires=docker.service
 After=docker.service network-online.target
+# Only one SPI owner: never run together with the legacy SPI data plane.
+Conflicts=jonny5-spi-j5vr.service
 Wants=network-online.target
 
 [Service]

@@ -23,6 +23,11 @@ parses (see ``j5vr_spi_bridge.py``):
         [45:51]   servo deg B,S,G,Y,P,R (uint8, 0..180)
         [51:54]   imu_sample_counter (24-bit BE)
     frame[62:64] = rt_loop_period_us (BE uint16)
+
+Protocol v2 requests (frame[2] == 2, CRC-sealed) are answered like the v2
+firmware: TELEMETRY_V2 (0x08) for J5VR/J5IK/TELEMETRY, sealed STATUS for 0x03.
+A J5IK frame in mode JOINT_STREAM with the enable flag moves the synthetic
+joints toward its targets (rate-limited); otherwise they stay still.
 """
 
 from __future__ import annotations
@@ -115,6 +120,11 @@ class MockSpiWorker:
         self._tick = 0
         # Synthetic firmware diag: deadman+input+armed set (bits 0,1,2).
         self._diag_mask = 0x0007
+        # v2 state
+        self._stm_tx_seq = 0
+        self._joint_cdeg = [9000] * 6
+        self._stream_live = False
+        self._last_mode = 0
 
     # --- SPIWorker-compatible surface -------------------------------------
     def open(self) -> None:
@@ -134,6 +144,8 @@ class MockSpiWorker:
         synthetic diag; anything else yields a TELEMETRY frame.
         """
         tx_type = tx[3] if len(tx) > 3 else 0
+        if len(tx) >= 64 and tx[0:2] == b"J5" and tx[2] == 0x02:
+            return self._transfer_v2(tx[:64])
         if tx_type == 0x03:
             self._tick += 1
             return build_status_frame(
@@ -164,6 +176,68 @@ class MockSpiWorker:
         )
         self._tick += 1
         return frame
+
+    def _transfer_v2(self, tx: bytes) -> bytes:
+        from controller.spi_dataplane import j5_protocol_v2 as v2
+
+        seq = (tx[4] << 8) | tx[5]
+        self._tick += 1
+        if not v2.crc_ok(tx):
+            status = bytearray(64)
+            status[0:2] = b"J5"
+            status[3] = v2.FRAME_TYPE_STATUS
+            status[6] = 64
+            status[8] = v2.STATUS_ERR_BAD_CRC
+            return v2.seal_v2(bytes(status))
+        tx_type = tx[3]
+        if tx_type == v2.FRAME_TYPE_STATUS:
+            return v2.seal_v2(
+                build_status_frame(
+                    diag_mask=self._diag_mask, mode=self._last_mode,
+                    heartbeat=self._tick & 0xFFFF, sequence=seq,
+                )
+            )
+        payload = tx[8:62]
+        if tx_type == v2.FRAME_TYPE_J5IK:
+            mode = payload[6]
+            enable = bool(payload[0]) and mode == v2.MODE_JOINT_STREAM and bool(
+                payload[1] & v2.J5IK_FLAG_STREAM_ENABLE
+            )
+            self._last_mode = mode
+            self._stream_live = enable
+            if enable:
+                max_step = 60  # 0.6 deg per frame
+                for i in range(6):
+                    target = struct.unpack_from(">h", payload, 8 + 2 * i)[0]
+                    diff = max(-max_step, min(max_step, target - self._joint_cdeg[i]))
+                    self._joint_cdeg[i] += diff
+        else:
+            # Not streaming: the arm stays where it is, like the real robot at rest.
+            self._stream_live = False
+            if tx_type == v2.FRAME_TYPE_J5VR:
+                self._last_mode = payload[0]
+        t = self._tick / 50.0
+        half = 0.125 * math.sin(t * 0.5)
+        self._stm_tx_seq = (self._stm_tx_seq + 1) & 0xFFFF
+        status_flags = v2.ST_MOVE_ALLOWED | v2.ST_IMU_VALID
+        # The mock arm starts at a known pose, like the real one after HOME.
+        diag_flags = v2.DG_IMU_PRESENT | v2.DG_IMU_ENABLED | v2.DG_POSE_KNOWN
+        if self._stream_live:
+            diag_flags |= v2.DG_STREAM_LIVE
+        return v2.build_telemetry_v2(
+            sequence=seq,
+            stm_time_ms=self._tick * 10,
+            stm_tx_seq=self._stm_tx_seq,
+            fsm_state=1,
+            status_flags=status_flags,
+            mode=self._last_mode,
+            joint_cdeg=self._joint_cdeg,
+            quat=(math.cos(half), 0.0, 0.0, math.sin(half)),
+            imu_sample_counter=self._tick,
+            rt_loop_period_us=self._rt_loop_period_us,
+            rt_step_us=45,
+            diag_flags=diag_flags,
+        )
 
     def __enter__(self) -> "MockSpiWorker":
         self.open()

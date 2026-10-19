@@ -14,8 +14,10 @@
 #include <stdbool.h>
 #include <zephyr/sys/util.h>
 
-/* RX slot size: 64 legacy-only, 128 when ASSIST_V2_RAW_MODE (must match SPI_FRAME_LEN). */
-#if IS_ENABLED(CONFIG_ASSIST_V2_RAW_MODE)
+/* RX slot size: 64 legacy-only, 128 when the SPI transfer is 128 bytes
+ * (ASSIST_V2_RAW_MODE or J5_CANONICAL_PADDED_128_MODE). Must match SPI_FRAME_LEN
+ * in hal_spi_slave.c: the HAL memcpy's a whole SPI frame into one slot. */
+#if IS_ENABLED(CONFIG_ASSIST_V2_RAW_MODE) || IS_ENABLED(CONFIG_J5_CANONICAL_PADDED_128_MODE)
 #define J5_FRAME_SIZE 128
 #else
 #define J5_FRAME_SIZE 64
