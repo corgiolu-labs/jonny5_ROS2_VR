@@ -131,8 +131,8 @@ GATE_DY_PX = 6.0                     # |dy - dy_off| above this (zoom-1 px) is n
 # at another pose; a stale dy_off then rejected every match): when DY_JUMP_N consecutive strong matches agree
 # on a dy outside the gate (spread < DY_JUMP_SPREAD), that dy becomes the new offset at once.
 DY_JUMP_N = 4
-DY_JUMP_SPREAD = 1.5
-DY_JUMP_SCORE = 0.9
+DY_JUMP_SPREAD = 1.5                 # on dy AND on dx (noise on a flat wall "agrees" on dy but wanders in dx)
+DY_JUMP_SCORE = 0.95
 JUMP_PX = 10.0                       # a jump of the true disparity above this (zoom-1 px) needs a confirmation
 JUMP_CONFIRM_N = 2                   # consecutive consistent matches before a jump is accepted
 JUMP_SCORE_OK = 0.92                 # ... unless the match is this strong (a near object moving: 25 px between
@@ -424,7 +424,7 @@ def main():
     last_out = None       # (mdx1, mdy1, dist) of the last lock, zoom-1 px, for the rescaled hold while zooming
     focus = {"dist_mm": None, "t": -1e9, "since": None}   # stereo-driven refocus state
     jump = {"dx": None, "n": 0}                           # pending disparity jump awaiting confirmation
-    dy_rej = []                                           # dy of consecutive vertical-gate rejections (tele px)
+    dy_rej = []                                           # (dy, dx) of consecutive vertical-gate rejections (tele px)
     lock_prev = None                                      # for the lock / unlock event log
     gate_log_t = 0.0
     eq = {"ratio": None, "sent": None}                   # brightness equalisation (cam1 gain_ratio)
@@ -506,9 +506,12 @@ def main():
                 dy_exp = calib["dy_off"] + DY_SLOPE * (dx - DX_FAR_REF)
                 if abs(dy - dy_exp) > GATE_DY_PX:
                     # consistent strong matches off the expected line: the mount moved, adopt the new offset
-                    dy_rej = (dy_rej + [dy - DY_SLOPE * (dx - DX_FAR_REF)])[-DY_JUMP_N:] if score >= DY_JUMP_SCORE else []
-                    if len(dy_rej) >= DY_JUMP_N and max(dy_rej) - min(dy_rej) < DY_JUMP_SPREAD:
-                        new_off = float(np.median(dy_rej))
+                    dy_rej = (dy_rej + [(dy - DY_SLOPE * (dx - DX_FAR_REF), dx)])[-DY_JUMP_N:] if score >= DY_JUMP_SCORE else []
+                    if (len(dy_rej) >= DY_JUMP_N
+                            and max(v[0] for v in dy_rej) - min(v[0] for v in dy_rej) < DY_JUMP_SPREAD
+                            and max(v[1] for v in dy_rej) - min(v[1] for v in dy_rej) < DY_JUMP_SPREAD
+                            and abs(float(np.median([v[0] for v in dy_rej]))) <= 15.0):
+                        new_off = float(np.median([v[0] for v in dy_rej]))
                         log(f"vertical offset jumped: dy_off {calib['dy_off']:+.1f} -> {new_off:+.1f} px (mount moved)")
                         calib["dy_off"] = new_off
                         dy_hist = [new_off] * DY_LEARN_MIN
