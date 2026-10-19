@@ -108,7 +108,16 @@ EQ_ALPHA = 0.03
 EQ_SEND_DELTA = 0.01
 EQ_RANGE = (0.6, 1.6)
 CONV_SEND_STREAM_PX = 12.0
-CONV_RELEASE_S = 3.0
+CONV_RELEASE_S = 3.0                 # at low zoom: back to infinity this long after the last lock
+CONV_HOLD_ZOOM = 1.5                 # above this sensor zoom the crop offset is HELD without a lock (a near object
+CONV_RELEASE_ZOOMED_S = 30.0         # at 6x is 250 px off: releasing to infinity threw it out of cam1's view)
+# Robustness at high zoom (2026-10-19, the user: "allo zoom massimo tende a sganciare"): false locks at 6x sent
+# the crop offset beyond infinity (+42 px) and dy -70 px, then the real object was outside cam1's crop.
+GATE_DX_INF_PX = 4.0                 # a lock "beyond infinity" (dx > dx_inf + this, zoom-1 px) is impossible
+GATE_DY_PX = 6.0                     # |dy - dy_off| above this (zoom-1 px) is not the same point (cameras are rigid)
+JUMP_PX = 10.0                       # a jump of the true disparity above this (zoom-1 px) needs a confirmation
+JUMP_CONFIRM_N = 2                   # consecutive consistent matches before a jump is accepted
+SCORE_MAX = 1.02                     # NCC above 1 = numerically degenerate window (flat): not a match
 
 
 def log(*a):
@@ -238,8 +247,10 @@ def match_size(left: np.ndarray, right: np.ndarray, TPL: int, prev_dx=None, zoom
     dy = (y0 + iy + fy + TPL / 2) - cy
     # a peak on the border of the search window is a truncated / wrong match (the real one is outside)
     on_edge = iy == 0 or iy == m.shape[0] - 1 or ix == 0 or ix == m.shape[1] - 1
-    ok = best >= MIN_SCORE and best - second >= MIN_MARGIN and not on_edge
-    why = why_ok if ok else ("edge" if on_edge else ("low score" if best < MIN_SCORE else "ambiguous"))
+    degenerate = best > SCORE_MAX or not np.isfinite(best)
+    ok = best >= MIN_SCORE and best - second >= MIN_MARGIN and not on_edge and not degenerate
+    why = why_ok if ok else ("flat" if degenerate else
+                             ("edge" if on_edge else ("low score" if best < MIN_SCORE else "ambiguous")))
     return 2.0 * dx, 2.0 * dy, best, ok, why, 2 * TPL
 
 
@@ -377,6 +388,9 @@ def main():
     camzoom = CamZoom()
     last_out = None       # (mdx1, mdy1, dist) of the last lock, zoom-1 px, for the rescaled hold while zooming
     focus = {"dist_mm": None, "t": -1e9, "since": None}   # stereo-driven refocus state
+    jump = {"dx": None, "n": 0}                           # pending disparity jump awaiting confirmation
+    lock_prev = None                                      # for the lock / unlock event log
+    gate_log_t = 0.0
     eq = {"ratio": None, "sent": None}                   # brightness equalisation (cam1 gain_ratio)
     try:
         st1 = json.loads(open(CAM1_STATE_PATH).read())
@@ -445,6 +459,29 @@ def main():
         dx, dy, score, ok, why, win = match(fl, fr, prev, z)
         if ok:
             dx, dy = dx / z + ox, dy / z + oy   # TRUE disparity in zoom-1 pixels from here on
+            # plausibility: never beyond infinity, never off the cameras' vertical line
+            gate = None
+            if dx > calib["dx_inf"] + GATE_DX_INF_PX:
+                gate = f"beyond infinity (dx {dx:.1f} > dx_inf {calib['dx_inf']:.1f})"
+            elif abs(dy - calib["dy_off"]) > GATE_DY_PX:
+                gate = f"vertical {dy:+.1f} vs dy_off {calib['dy_off']:+.1f}"
+            if gate is None and last_out is not None and time.monotonic() - last_lock[1] < CONT_MAX_AGE_S \
+                    and abs(dx - last_out[0]) > JUMP_PX:
+                # a big jump of the disparity: accept it only when it repeats (JUMP_CONFIRM_N consecutive)
+                if jump["dx"] is not None and abs(dx - jump["dx"]) <= JUMP_PX / 2:
+                    jump["n"] += 1
+                else:
+                    jump = {"dx": dx, "n": 1}
+                if jump["n"] < JUMP_CONFIRM_N:
+                    gate = f"jump {last_out[0]:.1f} -> {dx:.1f} px ({jump['n']}/{JUMP_CONFIRM_N})"
+            else:
+                jump = {"dx": None, "n": 0}
+            if gate is not None:
+                ok = False
+                why = "gated"
+                if time.monotonic() - gate_log_t > 2.0:
+                    gate_log_t = time.monotonic()
+                    log(f"rejected lock at zoom {z:.2f}: {gate}, score {score:.2f}")
 
         msg = {"type": "stereo_collimation", "score": round(score, 3), "dx_inf": round(calib["dx_inf"] * z, 2),
                "win": win, "ts": round(time.time(), 3), "zoom": round(z, 3), "offset": [round(ox, 1), round(oy, 1)]}
@@ -526,8 +563,12 @@ def main():
         want = None
         if ok:
             want = (mdx, mdy)
-        elif time.monotonic() - last_lock[1] > CONV_RELEASE_S:
+        elif time.monotonic() - last_lock[1] > (CONV_RELEASE_ZOOMED_S if z > CONV_HOLD_ZOOM else CONV_RELEASE_S):
             want = (calib["dx_inf"], calib["dy_off"])
+        if ok != lock_prev:
+            lock_prev = ok
+            log(f"{'LOCK' if ok else 'unlock'} at zoom {z:.2f}: dx {msg.get('dx')} dy {msg.get('dy')} "
+                f"score {score:.2f} win {win} {why or ''} dist {msg.get('dist_mm')}")
         if want is not None:
             tx, ty = camzoom.off_target
             if max(abs(want[0] - tx), abs(want[1] - ty)) * z > CONV_SEND_STREAM_PX:
