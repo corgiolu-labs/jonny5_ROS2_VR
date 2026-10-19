@@ -219,6 +219,9 @@ def match_at(left: np.ndarray, right: np.ndarray, px: float, py: float, zoom: fl
     return None
 
 
+HD_AUTO_ZOOM = 3.0   # analyze_auto: full-resolution still below this sensor zoom, snapshot above
+
+
 def read_servo():
     """The 6 servo angles (physical deg) from the telemetry file at this moment, None when unavailable."""
     try:
@@ -354,7 +357,12 @@ class Service:
         if action == "point":
             out["aim"] = dist is not None
         else:
-            out["texts"] = self.read_text(bgr, target["box"], u, v, hd=(action == "analyze_hd"))
+            # analyze_auto (the app's single "Analizza" button): the full-resolution still only pays off at low
+            # zoom (3x more pixels on the text); from HD_AUTO_ZOOM up the 1.92x snapshot already carries nearly
+            # all the sensor detail and the still would just pause the left video for ~0.3 s
+            hd = action == "analyze_hd" or (action == "analyze_auto" and zoom < HD_AUTO_ZOOM)
+            out["ocr_mode"] = "hd" if hd else "snap"
+            out["texts"] = self.read_text(bgr, target["box"], u, v, hd=hd)
             out["ocr_src"] = getattr(self, "last_ocr_src", None)
         t4 = time.monotonic()
         out["ms"] = {"wait": round((t1 - t0) * 1000), "detect": round((t2 - t1) * 1000),
