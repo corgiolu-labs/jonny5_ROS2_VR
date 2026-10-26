@@ -79,6 +79,13 @@ STM32 lavora a metà da `SPI_FRAME_LEN` e non si risincronizza sul fronte di CS.
 SPI sul Pi in questo branch) e il sender della testa stereo a 64 di default. Il test differenziale gira a entrambe le lunghezze: alla
 stessa lunghezza minimale e originale sono identici.
 
+**Sfasamento del DMA (trovato sul robot il 26/10).** Il DMA circolare dello slave non si riallinea sul CS:
+se si arma a metà di un trasferimento, ogni risposta esce in ritardo di qualche byte e si spezza su due
+trasferimenti (sul robot: 3 byte, poi 0 dopo un reset dello STM32). La ricezione dello STM32 regge (finestra
+a cavallo dei due half), ma il master deve cercare il frame **negli ultimi due trasferimenti**: a 128 byte il
+vecchio Pi ci riusciva per caso (il frame sfasato stava ancora nei 128), a 64 no. `j5mini` e il sender della
+testa stereo lo fanno (`spi_shift` / `shift` nelle statistiche); il simulatore lo riproduce con `sim_spi_phase()`.
+
 **Da fare insieme**: chi flasha `fw/minimal` deve installare anche lo stack minimale sul Pi
 (`raspberry/setup_pi.sh`, README del repo). Con il firmware del 19/10 il Pi resta a
 128. L'opzione `=y` resta nel codice per tornare indietro senza modifiche.
