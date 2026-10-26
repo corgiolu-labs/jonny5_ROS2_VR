@@ -376,7 +376,8 @@ JOINTS = ("B", "S", "G", "Y", "P", "R")
 POSE_DEFAULTS = {            # the robot's j5_settings.json (virtual degrees, 90 = HOME)
     "park": [90, 50, 150, 90, 130, 90],
     "vr": [90, 110, 90, 90, 70, 90],
-    "vel_max": 120,              # deg/s -> SETPOSE speed percent as ws-teleop: (vel - 1) / 119 * 100
+    "speed_pct": 40,             # SETPOSE speed, as the firmware's HOME (ws-teleop used vel_max 120 = 100 %: too
+                                 # fast on the robot, 26/10/2026)
     "profile": "RTR5",
 }
 
@@ -393,8 +394,7 @@ def pose_setpose_line(cfg: dict, name: str) -> str:
         v = max(5, min(175, int(s["offsets"][i] + d * (float(virtual[i]) - 90))))
         lo, hi = s["limits"][i]
         phys.append(max(lo, min(hi, v)))
-    vel = int(st.get("vel_max", POSE_DEFAULTS["vel_max"]))
-    pct = max(1, min(100, round((vel - 1.0) / 119.0 * 100)))
+    pct = max(1, min(100, int(st.get("speed_pct", POSE_DEFAULTS["speed_pct"]))))
     return "SETPOSE " + " ".join(str(v) for v in phys) + f" {pct} {st.get('profile', POSE_DEFAULTS['profile'])}"
 
 

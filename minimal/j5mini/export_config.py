@@ -9,7 +9,7 @@ It imports raspberry/controller/web_services/ws_handlers_uart.py and calls the s
 ws-teleop uses on BOOT_READY, so the lines are byte-identical to what the Pi sends today:
 SET_OFFSETS (j5_settings.json), SET_VR_PARAMS + SET_JOINT_LIMITS (routing_config.json),
 SET_PWM_CONFIG (pwm_config.json); no IMUON (the IMU is always on). Also the app's settings (offsets/dirs, get_settings)
-and the PARK / VR poses (park, vr, vel_max, profile).
+and the PARK / VR poses (park, vr, profile; speed 40 % as HOME, j5mini's default).
 Copy the button bindings next to it as well:
 
     cp ~/raspberry5/config_runtime/robot/controller_mappings.json .
@@ -52,7 +52,7 @@ def main():
         "https": {"host": "::", "port": 443, "controller_mappings": "controller_mappings.json",
                   "dashboard": "../dashboard"},
         "settings": {"offsets": offsets, "dirs": dirs,
-                     **{k: settings[k] for k in ("park", "vr", "vel_max", "profile") if k in settings}},
+                     **{k: settings[k] for k in ("park", "vr", "profile") if k in settings}},
         "telemetry_file": "/dev/shm/j5vr_telemetry.json",     # servo angles for raspberry/tools/vision_service.py
         "link_timeout_ms": 150,
         "set_clock": True,
