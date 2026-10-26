@@ -103,7 +103,7 @@ static void rt_tick_isr_cb(const struct device *dev, void *user_data)
  * scartato di proposito: congelerebbe tutto, console inclusa, se un domani il
  * loop smettesse di bloccarsi sul semaforo.
  *
- * IMU e' unico consumatore del bus I2C1 (BNO085); tenerlo sopra spi_service
+ * IMU e' unico consumatore del bus I2C2 (BNO085); tenerlo sopra spi_service
  * evita che le wake-up del DMA SPI lo preemprano durante il path I2C e il
  * rischio di wedge del bus (SDA trattenuto basso) osservato in campo. */
 #define RT_THREAD_PRIO 4
@@ -530,7 +530,7 @@ static void rt_loop_step(void)
                     }
                     else if (!g_vr_armed)
                     {
-                        /* Arming: edge classico OPPURE in Manual VR (1) basta deadman + heartbeat (no edge) */
+                        /* Arming: edge classico OPPURE in Manual VR (2) basta deadman + heartbeat (no edge) */
                         bool arm_by_edge =
                             (j5vr_current.vr_heartbeat > 0) &&
                             ((deadman_edge && inputs_now) || (inputs_edge && deadman_now));
@@ -820,7 +820,7 @@ static void rt_thread_fn(void *a, void *b, void *c)
             g_rt_step_us = (uint16_t)(step_us_ewma_x16 >> 4);
         }
 
-        /* Telemetria prestazioni su console (USART2 / ST-Link VCP) ogni ~5 s.
+        /* Telemetria prestazioni su console (USART1 / ST-Link VCP) ogni ~5 s.
          * Fuori dal punto critico (scatta 1 volta ogni 5000 iter); utile per
          * leggere periodo/step/freq durante il test senza la dashboard. */
         if ((g_rt_loop_ticks % 5000U) == 0U) {

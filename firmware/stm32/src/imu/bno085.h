@@ -1,5 +1,5 @@
 /*
- * JONNY5 - Minimal BNO085 driver (SHTP Rotation Vector su I2C1)
+ * JONNY5 - Minimal BNO085 driver (SHTP Rotation Vector su I2C2)
  *
  * Talks to a Hillcrest/CEVA BNO085 over I2C using the SHTP transport protocol.
  * Exposes only what Phase 3 needs to validate the sensor: init + rotation-vector

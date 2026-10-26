@@ -4,7 +4,7 @@
  * Espone:
  *   - Tipi: j5_profile_t, servo_setpoint_t
  *   - Inizializzazione e utility servo
- *   - Modalità MANUAL e HYBRID (mode 1 e 3)
+ *   - Modalità MANUAL e HYBRID (mode 2 e 4)
  *   - Modulo HEAD (via include di j5vr_head.h per retrocompatibilità
  *     dei chiamanti uart_control.c e rt_loop.c)
  *   - Modulo SETPOSE (j5vr_setpose_tick, j5vr_go_setpose, j5vr_go_setpose_time)

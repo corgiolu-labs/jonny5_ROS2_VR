@@ -1,5 +1,5 @@
 /*
- * j5vr_manual.c — Modalità MANUAL VR (mode 1) — helper puri
+ * j5vr_manual.c — Modalità MANUAL VR (mode 2) — helper puri
  *
  * Implementazione delle funzioni di conversione input joystick/int16.
  * Nessuna dipendenza da variabili globali di actuation.

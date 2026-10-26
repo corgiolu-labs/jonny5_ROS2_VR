@@ -19,10 +19,10 @@ LOG_MODULE_REGISTER(servo_control, LOG_LEVEL_INF);
 
 /* Device tree: pwm_dt_spec. Ordine 0..5 = BASE, SPALLA, GOMITO, YAW, PITCH, ROLL. */
 static const struct pwm_dt_spec servo_pwms[SERVO_COUNT] = {
-	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo0)), /* BASE   = TIM8_CH1 */
-	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo1)), /* SPALLA = TIM8_CH2 */
-	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo2)), /* GOMITO = TIM8_CH3 */
-	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo3)), /* YAW    = TIM8_CH4 (PC9) */
+	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo0)), /* BASE   = PB7  TIM4_CH2 */
+	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo1)), /* SPALLA = PB9  TIM17_CH1 */
+	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo2)), /* GOMITO = PB5  TIM3_CH2 */
+	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo3)), /* YAW    = PB6  TIM4_CH1 */
 	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo4)), /* PITCH  = TIM1_CH1 (PA8) */
 	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo5)), /* ROLL   = TIM1_CH4 (PA11) */
 };
@@ -37,13 +37,13 @@ static const struct pwm_dt_spec servo_pwms[SERVO_COUNT] = {
 
 #define SERVO_TIMER_MAX 0xFFFFU
 
-/* Configurazione PWM runtime per gruppo TIM8 (BASE/SPALLA/GOMITO/YAW). */
+/* Configurazione PWM runtime, gruppo A (BASE/SPALLA/GOMITO/YAW). Nomi *_tim8 storici (F446). */
 static uint32_t _pwm_hz_tim8     = 50U;
 static uint32_t _min_us_tim8     = 500U;
 static uint32_t _max_us_tim8     = 2500U;
 static uint32_t _max_deg_tim8    = 180U;
 
-/* Configurazione PWM runtime per gruppo TIM1 (PITCH/ROLL). */
+/* Configurazione PWM runtime, gruppo B (PITCH/ROLL, TIM5). Nomi *_tim1 storici (F446). */
 static uint32_t _pwm_hz_tim1     = 330U; /* SHIELD rev3: PITCH/ROLL su TIM5, servi INJS 330 Hz */
 static uint32_t _min_us_tim1     = 500U;
 static uint32_t _max_us_tim1     = 2500U;
@@ -95,17 +95,17 @@ void servo_set_pwm_config(uint32_t tim8_hz, uint32_t tim8_min_us, uint32_t tim8_
 	if (_min_us_tim8 >= _max_us_tim8) { _min_us_tim8 = _max_us_tim8 - 1U; }
 	if (_min_us_tim1 >= _max_us_tim1) { _min_us_tim1 = _max_us_tim1 - 1U; }
 
-	printk("[SERVO_CFG] TIM8: %u Hz  %u..%u us  0..%u deg\n",
+	printk("[SERVO_CFG] A B/S/G/Y: %u Hz  %u..%u us  0..%u deg\n",
 	       (unsigned)_pwm_hz_tim8, (unsigned)_min_us_tim8,
 	       (unsigned)_max_us_tim8, (unsigned)_max_deg_tim8);
-	printk("[SERVO_CFG] TIM1: %u Hz  %u..%u us  0..%u deg\n",
+	printk("[SERVO_CFG] B P/R: %u Hz  %u..%u us  0..%u deg\n",
 	       (unsigned)_pwm_hz_tim1, (unsigned)_min_us_tim1,
 	       (unsigned)_max_us_tim1, (unsigned)_max_deg_tim1);
 }
 
 /**
  * pulse_us: larghezza impulso [0, SERVO_MAX_US]; 0 disabilita l'uscita nel driver.
- * period_hz: frequenza portante PWM per questo canale (50 Hz TIM8, 50 Hz TIM1).
+ * period_hz: frequenza portante PWM per questo canale (gruppo A 50 Hz, gruppo B 330 Hz).
  */
 static int compute_period_and_pulse(const struct pwm_dt_spec *spec, uint32_t pulse_us,
 				    uint32_t period_hz, uint32_t *period_out, uint32_t *pulse_out)
@@ -163,16 +163,16 @@ bool servo_control_init(void)
 {
 	bool driver_ready = true;
 
-	printk("[SERVO] TIM8: BASE/SPALLA/GOMITO/YAW @ %u Hz  %u..%u us  0..%u deg\n",
+	printk("[SERVO] A: BASE/SPALLA/GOMITO/YAW @ %u Hz  %u..%u us  0..%u deg\n",
 	       (unsigned)_pwm_hz_tim8, (unsigned)_min_us_tim8,
 	       (unsigned)_max_us_tim8, (unsigned)_max_deg_tim8);
-	printk("[SERVO] TIM1: PITCH/ROLL @ %u Hz  %u..%u us  0..%u deg\n",
+	printk("[SERVO] B: PITCH/ROLL @ %u Hz  %u..%u us  0..%u deg\n",
 	       (unsigned)_pwm_hz_tim1, (unsigned)_min_us_tim1,
 	       (unsigned)_max_us_tim1, (unsigned)_max_deg_tim1);
 
-	LOG_INF("TIM8 servo group: BASE/SPALLA/GOMITO/YAW @ %u Hz", (unsigned)_pwm_hz_tim8);
-	LOG_INF("TIM1 servo group: PITCH/ROLL @ %u Hz", (unsigned)_pwm_hz_tim1);
-	LOG_INF("Servo pulse range TIM8: %u-%u us", (unsigned)_min_us_tim8, (unsigned)_max_us_tim8);
+	LOG_INF("servo group A: BASE/SPALLA/GOMITO/YAW @ %u Hz", (unsigned)_pwm_hz_tim8);
+	LOG_INF("servo group B: PITCH/ROLL @ %u Hz", (unsigned)_pwm_hz_tim1);
+	LOG_INF("Servo pulse range group A: %u-%u us", (unsigned)_min_us_tim8, (unsigned)_max_us_tim8);
 
 	for (int i = 0; i < SERVO_COUNT; i++) {
 		const struct pwm_dt_spec *spec = &servo_pwms[i];
@@ -195,7 +195,7 @@ bool servo_control_init(void)
 	}
 
 	if (driver_ready) {
-		LOG_INF("[SERVO] PWM init OK (TIM8 CH1-4, TIM1 CH1+CH4)");
+		LOG_INF("[SERVO] PWM init OK (TIM4/TIM17/TIM3 group A, TIM5 group B)");
 	} else {
 		LOG_ERR("[SERVO] Some PWM devices not ready");
 	}
@@ -314,7 +314,7 @@ bool servo_set_angle_f(servo_joint_t joint, float angle_deg)
 
 	/* Conversione cycles_per_sec/1M con float per non perdere precisione sub-us.
 	 * Riusa servo_apply_pulse_us con valore arrotondato all'us più vicino — ma
-	 * dato che il timer ha 84 cicli/us su F446 (TIM8) e 84 cicli/us su TIM1,
+	 * dato che sul G474 tutti i timer contano a 1 MHz (prescaler 169): risoluzione reale 1 us (~0,09 gradi),
 	 * ogni us corrisponde a ~84 cicli, quindi la risoluzione minima del PWM
 	 * (1 ciclo = ~12 ns ≈ 0.012 us) è già sub-degree.
 	 * Per ottenere risoluzione decimale del pulse passiamo PWM cycles direttamente. */
@@ -328,7 +328,7 @@ bool servo_set_angle_f(servo_joint_t joint, float angle_deg)
 
 	uint64_t period_cycles = cycles_per_sec / (uint64_t)period_hz;
 	/* pulse_cycles = cycles_per_sec * pulse_us / 1e6, calcolato in double per
-	 * preservare la frazione sub-us (es. 1503.7 us → 126310 cicli a 84 MHz). */
+	 * preservare la frazione sub-us (su timer piu' veloci; a 1 MHz l'arrotondamento e' al microsecondo). */
 	double pulse_cycles_d = ((double)cycles_per_sec * (double)pulse_us_f) / 1.0e6;
 	uint64_t pulse_cycles = (uint64_t)(pulse_cycles_d + 0.5);
 

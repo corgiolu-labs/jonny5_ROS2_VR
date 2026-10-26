@@ -54,7 +54,7 @@
 #define SPI_SERVICE_STACK_SIZE 1024
 /* Priorita' complessiva: RT(5) > IMU(6) > SPI service(7).
  * Con la versione precedente (SPI service=6 > IMU=7) le wake-up del DMA SPI
- * preempravano il thread IMU durante il path I2C1 dell'IMU, producendo in campo
+ * preempravano il thread IMU durante il path I2C2 dell'IMU, producendo in campo
  * wedge ricorrenti del bus (SDA held low) con probabilita' dipendente dal rate
  * SPI. Ora IMU non e' piu' preempribile da spi_service; SPI service resta
  * preempribile dal loop RT (5), preservando la disciplina RT originaria. */
@@ -80,7 +80,7 @@
  * ========================================================= */
 
 static SPI_HandleTypeDef  hspi1;
-static DMA_HandleTypeDef  hdma_spi1_rx;   /* DMA2 Stream0 Channel3 */
+static DMA_HandleTypeDef  hdma_spi1_rx;   /* DMA1 Channel1 (DMAMUX SPI1_RX) */
 static DMA_HandleTypeDef  hdma_spi1_tx;   /* DMA2 Stream3 Channel3 */
 
 /* Double-buffer DMA: 2 × SPI_FRAME_LEN (64 or 128) */
@@ -163,7 +163,7 @@ static HAL_StatusTypeDef spi_start_dma_circular(void);
  * ========================================================= */
 
 /**
- * dma_clear_spi1_flags — azzera i pending flag DMA per Stream0 (RX) e Stream3 (TX).
+ * dma_clear_spi1_flags — azzera i pending flag DMA per DMA1 Channel1 (RX) e Channel2 (TX).
  * Chiamata sia in spi_start_dma_circular che in restart da errore.
  */
 static inline void dma_clear_spi1_flags(void)

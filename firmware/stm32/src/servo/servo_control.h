@@ -15,12 +15,12 @@
 
 /* Enum giunti robot */
 typedef enum {
-    SERVO_BASE = 0,    /* SERVO1 - PC6 - TIM8_CH1 */
-    SERVO_SPALLA,     /* SERVO2 - PC7 - TIM8_CH2 */
-    SERVO_GOMITO,     /* SERVO3 - PC8 - TIM8_CH3 */
-    SERVO_YAW,        /* indice 3 - PC9 - TIM8_CH4 — rotazione dx/sx (ZYX) */
-    SERVO_PITCH,      /* indice 4 - PA8 - TIM1_CH1 */
-    SERVO_ROLL,       /* indice 5 - PA11 - TIM1_CH4 — tilt laterale (ZYX) */
+    SERVO_BASE = 0,    /* J3  - PB7 - TIM4_CH2  (gruppo A) */
+    SERVO_SPALLA,     /* J4  - PB9 - TIM17_CH1 (gruppo A) */
+    SERVO_GOMITO,     /* J6  - PB5 - TIM3_CH2  (gruppo A) */
+    SERVO_YAW,        /* J7  - PB6 - TIM4_CH1  (gruppo A) — rotazione dx/sx (ZYX) */
+    SERVO_PITCH,      /* J14 - PA3 - TIM5_CH4  (gruppo B, 330 Hz) */
+    SERVO_ROLL,       /* J16 - PA2 - TIM5_CH3  (gruppo B, 330 Hz) — tilt laterale (ZYX) */
     SERVO_COUNT       /* Numero totale servo */
 } servo_joint_t;
 
@@ -32,7 +32,7 @@ typedef enum {
 bool servo_control_init(void);
 
 /**
- * Frequenza PWM (Hz) per il giunto: TIM8 → 50 Hz, TIM1 → 50 Hz (PITCH/ROLL).
+ * Frequenza PWM (Hz) per il giunto: gruppo A (B/S/G/Y) 50 Hz, gruppo B (PITCH/ROLL) 330 Hz.
  */
 uint32_t servo_get_period_hz(servo_joint_t joint);
 

@@ -1,7 +1,7 @@
 /*
  * JONNY5 - IMU Module (BNO085)
  * Orientamento via BNO085 SHTP Rotation Vector (fusione sul sensore).
- * Backend unico: il quaternione arriva gia' fuso da bno085.c via I2C1.
+ * Backend unico: il quaternione arriva gia' fuso da bno085.c via I2C2.
  *
  * NOTE:
  *   - Critical path (imu_update_orientation, imu_get_snapshot,
@@ -72,7 +72,7 @@ void imu_i2c_bus_recovery(void)
 	/* AN4559/ST: I2C bus recovery tramite 9 clock manuali su SCL */
 	LOG_WRN("[IMU] I2C bus recovery start");
 
-	/* Nucleo-F446RE: I2C1 su PB8(SCL) / PB9(SDA) come da overlay */
+	/* SHIELD rev3: I2C2 su PC4 (SCL) / PA8 (SDA), vedi j5_board.h */
 #if DT_NODE_EXISTS(J5_I2C_SCL_PORT_NODE) && DT_NODE_EXISTS(J5_I2C_NODE)
 	const struct device *scl_dev = DEVICE_DT_GET(J5_I2C_SCL_PORT_NODE);
 	const struct device *sda_dev = DEVICE_DT_GET(J5_I2C_SDA_PORT_NODE);
@@ -82,7 +82,7 @@ void imu_i2c_bus_recovery(void)
 		return;
 	}
 
-	/* Configura temporaneamente PB8/PB9 come GPIO open-drain */
+	/* Configura temporaneamente SCL/SDA come GPIO open-drain */
 	(void)gpio_pin_configure(scl_dev, J5_I2C_SCL_PIN, GPIO_OUTPUT | GPIO_OPEN_DRAIN);
 	(void)gpio_pin_configure(sda_dev, J5_I2C_SDA_PIN, GPIO_OUTPUT | GPIO_OPEN_DRAIN);
 	/* Rilascia SDA (open-drain high = high-Z) */
@@ -125,7 +125,7 @@ void imu_i2c_bus_recovery(void)
 	gpio_pin_set(sda_dev, J5_I2C_SDA_PIN, 1);      /* STOP: SDA 0->1 mentre SCL=1 */
 	k_usleep(10);
 
-	/* Ripristina pinctrl I2C1 default */
+	/* Ripristina pinctrl I2C2 default */
 	(void)pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(J5_I2C_NODE), PINCTRL_STATE_DEFAULT);
 #else
 	LOG_WRN("[IMU] I2C bus recovery skipped (missing DT nodes)");
@@ -134,7 +134,7 @@ void imu_i2c_bus_recovery(void)
 	LOG_WRN("[IMU] I2C bus recovery done");
 }
 
-/* Set to true by the bus scan when a BNO085 (0x4A or 0x4B) is found on I2C1.
+/* Set to true by the bus scan when a BNO085 (0x4A or 0x4B) is found on I2C2.
  * Consumed by imu_init() to select the BNO085 backend (only supported sensor). */
 static bool s_bno085_detected = false;
 
@@ -211,7 +211,7 @@ int imu_init(void)
 	}
 
 	/* Nessun BNO085 sul bus: IMU non disponibile (backend unico BNO085). */
-	LOG_ERR("[IMU] no BNO085 detected on I2C1 (expected 0x4A/0x4B) - imu_available=0");
+	LOG_ERR("[IMU] no BNO085 detected on I2C2 (expected 0x4A/0x4B) - imu_available=0");
 	imu_available = false;
 	return -ENODEV;
 }

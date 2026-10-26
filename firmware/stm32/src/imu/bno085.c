@@ -206,7 +206,7 @@ int bno085_init(void)
 	s_seq_ch2 = 0;
 
 	if (s_bus == NULL || !device_is_ready(s_bus)) {
-		LOG_ERR("I2C1 not ready");
+		LOG_ERR("I2C bus not ready");
 		return -ENODEV;
 	}
 

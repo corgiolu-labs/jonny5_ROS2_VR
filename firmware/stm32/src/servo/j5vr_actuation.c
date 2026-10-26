@@ -6,7 +6,7 @@
  *     velocità massima, LPF alpha, accumulatori step.
  *   - Helper interni: safe_increment, apply_desired, update_max_vel,
  *     j5_clampf, j5_angle_to_u8.
- *   - MANUAL mode (mode 1): j5vr_apply_setpoint_incremental.
+ *   - MANUAL mode (mode 2): j5vr_apply_setpoint_incremental.
  *   - HYBRID mode (mode 3): j5vr_apply_hybrid — sperimentale.
  *   - API pubblica: init, center, teleop-pose, set_joint_limits,
  *     j5vr_to_servo_setpoint.
@@ -288,7 +288,7 @@ void j5vr_actuation_set_arm_vel_head(float base_deg_s, float spalla_deg_s, float
 /**
  * j5vr_actuation_apply_desired — applica desired_positions[] ai servo
  * con rate-limiting (deg/s), LPF EMA per-giunto e accumulatore sottogrado.
- * Se j5vr != NULL e mode 2 o 3, per il polso (YAW/PITCH/ROLL) usa le vel HEAD.
+ * Se j5vr != NULL e mode 3, 4 o 5, per il polso (YAW/PITCH/ROLL) usa le vel HEAD.
  *
  * Esposta a j5vr_head.c tramite j5vr_head.h.
  */
@@ -519,7 +519,7 @@ void j5vr_set_joint_limits(int joint, float lim_min, float lim_max)
 }
 
 /* =========================================================
- * MODE DISPATCH — MANUAL (mode 1)
+ * MODE DISPATCH — MANUAL (mode 2)
  * ========================================================= */
 
 /**

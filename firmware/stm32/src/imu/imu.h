@@ -1,6 +1,6 @@
 /*
  * JONNY5 - IMU Module (BNO085)
- * Orientamento BNO085: quaternione fuso (Rotation Vector) via I2C1
+ * Orientamento BNO085: quaternione fuso (Rotation Vector) via I2C2
  */
 
 #ifndef IMU_H
