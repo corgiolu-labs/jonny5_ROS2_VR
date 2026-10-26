@@ -68,6 +68,10 @@ F_PX = (W / 2) / math.tan(math.radians(HFOV_DEG / 2))
 def f_px_of(hfov_deg: float) -> float:
     return (W / 2) / math.tan(math.radians(hfov_deg / 2))
 BASELINE_MM = 63.0
+# Distance scale: Z = F_CAL_PX * B / d. Nominal F_PX until a calibration at TWO distances fits it (26/10/2026: with
+# the nominal 924 px the robot read 1066 mm at 1160 mm after a one-point calibration at 460 mm -> f*B is ~6 % lower
+# than nominal, 870 px with B = 63). F_PX itself stays the unit of the tele pixels (mode scaling, dx_inf).
+F_CAL_PX = F_PX
 
 # matching, at half resolution (400x225)
 TPLS = (32, 48, 64, 96)              # template sides, half res (64..192 px full res): the smallest one with enough
@@ -286,19 +290,42 @@ def match_size(left: np.ndarray, right: np.ndarray, TPL: int, prev_dx=None, zoom
 # ---------------------------------------------------------------------------------------------------------------
 
 def load_calib() -> dict:
+    """dx_inf / dy_off (tele px), the calibration points [[distance_mm, dx_px], ...]; sets F_CAL_PX from the file."""
+    global F_CAL_PX
     try:
         c = json.loads(CALIB_PATH.read_text())
-        return {"dx_inf": float(c.get("dx_inf_px", 0.0)), "dy_off": float(c.get("dy_off_px", 0.0))}
+        f_cal = float(c.get("f_cal_px") or F_PX)
+        F_CAL_PX = f_cal if 0.5 * F_PX < f_cal < 1.5 * F_PX else F_PX
+        pts = [[float(a), float(b)] for a, b in (c.get("points") or [])]
+        if not pts and c.get("calibrated_with_mm") and c.get("dx_measured_px") is not None:
+            pts = [[float(c["calibrated_with_mm"]), float(c["dx_measured_px"])]]
+        return {"dx_inf": float(c.get("dx_inf_px", 0.0)), "dy_off": float(c.get("dy_off_px", 0.0)), "points": pts}
     except Exception:
-        return {"dx_inf": 0.0, "dy_off": 0.0}
+        F_CAL_PX = F_PX
+        return {"dx_inf": 0.0, "dy_off": 0.0, "points": []}
 
 
-def save_calib(dx_inf: float, dy_off: float, distance_mm: float, dx_meas: float):
+def fit_calib(points: list, dx_inf_old: float) -> tuple:
+    """(dx_inf, f_cal) from the calibration points (distance_mm, dx_px): with two distances at least 25 % apart
+    both the zero and the scale f*B are fitted (dx_inf - dx_i = f_cal * B / Z_i); with one point only the zero."""
+    mm, cdx = points[-1]
+    far = [p for p in points[:-1] if abs(p[0] - mm) / mm >= 0.25]
+    if far:
+        m1, x1 = far[-1]
+        fb = (cdx - x1) / (1.0 / m1 - 1.0 / mm)
+        f_cal = fb / BASELINE_MM
+        if 0.7 * F_PX < f_cal < 1.3 * F_PX:
+            return cdx + fb / mm, f_cal
+    return cdx + F_CAL_PX * BASELINE_MM / mm, F_CAL_PX
+
+
+def save_calib(dx_inf: float, dy_off: float, distance_mm: float, dx_meas: float, points: list | None = None):
     CALIB_PATH.parent.mkdir(parents=True, exist_ok=True)
     CALIB_PATH.write_text(json.dumps({
         "dx_inf_px": round(dx_inf, 2), "dy_off_px": round(dy_off, 2),
-        "f_px": round(F_PX, 1), "hfov_deg": HFOV_DEG, "baseline_mm": BASELINE_MM,
+        "f_px": round(F_PX, 1), "f_cal_px": round(F_CAL_PX, 1), "hfov_deg": HFOV_DEG, "baseline_mm": BASELINE_MM,
         "calibrated_with_mm": distance_mm, "dx_measured_px": round(dx_meas, 2),
+        "points": [[round(a, 1), round(b, 2)] for a, b in (points or [[distance_mm, dx_meas]])],
         "calibrated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }, indent=2))
 
@@ -394,6 +421,7 @@ class CamZoom:
 
 
 def main():
+    global F_CAL_PX          # set by load_calib() and by a two-point calibration
     ap = argparse.ArgumentParser()
     ap.add_argument("--rtsp", default="rtsp://127.0.0.1:8554")
     ap.add_argument("--ws", default="wss://127.0.0.1:8557")
@@ -406,7 +434,7 @@ def main():
     for r in readers:
         r.start()
     calib = load_calib()
-    log(f"f = {F_PX:.1f} px, baseline {BASELINE_MM} mm, dx_inf {calib['dx_inf']:.1f} px")
+    log(f"f = {F_PX:.1f} px (distance scale {F_CAL_PX:.1f}), baseline {BASELINE_MM} mm, dx_inf {calib['dx_inf']:.1f} px")
 
     calib_request = {"mm": args.calibrate_mm}
     ctx = ssl.create_default_context()
@@ -562,7 +590,7 @@ def main():
             mdx = float(np.median([h[0] for h in hist]))
             mdy = float(np.median([h[1] for h in hist]))
             d = calib["dx_inf"] - mdx
-            dist = F_PX * BASELINE_MM / d if d > 0.5 else None
+            dist = F_CAL_PX * BASELINE_MM / d if d > 0.5 else None
             last_out = (mdx, mdy, dist)
             # residual in the (shifted) cam1 stream: what the viewer still has to converge
             msg.update({"lock": True, "dx": round((mdx - ox) * z * s_px, 2), "dy": round((mdy - oy) * z * s_px, 2),
@@ -575,11 +603,14 @@ def main():
                     cdx = float(np.median([c[0] for c in calib_samples]))
                     cdy = float(np.median([c[1] for c in calib_samples]))
                     mm = calib_request["mm"]
-                    dx_inf = cdx + F_PX * BASELINE_MM / mm
-                    save_calib(dx_inf, cdy, mm, cdx)
-                    calib = {"dx_inf": dx_inf, "dy_off": cdy}
-                    log(f"calibrated: dx at {mm:.0f} mm = {cdx:.1f} px -> dx_inf = {dx_inf:.1f} px, dy {cdy:.1f} px "
-                        f"-> {CALIB_PATH}")
+                    # a second distance at least 25 % away from a stored one also fits the scale f*B (F_CAL_PX)
+                    pts = [p for p in calib.get("points", []) if abs(p[0] - mm) / mm >= 0.25][-1:] + [[mm, cdx]]
+                    dx_inf, f_cal = fit_calib(pts, calib["dx_inf"])
+                    F_CAL_PX = f_cal
+                    save_calib(dx_inf, cdy, mm, cdx, pts)
+                    calib = {"dx_inf": dx_inf, "dy_off": cdy, "points": pts}
+                    log(f"calibrated: dx at {mm:.0f} mm = {cdx:.1f} px -> dx_inf = {dx_inf:.1f} px, f_cal {f_cal:.1f} px "
+                        f"({len(pts)} point{'s' if len(pts) > 1 else ''}), dy {cdy:.1f} px -> {CALIB_PATH}")
                     calib_request["mm"] = 0
                     calib_samples = []
                     if args.calibrate_mm:

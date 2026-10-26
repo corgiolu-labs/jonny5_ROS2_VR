@@ -343,7 +343,7 @@ class Service:
             d_true = (dx_s / zoom + off[0]) / s_px             # zoom-1 TELE px (the calibration's unit)
             d = self.calib["dx_inf"] - d_true
             if d > 0.5:
-                dist = sc.F_PX * sc.BASELINE_MM / d
+                dist = sc.F_CAL_PX * sc.BASELINE_MM / d
             target["dx"], target["dy"] = round(dx_s, 1), round(dy_s, 1)
         if dist is None and tgt is None and self.last_col["dist_mm"] and time.monotonic() - self.last_col["t"] < 1.5:
             dist = self.last_col["dist_mm"]                    # crosshair point: the collimator's lock
