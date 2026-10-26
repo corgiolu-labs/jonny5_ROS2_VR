@@ -216,6 +216,12 @@ class Core:
         # quaternion, ASSIST B/S/G targets) is replayed smoothing_ms behind, interpolated on the headset's own
         # timestamps; grips, buttons and sticks stay immediate (releasing the grips still stops at once).
         self.smooth_s = max(0.0, float(cfg.get("smoothing_ms", 30))) / 1000.0
+        # horizon ("Orizzonte" in the app, every mode): the firmware levels the wrist roll from the joint angles
+        # (HORIZON line with the joint directions); trim_deg = correction from the wrist IMU (horizon_trim_step)
+        self.horizon_on = bool(cfg.get("horizon_lock", False))
+        self.horizon_trim = 0.0
+        self.horizon_dirs = [1 if d >= 0 else -1 for d in cfg.get("settings", {}).get("dirs", [1] * 6)]
+        self.horizon_hist: list = []
         self.samples: collections.deque = collections.deque(maxlen=90)   # (t_headset, t_local, quat, arm | None)
         self.last_mode, self.last_hb = 0, 0
         self.tx_seq, self.transfers = 0, 0
@@ -258,6 +264,43 @@ class Core:
         self.payload, self.payload_t = p, self.clock()
         self.last_mode, self.last_hb = mode, struct.unpack_from(">H", p, 11)[0]
         return None
+
+    def horizon_line(self) -> str:
+        if not self.horizon_on:
+            return "HORIZON 0"
+        return "HORIZON 1 " + " ".join(str(d) for d in self.horizon_dirs) + f" {self.horizon_trim:.2f}"
+
+    def set_horizon(self, on: bool):
+        self.horizon_on = bool(on)
+        if not on:
+            self.horizon_trim = 0.0
+        self.uart_send(self.horizon_line())
+
+    def horizon_trim_step(self, up_tool):
+        """Called at ~5 Hz with the vertical measured by the wrist IMU in the tool frame (None = no IMU): while the
+        arm and the IMU are still, the image's horizontal axis (tool y) should be level; what is left is fed back
+        into the firmware's roll (trim, deg). Base tilt, servo play, offsets: whatever the kinematics miss."""
+        if not self.horizon_on or up_tool is None:
+            self.horizon_hist = []
+            return
+        now = self.clock()
+        pose = tuple(self.telemetry.get(k) for k in SERVO_KEYS)
+        h = self.horizon_hist
+        h.append((now, pose, tuple(up_tool)))
+        while h and now - h[0][0] > 0.8:
+            h.pop(0)
+        still = (len(h) >= 4 and now - h[0][0] >= 0.6 and all(x[1] == pose for x in h)
+                 and max(abs(a - b) for x in h for a, b in zip(x[2], up_tool)) < 0.01)
+        if not still:
+            return
+        err = math.degrees(math.asin(max(-1.0, min(1.0, up_tool[1]))))     # + = image tilted, its left side up
+        if abs(err) < 0.5:
+            return
+        trim = max(-8.0, min(8.0, self.horizon_trim - 0.5 * err))
+        if abs(trim - self.horizon_trim) >= 0.2:
+            self.horizon_trim = trim
+            self.uart_send(self.horizon_line())
+            self.horizon_hist = []                 # let the wrist settle before the next correction
 
     def resend_vr_params(self):
         now = self.clock()
@@ -323,7 +366,7 @@ class Core:
         self.events.append({"type": "uart_response", "cmd": cmd, "ok": ok, "response": resp})
 
     def _start_boot_push(self):
-        self.boot_queue = list(self.boot_lines)
+        self.boot_queue = list(self.boot_lines) + ([self.horizon_line()] if self.horizon_on else [])
         self.boot_retries = 0
         self.boot_done = True
         self._boot_next()
@@ -735,10 +778,13 @@ class Server:
                 with self.lock:
                     self.core.resend_vr_params()
             await ws.send(json.dumps({"type": "ack", "set_vr_mode": msg.get("mode")}))
-        elif typ == "horizon_lock":                  # Quest panel "Orizzonte": ASSIST keeps the image level
+        elif typ == "horizon_lock":                  # "Orizzonte": the image stays level in every mode
+            on = bool(msg.get("on"))
             with self.lock:
-                on = self.assist.set_horizon_lock(bool(msg.get("on"))) if self.assist else False
-            await self.broadcast({"type": "horizon_lock", "on": on, "available": self.assist is not None})
+                self.core.set_horizon(on)
+                if self.assist:
+                    self.assist.set_horizon_lock(on)    # ASSIST also levels its own camera target
+            await self.broadcast({"type": "horizon_lock", "on": on})
         elif typ == "time_sync":
             self.time_sync(msg.get("epoch_ms"))
         elif typ == "get_settings":
@@ -807,6 +853,7 @@ class Server:
             self.cfg["boot_commands"] = lines
             self.cfg.setdefault("settings", {})["offsets"] = list(msg["offsets"])
             self.cfg["settings"]["dirs"] = list(msg["dirs"])
+            self.core.horizon_dirs = [1 if d >= 0 else -1 for d in msg["dirs"]]
             self.core.boot_lines = list(lines)
             self.core.vr_params_line = next((l for l in lines if l.startswith("SET_VR_PARAMS")), None)
             if self.assist:
@@ -835,11 +882,15 @@ class Server:
             pass
 
     async def broadcast_loop(self):
+        n = 0
         while True:
             await asyncio.sleep(0.05)
+            n += 1
             with self.lock:
+                if n % 4 == 0:
+                    self.core.horizon_trim_step(self.assist.imu_up_tool() if self.assist else None)
                 msgs = [{**self.core.telemetry_message(), **self.cams.telemetry(), "clients": len(self.clients),
-                         "horizon_lock": bool(self.assist and self.assist.horizon_lock())}] + \
+                         "horizon_lock": self.core.horizon_on, "horizon_trim": round(self.core.horizon_trim, 2)}] + \
                     self.core.events
                 self.core.events = []
             self.write_telemetry_file(msgs[0])
@@ -874,7 +925,7 @@ class Assist:
                      for k, v in ASSIST_DEFAULTS.items()}
         self.uart = _UartBridge(core, lock)
         self.configure()
-        gimbal.set_horizon_lock(bool(a.get("horizon_lock", False)))
+        gimbal.set_horizon_lock(bool(cfg.get("horizon_lock", False)))
 
     @classmethod
     def create(cls, core, lock, cfg):
@@ -921,6 +972,17 @@ class Assist:
 
     def set_horizon_lock(self, on: bool) -> bool:
         return self.g.set_horizon_lock(on)
+
+    def imu_up_tool(self):
+        """World vertical seen in the tool frame by the wrist IMU (mounting from imu_ee_mount.json), or None."""
+        tm = self.core.telemetry
+        if not tm.get("imu_valid"):
+            return None
+        m, _ = self.g._imu_mount()
+        if m is None:
+            return None
+        r = self.g._quat_to_mat(tm["imu_q_w"], tm["imu_q_x"], tm["imu_q_y"], tm["imu_q_z"])
+        return [float(v) for v in m @ (r.T @ self.g.np.array([0.0, 0.0, 1.0]))]
 
     def horizon_lock(self) -> bool:
         return self.g.horizon_lock()

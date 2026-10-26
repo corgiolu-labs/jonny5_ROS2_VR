@@ -292,8 +292,86 @@ void j5vr_actuation_set_arm_vel_head(float base_deg_s, float spalla_deg_s, float
  *
  * Esposta a j5vr_head.c tramite j5vr_head.h.
  */
+/* =========================================================
+ * ORIZZONTE (vedi j5vr_actuation.h)
+ * =========================================================
+ * Cinematica della camera (stessa del Pi / dashboard): R = Rz(q1) Ry(q2+q3) Rz(q4) Ry(q5) Rx(q6), q in radianti
+ * = (fisico - offset) * dir. L'asse y della camera (orizzontale dell'immagine) e' a livello quando R[2][1] = 0:
+ * con A = Rz(q1) Ry(q2+q3) Rz(q4) Ry(q5), q6 = atan2(-A21, A22) (soluzione con l'immagine dritta). Rz(q1) non
+ * cambia la riga z, quindi la base non entra. Guardando quasi in verticale (A21^2 + A22^2 piccolo) il roll non e'
+ * definito: si lascia quello del modo. */
+
+#define HORIZON_RAMP_S     0.5f
+#define HORIZON_DEG2RAD    0.017453292519943295f
+#define HORIZON_MIN_HORIZ  0.3f
+
+static struct {
+    bool  on;
+    float dirs[SERVO_COUNT];
+    float trim_rad;
+    float u;            /* 0 = roll del modo, 1 = a livello */
+    float mode_roll;    /* ultimo roll scritto dal modo */
+    float written;      /* ultimo roll scritto qui */
+    bool  have_written;
+} hz = { .dirs = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f } };
+
+void j5vr_horizon_set(bool on, const float dirs[6], float trim_deg)
+{
+    if (dirs != NULL)
+    {
+        for (int i = 0; i < SERVO_COUNT; i++) { hz.dirs[i] = (dirs[i] < 0.0f) ? -1.0f : 1.0f; }
+    }
+    hz.trim_rad = j5_clampf(trim_deg, -15.0f, 15.0f) * HORIZON_DEG2RAD;
+    hz.on = on;
+}
+
+bool j5vr_horizon_is_on(void)
+{
+    return hz.on;
+}
+
+static void horizon_apply(void)
+{
+    const float target = hz.on ? 1.0f : 0.0f;
+    if (hz.u == 0.0f && target == 0.0f)
+    {
+        hz.have_written = false;
+        return;
+    }
+    /* il modo ha scritto un roll nuovo (diverso da quello lasciato qui): e' il suo valore */
+    if (!hz.have_written || desired_positions[SERVO_ROLL] != hz.written)
+    {
+        hz.mode_roll = desired_positions[SERVO_ROLL];
+    }
+    const float k = RT_LOOP_PERIOD_SEC / HORIZON_RAMP_S;
+    hz.u = j5_clampf(hz.u + j5_clampf(target - hz.u, -k, k), 0.0f, 1.0f);
+
+    const float d2r = HORIZON_DEG2RAD;
+    float q[5];
+    for (int i = 0; i < 5; i++)
+    {
+        /* posa REALE (in MANUAL i target corrono avanti ai servo: livellare su quelli inclinava l'immagine) */
+        q[i] = (servo_get_angle_f((servo_joint_t)i) - (float)servo_offset_deg[i]) * hz.dirs[i] * d2r;
+    }
+    const float s = q[1] + q[2];
+    const float a21 = sinf(s) * sinf(q[3]);
+    const float a22 = -sinf(s) * cosf(q[3]) * sinf(q[4]) + cosf(s) * cosf(q[4]);
+    float roll = hz.mode_roll;
+    if (sqrtf(a21 * a21 + a22 * a22) >= HORIZON_MIN_HORIZ)
+    {
+        const float q6 = atan2f(-a21, a22) + hz.trim_rad;
+        const float level = (float)servo_offset_deg[SERVO_ROLL] + hz.dirs[SERVO_ROLL] * q6 / d2r;
+        roll = hz.mode_roll + (level - hz.mode_roll) * hz.u;
+    }
+    roll = j5_clampf(roll, joint_min_deg[SERVO_ROLL], joint_max_deg[SERVO_ROLL]);
+    desired_positions[SERVO_ROLL] = roll;
+    hz.written = roll;
+    hz.have_written = true;
+}
+
 void j5vr_actuation_apply_desired(const struct j5vr_state *j5vr)
 {
+    horizon_apply();
     for (int i = 0; i < SERVO_COUNT; i++)
     {
         /* Posizione corrente con la frazione: l'uscita e' sub-grado (servo_set_angle_f), come nel
@@ -697,7 +775,9 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
             desired_positions[SERVO_GOMITO] = servo_get_angle_f(SERVO_GOMITO);
             step_accumulator[SERVO_GOMITO]  = 0.0f;
         }
-        if (!roll_has_input) {
+        /* con l'Orizzonte il roll lo decide horizon_apply(): azzerarlo qui a ogni tick teneva l'accumulatore
+         * sotto la soglia di passo e il roll non si muoveva mai */
+        if (!roll_has_input && !hz.on) {
             desired_positions[SERVO_ROLL]   = servo_get_angle_f(SERVO_ROLL);
             step_accumulator[SERVO_ROLL]    = 0.0f;
         }

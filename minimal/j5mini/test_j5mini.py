@@ -737,3 +737,53 @@ def test_horizon_lock_keeps_the_assist_image_level(lib):
     locked = assist_camera_roll(lib, True)
     assert abs(free) > 8, free
     assert abs(locked) < 2, locked
+
+
+def test_horizon_in_every_mode_from_the_server(lib):
+    """"Orizzonte" is not a mode: the server sends HORIZON to the firmware (joint directions) whatever the mode,
+    the configuration push repeats it after an STM32 reset, and the telemetry reports it."""
+    cfg = json.loads(json.dumps(CFG))
+    cfg["settings"]["dirs"] = [1, -1, 1, 1, -1, 1]
+    r = Rig(lib, cfg)
+    r.run(1000)
+    srv = j5mini.Server(r.core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+
+    class Ws:
+        async def send(self, data):
+            pass
+
+    asyncio.run(srv.on_message(Ws(), {"type": "horizon_lock", "on": True}))
+    r.run(200)
+    resp = [e for e in r.core.events if e.get("cmd", "").startswith("HORIZON")]
+    assert resp[-1]["cmd"] == "HORIZON 1 1 -1 1 1 -1 1 0.00" and resp[-1]["response"] == "OK HORIZON ON"
+    assert r.core.telemetry_message() and r.core.horizon_on
+    r.core._start_boot_push()
+    assert r.core.boot_queue[-1] == "HORIZON 1 1 -1 1 1 -1 1 0.00"
+    asyncio.run(srv.on_message(Ws(), {"type": "horizon_lock", "on": False}))
+    r.run(200)
+    assert [e for e in r.core.events if e.get("cmd") == "HORIZON 0"][-1]["response"] == "OK HORIZON OFF"
+
+
+def test_horizon_trim_from_the_wrist_imu():
+    """Arm and IMU still, image tilted (tool y has an upward component): the trim turns the roll back, in steps,
+    and only while still."""
+    import math
+    sent = []
+    core = j5mini.Core(json.loads(json.dumps(CFG)), None, None, clock=FakeClock(), log=lambda s: None)
+    core.uart_send = lambda cmd, cb=None: sent.append(cmd)
+    core.horizon_on = True
+    core.telemetry = {k: 90 for k in j5mini.SERVO_KEYS}
+    tilt = math.radians(3.0)
+    up = (0.0, math.sin(tilt), math.cos(tilt))                 # image tilted by 3 deg, left side up
+    for _ in range(5):
+        core.clock.t += 0.2
+        core.horizon_trim_step(up)
+    assert sent and core.horizon_trim == pytest.approx(-1.5, abs=0.01)
+    assert sent[-1].endswith(" -1.50")
+    n = len(sent)
+    core.telemetry["servo_deg_Y"] = 95                          # the arm moves: no correction
+    for _ in range(5):
+        core.clock.t += 0.2
+        core.horizon_trim_step(up)
+        core.telemetry["servo_deg_Y"] += 1
+    assert len(sent) == n

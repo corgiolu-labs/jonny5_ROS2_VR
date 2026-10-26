@@ -464,3 +464,56 @@ def test_targets_are_interpolated_between_spi_frames(lib, mode):
     shares = motion_share_right_after_frames(lib, mode)
     assert shares, "nothing moved"
     assert max(shares) < 0.33, shares               # without it: 0.37-0.42; uniform = 0.30
+
+
+ROBOT_DIRS = (1, -1, 1, 1, -1, 1)
+
+
+def camera_roll_deg(angles, offsets=(100, 88, 93, 95, 90, 95), dirs=ROBOT_DIRS):
+    """Tilt of the image's horizontal axis from level: R = Rz(q1) Ry(q2+q3) Rz(q4) Ry(q5) Rx(q6), q = (phys-off)*dir."""
+    import math
+    q = [math.radians((a - o) * d) for a, o, d in zip(angles, offsets, dirs)]
+    s = q[1] + q[2]
+    a21 = math.sin(s) * math.sin(q[3])
+    a22 = -math.sin(s) * math.cos(q[3]) * math.sin(q[4]) + math.cos(s) * math.cos(q[4])
+    return math.degrees(math.asin(max(-1.0, min(1.0, a21 * math.cos(q[5]) + a22 * math.sin(q[5])))))
+
+
+@pytest.mark.parametrize("mode", [2, 3, 4])
+def test_horizon_keeps_the_image_level_in_every_mode(lib, mode):
+    """26/10/2026, user: "Orizzonte" is a function for every mode, not a mode. The arm and wrist moved by the mode
+    (head turned and tilted / sticks): without it the image tilts, with it the wrist roll keeps it level."""
+    import math
+    rolls = {}
+    for on in (False, True):
+        s = booted(lib)
+        for line in PI_BOOT_PUSH:
+            s.command(line)
+        pi = Pi(s)
+        pi.j5vr(100, mode=2)
+        s.command("HOME", 10)
+        pi.j5vr(3000, mode=2)
+        s.uart_read()                               # SETPOSE_DONE / RELAX_DIGITAL of the HOME
+        assert s.command("HORIZON %d %s 0" % (on, " ".join(str(d) for d in ROBOT_DIRS))) == \
+            ["OK HORIZON ON" if on else "OK HORIZON OFF"]
+        if mode == 2:          # sticks: wrist yaw + shoulder/elbow (level roll still inside its limits), then X: roll
+            pi.j5vr(500, mode=2, joy_x=25000, yaw=15000, pitch=-12000, btn_l=GRIP, btn_r=GRIP)
+            pi.j5vr(500, mode=2, btn_l=GRIP | 0x0010, btn_r=GRIP, intensity=200)
+        else:                  # head turned and tilted
+            h = math.radians(20) / 2
+            r = math.radians(15) / 2
+            q = (math.cos(h) * math.cos(r), math.sin(h) * math.sin(r), math.sin(h) * math.cos(r), math.cos(h) * math.sin(r))
+            pi.j5vr(200, mode=mode, btn_l=GRIP, btn_r=GRIP)
+            pi.j5vr(1500, mode=mode, quat=q, btn_l=GRIP, btn_r=GRIP)
+        rolls[on] = camera_roll_deg(s.angles())
+    assert abs(rolls[False]) > 3, rolls
+    assert abs(rolls[True]) < 1, rolls
+
+
+def test_horizon_command_format(lib):
+    s = booted(lib)
+    assert s.command("HORIZON 1") == ["OK HORIZON ON"]
+    assert s.command("HORIZON 0") == ["OK HORIZON OFF"]
+    assert s.command("HORIZON 2") == ["ERR HORIZON_FMT"]
+    assert s.command("HORIZON 1 1 -1 1") == ["ERR HORIZON_FMT"]
+    assert s.command("HORIZON 1 1 -1 1 1 -1 1 2.5 x") == ["ERR HORIZON_FMT"]

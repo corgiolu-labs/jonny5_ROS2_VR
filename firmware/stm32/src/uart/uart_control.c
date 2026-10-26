@@ -459,6 +459,34 @@ static void uart_process_command(uint32_t seq, const char *cmd)
         j5vr_reset_head_calib();
         uart_send_response_with_seq(seq, "OK HEADZERO");
     }
+    /* --- HORIZON <0|1> [dB dS dG dY dP dR trim_deg] ---
+     * Orizzonte in tutti i modi VR (j5vr_actuation.h): versi dei giunti del Pi e correzione IMU in gradi.
+     * Solo configurazione, qualsiasi stato. */
+    else if (strncmp(cmd, "HORIZON", 7) == 0 && (cmd[7] == ' ' || cmd[7] == '\0'))
+    {
+        const char *p = cmd + 7;
+        unsigned int on = 0U;
+        float dirs[6] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+        float trim = 0.0f;
+        bool has_dirs = false;
+        bool fmt_ok = parse_uint(&p, &on) && on <= 1U;
+        skip_spaces(&p);
+        if (fmt_ok && *p != '\0')
+        {
+            has_dirs = true;
+            for (int i = 0; i < 6 && fmt_ok; i++) { fmt_ok = parse_float(&p, &dirs[i]); }
+            fmt_ok = fmt_ok && parse_float(&p, &trim);
+            skip_spaces(&p);
+            fmt_ok = fmt_ok && (*p == '\0');
+        }
+        if (!fmt_ok)
+        {
+            uart_send_response_with_seq(seq, "ERR HORIZON_FMT");
+            return;
+        }
+        j5vr_horizon_set(on == 1U, has_dirs ? dirs : NULL, trim);
+        uart_send_response_with_seq(seq, on ? "OK HORIZON ON" : "OK HORIZON OFF");
+    }
     else if (strcmp(cmd, "RELAX_DIGITAL") == 0)
     {
         /* Rilascia (PWM=0) i servo digitali PITCH e ROLL. Usato dal Pi dopo

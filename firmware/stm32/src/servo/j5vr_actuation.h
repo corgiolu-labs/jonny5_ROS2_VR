@@ -80,6 +80,15 @@ void j5vr_go_teleop_pose(void);
  */
 void j5vr_smooth_between_frames(struct j5vr_state *s, uint32_t now_ms);
 
+/**
+ * Orizzonte (26/10/2026): in ogni modo VR il ROLL del polso viene portato al valore che tiene l'immagine a livello
+ * per la posa di B/S/G/YAW/PITCH (il roll gira attorno all'asse ottico: dove guarda la camera non cambia).
+ * dirs = versi dei giunti (+1/-1, quelli del Pi: virtuale = (fisico - offset) * dir + 90), trim_deg = correzione
+ * dalla IMU (lato Pi). Entra/esce in HORIZON_RAMP_S.
+ */
+void j5vr_horizon_set(bool on, const float dirs[6], float trim_deg);
+bool j5vr_horizon_is_on(void);
+
 /** Aggiorna i limiti per-giunto a runtime. Clamp automatico ai limiti fisici. */
 void j5vr_set_joint_limits(int joint, float lim_min, float lim_max);
 

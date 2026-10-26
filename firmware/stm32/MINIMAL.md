@@ -83,6 +83,11 @@ stessa lunghezza minimale e originale sono identici.
 pressione dei grip (fronte del deadman): testa e posa di quel momento. Prima restava quello dell'ingresso nel modo,
 così girando la testa a grip rilasciati il braccio saltava alla ripresa. Test `test_grips_pressed_again_*`.
 
+**Orizzonte (26/10).** `HORIZON <0|1> [dB dS dG dY dP dR trim_deg]`: in ogni modo VR `j5vr_actuation_apply_desired()` porta
+il ROLL al valore che mette a livello l'asse orizzontale della camera per la posa reale dei servo (cinematica
+Rz Ry Ry Rz Ry Rx, versi del Pi), entra/esce in 0,5 s; il trim viene dalla IMU (lato Pi). Con l'Orizzonte il MANUAL
+non azzera piu' il roll a ogni tick. Test `test_horizon_*`.
+
 **Interpolazione fra frame SPI (26/10, scatti in ASSIST).** In HEAD/HYBRID/ASSIST il quaternione del visore e i
 target B/S/G scorrono linearmente da un frame al successivo nell'intervallo misurato fra i frame (5-30 ms),
 `j5vr_smooth_between_frames()` sullo snapshot del RT loop; grip, pulsanti e stick restano quelli del frame. Cambio di
