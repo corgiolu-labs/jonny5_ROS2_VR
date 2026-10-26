@@ -21,4 +21,5 @@ config J5_CANONICAL_PADDED_128_MODE
 	  Uses 128-byte SPI transfers while keeping the canonical 64-byte J5 semantic
 	  contract active in bytes 0..63. Bytes 64..127 are always zero (TX) and ignored (RX).
 	  The master must use the same length: the Pi with J5_SPI_CANONICAL_128=1, the
-	  stereo-head sender with --spi-len 128 (its default). With n, both use 64.
+	  stereo-head sender with --spi-len 128. With n (production since 26/10/2026)
+	  transfers are 64 bytes: Pi without J5_SPI_CANONICAL_128, sender default.

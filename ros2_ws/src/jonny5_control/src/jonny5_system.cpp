@@ -85,7 +85,7 @@ hardware_interface::CallbackReturn Jonny5System::on_init(
   spi_device_ = param(info_, "spi_device", spi_device_);
   try {
     spi_speed_hz_ = static_cast<uint32_t>(std::stoul(param(info_, "spi_speed_hz", "1000000")));
-    transfer_len_ = std::stoul(param(info_, "transfer_len", "128"));
+    transfer_len_ = std::stoul(param(info_, "transfer_len", "64"));
     link_timeout_ = std::chrono::milliseconds(std::stoul(param(info_, "link_timeout_ms", "500")));
     arm_gate_rad_ = std::stod(param(info_, "arm_gate_rad", "0.05"));
   } catch (const std::exception & e) {

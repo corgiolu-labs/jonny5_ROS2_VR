@@ -92,11 +92,11 @@ ros2 topic pub /forward_position_controller/commands std_msgs/msg/Float64MultiAr
 ros2 launch jonny5_bringup control.launch.py mock_hardware:=false
 ```
 
-`transfer_len` (default 128) must match the firmware build: 128 with `CONFIG_J5_CANONICAL_PADDED_128_MODE=y`, which is the default `prj.conf`, otherwise 64.
+`transfer_len` (default 64) must match the firmware build: 64 with the default `prj.conf` (`CONFIG_J5_CANONICAL_PADDED_128_MODE=n`, since 26/10/2026), 128 with `=y`.
 
 ## Notes and limits
 
-- The SPI exchange runs synchronously in `write()`: about 1 ms at 1 MHz × 128 B, which is fine at 100 Hz. For higher rates, move it to a dedicated thread.
+- The SPI exchange runs synchronously in `write()`: about 0.5 ms at 1 MHz × 64 B, which is fine at 100 Hz. For higher rates, move it to a dedicated thread.
 - Joint positions are the firmware's **commanded** angles (no encoders), with 1° resolution today.
 - `ros2_control_node` on the Pi needs RT privileges for its FIFO thread (`cap_add: SYS_NICE` / `ulimits: rtprio` in Docker).
 - Next steps: MoveIt 2 config (SRDF, kinematics) and MoveIt Servo for VR teleoperation on top of `forward_position_controller`.

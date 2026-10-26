@@ -35,7 +35,7 @@ def main():
     lines.append("IMUON")
     out = {
         "boot_commands": lines,
-        "spi": {"device": "/dev/spidev0.0", "speed_hz": 1000000, "transfer_len": 128},
+        "spi": {"device": "/dev/spidev0.0", "speed_hz": 1000000, "transfer_len": 64},
         "uart": {"device": "/dev/serial0", "baud": 115200},
         "ws": {"host": "0.0.0.0", "port": 8557,
                "cert": str(root / "config_runtime/tls/webrtc.crt"), "key": str(root / "config_runtime/tls/webrtc.key")},

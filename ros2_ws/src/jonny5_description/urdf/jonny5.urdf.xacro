@@ -4,7 +4,7 @@
   <xacro:arg name="ros2_control" default="false" />
   <xacro:arg name="mock_hardware" default="true" />
   <xacro:arg name="spi_device" default="/dev/spidev0.0" />
-  <xacro:arg name="transfer_len" default="128" />
+  <xacro:arg name="transfer_len" default="64" />
 
   <!-- Geometry from the POE model used by the legacy FK/IK
        (raspberry/config_runtime/kinematics/j5_poe_params.json, settings page):

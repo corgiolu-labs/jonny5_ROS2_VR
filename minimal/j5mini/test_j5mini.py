@@ -23,13 +23,14 @@ GRIP = 0x0002
 
 
 @pytest.fixture(scope="session")
-def lib128():
-    return fw_sim.build(padded128=True, out=fw_sim.BUILD / ("fw_sim_j5mini" + fw_sim.LIB.suffix))
+def lib():
+    """Production firmware build: 64-byte SPI transfers."""
+    return fw_sim.build(padded128=False, out=fw_sim.BUILD / ("fw_sim_j5mini64" + fw_sim.LIB.suffix))
 
 
 @pytest.fixture(scope="session")
-def lib64():
-    return fw_sim.build(padded128=False, out=fw_sim.BUILD / ("fw_sim_j5mini64" + fw_sim.LIB.suffix))
+def lib128():
+    return fw_sim.build(padded128=True, out=fw_sim.BUILD / ("fw_sim_j5mini" + fw_sim.LIB.suffix))
 
 
 class SimSpi:
@@ -86,8 +87,8 @@ def intent(mode=2, **kw):
     return d
 
 
-def test_boot_ready_pushes_the_pi_config(lib128):
-    r = Rig(lib128)
+def test_boot_ready_pushes_the_pi_config(lib):
+    r = Rig(lib)
     r.run(1200)                                            # first STATUS? poll at 1.0 s
     assert "BOOT_READY" in r.unsolicited()
     cmds = [e["cmd"] for e in r.responses()]
@@ -98,8 +99,8 @@ def test_boot_ready_pushes_the_pi_config(lib128):
     assert r.sim.command("STATUS?") == ["STATUS:SAFE"]
 
 
-def test_teleop_manual_and_neutral_after_silence(lib128):
-    r = Rig(lib128)
+def test_teleop_manual_and_neutral_after_silence(lib):
+    r = Rig(lib)
     r.run(1000)
     r.run(300, intent())                                   # advancing heartbeat -> firmware arms IDLE
     assert r.sim.state() == "IDLE"
@@ -121,8 +122,8 @@ def test_teleop_manual_and_neutral_after_silence(lib128):
     assert r.core.telemetry["servo_deg_Y"] == round(r.sim.angles()[3])
 
 
-def test_head_mode_entry_resends_vr_params(lib128):
-    r = Rig(lib128)
+def test_head_mode_entry_resends_vr_params(lib):
+    r = Rig(lib)
     r.run(1000)
     r.run(200, intent(mode=3, buttons_left=GRIP, buttons_right=GRIP))
     vr = [e for e in r.responses() if e["cmd"].startswith("SET_VR_PARAMS")]
@@ -131,8 +132,8 @@ def test_head_mode_entry_resends_vr_params(lib128):
     assert r.sim.state() == "IDLE"
 
 
-def test_estop_bits_and_lines(lib128):
-    r = Rig(lib128)
+def test_estop_bits_and_lines(lib):
+    r = Rig(lib)
     r.run(1000)
     r.run(300, intent())
     r.sim.estop(True)
@@ -145,8 +146,8 @@ def test_estop_bits_and_lines(lib128):
     assert any(e["cmd"] == "ENABLE" and not e["ok"] and "ESTOP_ACTIVE" in e["response"] for e in r.responses())
 
 
-def test_64_byte_transport_with_64_byte_firmware(lib64):
-    r = Rig(lib64, transfer_len=64)
+def test_128_byte_transport_with_128_byte_firmware(lib128):
+    r = Rig(lib128, transfer_len=128)
     r.run(1000)
     r.run(500, intent())
     assert r.sim.state() == "IDLE"
@@ -163,10 +164,10 @@ def test_intent_validation_matches_ws_teleop():
     assert struct.unpack_from(">f", p, 16)[0] == 1.0                        # quaternion only in modes 3/4/5
 
 
-def test_websocket_end_to_end(lib128):
+def test_websocket_end_to_end(lib):
     """Real WebSocket client (like the Quest app) -> j5mini server -> simulated STM32."""
     websockets = pytest.importorskip("websockets")
-    r = Rig(lib128)
+    r = Rig(lib)
     lock, stop = threading.Lock(), threading.Event()
 
     def stepper():                                          # simulated firmware time follows real time

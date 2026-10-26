@@ -25,11 +25,10 @@ services:
     environment:
       - JONNY5_LEGACY_ROOT=/opt/jonny5/raspberry
       - ROS_DOMAIN_ID=0
-      # SPI transport = proven deployment config (legacy jonny5-spi-j5vr.service).
-      # The 128B canonical-window mode resolves the STM32 slave's stale/phased
-      # telemetry (the driver scans the 128B window for the 'J5' offset). Without
-      # it the native driver runs legacy_64 and cannot parse real frames.
-      - J5_SPI_CANONICAL_128=1
+      # SPI transfer length must match the firmware build: 64 B with the default
+      # prj.conf (CONFIG_J5_CANONICAL_PADDED_128_MODE=n). Set 1 only for a firmware
+      # built with =y (128 B = 64 B frame + 64 zero bytes).
+      - J5_SPI_CANONICAL_128=0
       - J5_SPI_POST_XFER_DELAY_MS=0
     # Real-time: controller_manager (ros2_control) runs a SCHED_FIFO thread.
     cap_add:

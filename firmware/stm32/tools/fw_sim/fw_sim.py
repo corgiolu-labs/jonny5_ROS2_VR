@@ -33,7 +33,7 @@ SOURCES = [
 ]
 
 
-def build(padded128=True, out=LIB, src=SRC, extra_sources=(), spi_frames_from=None):
+def build(padded128=False, out=LIB, src=SRC, extra_sources=(), spi_frames_from=None):
     """Build the simulator library. `src` may be another firmware tree (e.g. the original
     firmware, for differential tests); its spi_frames.c can come from `spi_frames_from`."""
     BUILD.mkdir(exist_ok=True)

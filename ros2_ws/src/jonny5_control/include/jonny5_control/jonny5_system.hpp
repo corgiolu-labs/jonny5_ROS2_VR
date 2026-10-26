@@ -64,7 +64,7 @@ private:
   bool mock_ = false;
   std::string spi_device_ = "/dev/spidev0.0";
   uint32_t spi_speed_hz_ = 1000000;
-  std::size_t transfer_len_ = 128;
+  std::size_t transfer_len_ = 64;
   std::array<double, kJoints> offsets_deg_{100.0, 88.0, 93.0, 95.0, 90.0, 95.0};
   std::array<int, kJoints> dirs_{1, -1, 1, 1, -1, 1};
   std::array<double, kJoints> cmd_min_{};

@@ -24,7 +24,7 @@ Uso da Python (lo stesso che usano i test e `minimal/j5mini/test_j5mini.py`):
 import fw_sim
 s = fw_sim.Sim()                       # boot: BOOT_READY, SAFE, PWM a 0
 s.command("SET_OFFSETS 100 88 93 95 90 95")   # -> ['OK SET_OFFSETS']
-r = s.spi(fw_sim.pad(fw_sim.j5_frame(0x04, 1, fw_sim.j5vr_payload(mode=2, hb=1)), 128))
+r = s.spi(fw_sim.pad(fw_sim.j5_frame(0x04, 1, fw_sim.j5vr_payload(mode=2, hb=1)), s.frame_len))
 s.run(10)                              # 10 ms di firmware
 s.pwm(), s.angles(), s.state()         # impulsi µs, angoli comandati, SAFE/IDLE/STOPPED
 s.estop(True)                          # fungo premuto

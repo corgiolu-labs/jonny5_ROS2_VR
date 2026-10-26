@@ -51,8 +51,8 @@ def generate_launch_description():
         DeclareLaunchArgument("mock_hardware", default_value="true",
                               description="Simulated v2 firmware instead of /dev/spidev."),
         DeclareLaunchArgument("spi_device", default_value="/dev/spidev0.0"),
-        DeclareLaunchArgument("transfer_len", default_value="128",
-                              description="SPI transfer length: 128 (padded firmware build) or 64."),
+        DeclareLaunchArgument("transfer_len", default_value="64",
+                              description="SPI transfer length: 64 (default firmware build) or 128 (padded build)."),
         DeclareLaunchArgument("controller", default_value="joint_trajectory_controller",
                               description="joint_trajectory_controller or forward_position_controller."),
         Node(

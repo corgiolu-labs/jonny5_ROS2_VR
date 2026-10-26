@@ -4,7 +4,7 @@
 One process replaces ws-teleop + the SPI bridge (or the ROS 2 container) for teleoperation:
 
   Quest app / web viewer  --wss :8557 JSON (same messages as ws-teleop)-->  j5mini
-  j5mini --SPI (J5 frames, 100 Hz, 128 or 64 B)--> STM32      (setpoints, telemetry, STATUS)
+  j5mini --SPI (J5 frames, 100 Hz, 64 B or 128 B)--> STM32      (setpoints, telemetry, STATUS)
   j5mini --UART (ASCII lines, #seq)-------------> STM32      (ENABLE/SAFE/HOME/..., config push)
 
 What it does (and nothing else):
@@ -143,7 +143,7 @@ class Core:
     def __init__(self, cfg: dict, spi, uart, clock: Callable[[], float] = time.monotonic,
                  log: Callable[[str], None] = print):
         self.cfg, self.spi, self.uart, self.clock, self.log = cfg, spi, uart, clock, log
-        self.len = int(cfg.get("spi", {}).get("transfer_len", 128))
+        self.len = int(cfg.get("spi", {}).get("transfer_len", 64))
         self.link_timeout = cfg.get("link_timeout_ms", 150) / 1000.0
         self.boot_lines = list(cfg.get("boot_commands", []))
         self.vr_params_line = next((l for l in self.boot_lines if l.startswith("SET_VR_PARAMS")), None)

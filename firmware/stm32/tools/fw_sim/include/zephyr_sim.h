@@ -19,7 +19,7 @@
 
 /* ---- Kconfig (as in zephyr/prj.conf) ---- */
 #ifndef CONFIG_J5_CANONICAL_PADDED_128_MODE
-#define CONFIG_J5_CANONICAL_PADDED_128_MODE 1
+#define CONFIG_J5_CANONICAL_PADDED_128_MODE 0
 #endif
 #define CONFIG_SOC_SERIES_STM32G4X 1
 

@@ -3,12 +3,13 @@
     cd firmware/stm32 && python -m pytest tools/fw_sim -q
 
 1. Differential: one long scenario covering everything used in production runs on the
-   minimal firmware AND on the original (commit 9c828fa = flashed firmware + sub-degree,
-   before any pruning); UART replies, SPI replies and PWM pulses must be identical.
+   minimal firmware AND on the original (merge 22b6a46 = flashed firmware + sub-degree,
+   before any pruning), with 64-byte and 128-byte transfers; UART replies, SPI replies and PWM pulses must be identical.
    Set FW_SIM_ORIG_SRC to an extracted original firmware/stm32/src to enable it
    (tools/fw_sim/README.md); otherwise it is skipped.
 2. Behaviour checks of the minimal firmware against the spec (docs in README).
-3. SPI transfer length: 128-byte firmware vs 64-byte firmware, matched and mismatched masters.
+3. SPI transfer length: 64 bytes is the production setting (prj.conf); the 128-byte option
+   is still built and checked, with matched and mismatched masters.
 """
 import os
 import pathlib
@@ -27,13 +28,14 @@ BTN_A = 0x0010         # right A = slow speed (20 deg/s)
 
 
 @pytest.fixture(scope="session")
-def lib128():
-    return fw_sim.build(padded128=True, out=fw_sim.BUILD / ("fw_sim" + fw_sim.LIB.suffix))
+def lib():
+    """Production configuration: 64-byte SPI transfers (CONFIG_J5_CANONICAL_PADDED_128_MODE=n)."""
+    return fw_sim.build(padded128=False, out=fw_sim.BUILD / ("fw_sim64" + fw_sim.LIB.suffix))
 
 
 @pytest.fixture(scope="session")
-def lib64():
-    return fw_sim.build(padded128=False, out=fw_sim.BUILD / ("fw_sim64" + fw_sim.LIB.suffix))
+def lib128():
+    return fw_sim.build(padded128=True, out=fw_sim.BUILD / ("fw_sim" + fw_sim.LIB.suffix))
 
 
 @pytest.fixture(scope="session")
@@ -41,10 +43,18 @@ def lib_orig():
     src = os.environ.get("FW_SIM_ORIG_SRC")
     if not src:
         pytest.skip("FW_SIM_ORIG_SRC not set (path of the original firmware/stm32/src)")
-    return fw_sim.build(out=fw_sim.BUILD / ("fw_sim_orig" + fw_sim.LIB.suffix), src=pathlib.Path(src),
-                        extra_sources=["servo/pickplace.c", "servo/motion_planner.c", "core/hw_watchdog.c",
-                                       "spi/boundary_buffers.c", "spi/assist_v2_raw.c"],
-                        spi_frames_from=fw_sim.SRC)
+    libs = {}
+
+    def get(padded128):
+        if padded128 not in libs:
+            name = "fw_sim_orig" + ("" if padded128 else "64") + fw_sim.LIB.suffix
+            libs[padded128] = fw_sim.build(
+                padded128=padded128, out=fw_sim.BUILD / name, src=pathlib.Path(src),
+                extra_sources=["servo/pickplace.c", "servo/motion_planner.c", "core/hw_watchdog.c",
+                               "spi/boundary_buffers.c", "spi/assist_v2_raw.c"],
+                spi_frames_from=fw_sim.SRC)
+        return libs[padded128]
+    return get
 
 
 class Pi:
@@ -212,8 +222,8 @@ def scenario(sim):
     return log
 
 
-def test_scenario_runs(lib128):
-    log = scenario(Sim(lib128))
+def test_scenario_runs(lib):
+    log = scenario(Sim(lib))
     replies = {e[1]: e[2] for e in log if e[0] == "uart"}
     assert replies["#2 SET_VR_PARAMS 1 1 1 0.05 0.35 3 60 60 35 0.35 0.35 0.1 1 -1 1 1 0 2 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0"] == ("#2 OK SET_VR_PARAMS",)
     states = {e[0]: e[2] for e in log if e[0] not in ("uart", "boot", "spi")}
@@ -221,10 +231,11 @@ def test_scenario_runs(lib128):
     assert states["estop"] == "STOPPED" and states["stop"] == "STOPPED"
 
 
-def test_identical_to_original_firmware(lib128, lib_orig):
-    """The minimal firmware must answer and actuate exactly like the original one."""
-    a = scenario(Sim(lib128))
-    b = scenario(Sim(lib_orig))
+@pytest.mark.parametrize("padded128", [False, True], ids=["64B", "128B"])
+def test_identical_to_original_firmware(padded128, lib, lib128, lib_orig):
+    """The minimal firmware must answer and actuate exactly like the original one, at both lengths."""
+    a = scenario(Sim(lib128 if padded128 else lib))
+    b = scenario(Sim(lib_orig(padded128)))
     assert len(a) == len(b)
     for ea, eb in zip(a, b):
         assert ea == eb, f"differs at {ea[0]}: minimal={ea!r}\noriginal={eb!r}"
@@ -239,16 +250,16 @@ def booted(lib):
     return s
 
 
-def test_boot_is_safe_with_outputs_off(lib128):
-    s = booted(lib128)
+def test_boot_is_safe_with_outputs_off(lib):
+    s = booted(lib)
     assert s.state() == "SAFE"
     pulses, periods = s.pwm()
     assert pulses == [0] * 6
     assert periods == [20000] * 4 + [3030, 3030]          # 50 Hz arm, 330 Hz wrist
 
 
-def test_uart_seq_prefix_and_errors(lib128):
-    s = booted(lib128)
+def test_uart_seq_prefix_and_errors(lib):
+    s = booted(lib)
     assert s.command("#7 STATUS?") == ["#7 STATUS:SAFE"]
     assert s.command("SET_OFFSETS 100 88 93 95 90 95") == ["OK SET_OFFSETS"]
     assert s.command("#3 SET_OFFSETS 1 2") == ["#3 ERR SET_OFFSETS_FMT"]
@@ -258,19 +269,19 @@ def test_uart_seq_prefix_and_errors(lib128):
     assert s.command("HYBRID ENABLE") == ["OK HYBRID ENABLED"]
 
 
-def test_reply_type_follows_request_and_lags_one_transfer(lib128):
-    s = booted(lib128)
+def test_reply_type_follows_request_and_lags_one_transfer(lib):
+    s = booted(lib)
     pi = Pi(s)
     pi.j5vr(10, mode=2)                    # transfer 1: J5VR
     r1 = pi.status()                       # transfer 2: STATUS request, gets the reply to transfer 1
     r2 = pi.transfer(0x04, j5vr_payload(hb=99))   # gets the reply to the STATUS request
     assert r1[:2] == b"J5" and r1[3] == 0x01 and struct.unpack_from(">H", r1, 4)[0] == 1   # TELEMETRY, seq 1
     assert r2[:2] == b"J5" and r2[3] == 0x03 and struct.unpack_from(">H", r2, 4)[0] == 2   # STATUS, seq 2
-    assert r1[64:] == bytes(64)            # padded tail always zero
+    assert len(r1) == 64 and len(r2) == 64
 
 
-def test_auto_idle_needs_advancing_heartbeat_and_spi_timeout_goes_safe(lib128):
-    s = booted(lib128)
+def test_auto_idle_needs_advancing_heartbeat_and_spi_timeout_goes_safe(lib):
+    s = booted(lib)
     pi = Pi(s)
     pi.j5vr(300, mode=2, advance_hb=False)        # heartbeat 0: stays SAFE
     assert s.state() == "SAFE"
@@ -282,8 +293,8 @@ def test_auto_idle_needs_advancing_heartbeat_and_spi_timeout_goes_safe(lib128):
     assert s.state() == "SAFE"
 
 
-def test_home_then_manual_yaw_with_deadman_only(lib128):
-    s = booted(lib128)
+def test_home_then_manual_yaw_with_deadman_only(lib):
+    s = booted(lib)
     for line in PI_BOOT_PUSH:
         s.command(line)
     pi = Pi(s)
@@ -303,8 +314,8 @@ def test_home_then_manual_yaw_with_deadman_only(lib128):
     assert pulses[3] > 0
 
 
-def test_estop_latches_stopped_and_blocks_motion_commands(lib128):
-    s = booted(lib128)
+def test_estop_latches_stopped_and_blocks_motion_commands(lib):
+    s = booted(lib)
     pi = Pi(s)
     pi.j5vr(100, mode=2)
     s.estop(True)
@@ -321,8 +332,8 @@ def test_estop_latches_stopped_and_blocks_motion_commands(lib128):
     assert s.state() == "IDLE"
 
 
-def test_protocol_v2_crc(lib128):
-    s = booted(lib128)
+def test_protocol_v2_crc(lib):
+    s = booted(lib)
     pi = Pi(s, version=2)
     pi.j5vr(20, mode=2)
     r = pi.status()
@@ -334,8 +345,8 @@ def test_protocol_v2_crc(lib128):
     assert r[3] == 0x03 and r[8] == 0xEC                         # STATUS error: CRC
 
 
-def test_mode6_j5ik_needs_enable_and_moves_at_60_deg_s(lib128):
-    s = booted(lib128)
+def test_mode6_j5ik_needs_enable_and_moves_at_60_deg_s(lib):
+    s = booted(lib)
     pi = Pi(s)
     for k in range(30):
         pi.transfer(0x05, j5ik_payload([12000, 9000, 9000, 9000, 9000, 9000], hb=k + 1))
@@ -359,10 +370,11 @@ def test_128_byte_firmware_with_128_byte_master(lib128):
     pi.j5vr(500, mode=2)
     assert s.state() == "IDLE"
     assert valid_replies(pi.replies[1:]) == len(pi.replies) - 1
+    assert all(r[64:] == bytes(64) for r in pi.replies[1:])   # padded tail always zero
 
 
-def test_64_byte_firmware_with_64_byte_master(lib64):
-    s = booted(lib64)
+def test_64_byte_firmware_with_64_byte_master(lib):
+    s = booted(lib)
     assert s.frame_len == 64
     pi = Pi(s, 64)
     pi.j5vr(500, mode=2)

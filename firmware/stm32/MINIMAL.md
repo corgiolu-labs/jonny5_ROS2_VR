@@ -11,7 +11,7 @@ sono rimasti parola per parola, è stato tolto solo ciò che è morto, speriment
 |---|---|
 | Firmware sul robot oggi | `feature/video-direct-rtp` @ `6e8694e` (flash del 19/10 11:46): fix di `main` + bypass E-STOP, **senza** servo sub-grado |
 | Base del minimale | merge `22b6a46` = quello + `fw/servo-subdegree` (`61d792c`, flashato il 18/10 e perso il 19/10) |
-| Unica differenza di comportamento voluta | uscita servo sub-grado (risoluzione 1 µs ≈ 0,09° invece di 1°), come il 18/10 |
+| Differenze di comportamento volute | uscita servo sub-grado (risoluzione 1 µs ≈ 0,09° invece di 1°), come il 18/10; SPI a **64 byte** invece di 128 (sotto) |
 
 ## Cosa è stato tolto
 
@@ -39,7 +39,7 @@ restano HAL, DMA e thread.
 | | Originale | Minimale |
 |---|---|---|
 | righe in `src/` | 9.675 (41 file) | 7.995 (33 file) |
-| flash / RAM | 96.908 / 28.292 B | 95.152 / 27.963 B |
+| flash / RAM | 96.908 / 28.292 B | 95.224 / 27.515 B (a 64 byte) |
 
 ## Come è stata verificata l'equivalenza (senza hardware)
 
@@ -52,7 +52,7 @@ restano HAL, DMA e thread.
    manuale su tutti gli assi, HEAD/HYBRID/ASSIST, payload neutro, v1/v2, richieste STATUS, tutte le
    SETPOSE, PARK/TELEOPPOSE, RELAX, timeout SPI, E-STOP e bypass, J5IK; 2.039 trasferimenti SPI,
    48 comandi UART) gira sul minimale e sull'originale estratto da `22b6a46`: **risposte UART, frame
-   SPI e impulsi PWM identici**. `python -m pytest tools/fw_sim -q` (13 test).
+   SPI e impulsi PWM identici**. `python -m pytest tools/fw_sim -q` (14 test).
 
 Non coperti dal simulatore (solo hardware): inizializzazione HAL/DMA/IRQ di SPI1, driver BNO085,
 timer TIM6, PWM reali. Questi file non sono stati toccati se non nei commenti.
@@ -66,12 +66,19 @@ STM32 lavora a metà da `SPI_FRAME_LEN` e non si risincronizza sul fronte di CS.
 
 | Firmware | Master | Risultato (simulatore) |
 |---|---|---|
-| 128 (oggi) | 128 (Pi `J5_SPI_CANONICAL_128=1`, sender default) | ok, una risposta per trasferimento |
-| 64 (`CONFIG_J5_CANONICAL_PADDED_128_MODE=n`) | 64 | ok |
+| 128 (flashato il 19/10) | 128 (Pi `J5_SPI_CANONICAL_128=1`, sender `--spi-len 128`) | ok, una risposta per trasferimento |
+| **64 (`fw/minimal`, `CONFIG_J5_CANONICAL_PADDED_128_MODE=n`)** | **64** | ok |
 | 128 | 64 | i comandi passano, ma risposta valida solo un trasferimento su due |
 
-Passare a 64 è una scelta di pulizia, non una necessità: va fatta insieme sui due lati (firmware `=n`,
-Pi senza `J5_SPI_CANONICAL_128`, sender `--spi-len 64`). Finché il Pi resta a 128 conviene lasciare 128.
+**Dal 26/10 `fw/minimal` è a 64 su tutti i lati**: `prj.conf` con `=n`; Pi con
+`J5_SPI_CANONICAL_128=0` (`raspberry/systemd/jonny5-spi-j5vr.service`, `ros2_ws/deploy/docker-compose.yml`)
+e `transfer_len` 64 nel driver ROS 2 (default di xacro, launch e `jonny5_system.cpp`); `j5mini` e il
+sender della testa stereo a 64 di default. Il test differenziale gira a entrambe le lunghezze: alla
+stessa lunghezza minimale e originale sono identici.
+
+**Da fare insieme**: chi flasha `fw/minimal` deve aggiornare anche il Pi (overlay di
+`jonny5-spi-j5vr.service` e `docker-compose.yml`, o `j5mini`). Con il firmware del 19/10 il Pi resta a
+128. L'opzione `=y` resta nel codice per tornare indietro senza modifiche.
 
 ## Comportamenti strani mantenuti apposta (da decidere, non cambiati)
 

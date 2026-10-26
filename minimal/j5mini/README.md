@@ -47,5 +47,5 @@ python -m pytest minimal/j5mini -q      # 7 test contro il firmware vero simulat
 
 Coprono: push della configurazione su `BOOT_READY` (tutte OK), armo automatico, HOME, manuale con
 deadman, neutro dopo il silenzio del visore (uscite a 0), reinvio di `SET_VR_PARAMS` in HEAD, bit e
-righe E-STOP, trasporto a 64 byte con firmware a 64, validazione degli intent come ws-teleop, e un
+righe E-STOP, trasporto a 64 byte (default) e a 128 con firmware a 128, validazione degli intent come ws-teleop, e un
 client WebSocket reale (come l'app) fino al firmware simulato.
