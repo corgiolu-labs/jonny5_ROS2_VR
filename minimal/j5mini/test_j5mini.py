@@ -122,6 +122,23 @@ def test_teleop_manual_and_neutral_after_silence(lib):
     assert r.core.telemetry["servo_deg_Y"] == round(r.sim.angles()[3])
 
 
+def test_app_preparation_mode0_never_moves_the_arm(lib):
+    """The Quest app's PREPARAZIONE sends mode-0 intents: the firmware reaches IDLE but nothing moves, not even
+    with the deadman and the sticks; the start gesture then switches to MANUAL with the grips still held and
+    the sticks centred, and only a stick moves the arm."""
+    r = Rig(lib)
+    r.run(1000)
+    r.run(300, intent(mode=0))
+    assert r.sim.state() == "IDLE"
+    a0 = r.sim.angles()
+    r.run(1000, intent(mode=0, joy_x=30000, yaw=-30000, buttons_left=GRIP | 1, buttons_right=GRIP | 1))
+    assert r.sim.angles() == a0
+    r.run(500, intent(mode=2, buttons_left=GRIP, buttons_right=GRIP))       # gesture done: MANUAL, grips held
+    assert max(abs(x - y) for x, y in zip(r.sim.angles(), a0)) < 0.5
+    r.run(500, intent(mode=2, joy_x=30000, buttons_left=GRIP, buttons_right=GRIP))
+    assert r.sim.angles()[3] > a0[3] + 5
+
+
 def test_head_mode_entry_resends_vr_params(lib):
     r = Rig(lib)
     r.run(1000)
