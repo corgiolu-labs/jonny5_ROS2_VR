@@ -418,8 +418,8 @@ $("pose-import").onchange = async e => {
 
 // ------------------------------------------------------------------ commands tab
 const CMDS = [
-  ["ENABLE", "SAFE/STOPPED → IDLE (non muove)"], ["SAFE", "servo spenti, si riarma da solo con un flusso VR"],
-  ["STOP", "STOPPED: serve ENABLE"], ["RESET", "azzera lo stato del firmware"],
+  ["ENABLE", "SAFE → IDLE (non muove)"], ["SAFE", "servo spenti, si riarma da solo con un flusso VR"],
+  ["STOP", "STOPPED: per uscire SAFE poi ENABLE"], ["RESET", "azzera lo stato del firmware"],
   ["HOME", "va agli offset (90 virtuali)", true], ["PARK", "posa di parcheggio", true],
   ["TELEOPPOSE", "posa di partenza della teleoperazione", true], ["RELAX_DIGITAL", "rilascia i servo digitali del polso"],
   ["HEADZERO", "azzera il riferimento della testa"],
@@ -562,7 +562,9 @@ $("t-estop").onclick = async () => {
   say("3. rilascia il fungo (60 s)...");
   if (!(await waitFor(() => S.tm.estop_active === false, 60000))) return say("   non rilasciato. ESITO: FALLITO");
   const r2 = await uart("ENABLE");
-  say(`4. ENABLE dopo il rilascio → ${r2.response} ${r2.ok ? "✓" : "✗"}`);
+  say(`4. ENABLE da STOPPED → ${r2.response} ${!r2.ok ? "✓ rifiutato (lo STOP resta finché non si passa da SAFE)" : "✗ doveva essere rifiutato"}`);
+  const r3 = await uart("SAFE"), r4 = await uart("ENABLE");
+  say(`5. SAFE → ${r3.response}, ENABLE → ${r4.response} ${r3.ok && r4.ok ? "✓ di nuovo IDLE" : "✗"}`);
   say(lines.every(l => !l.includes("✗")) ? "ESITO: SUPERATO" : "ESITO: CONTROLLARE i punti ✗");
 };
 
@@ -601,7 +603,7 @@ montaggio dei servo. Gli slider sono in gradi virtuali; la riga <code>SETPOSE_T_
 <h2>Stati del firmware</h2>
 <ul><li><b>SAFE</b>: servo spenti. Diventa IDLE da solo quando arriva un flusso dal visore, oppure con ENABLE.</li>
 <li><b>IDLE</b>: pronto; accetta HOME/PARK/SETPOSE e la teleoperazione.</li>
-<li><b>STOPPED</b>: dopo STOP o il fungo; serve ENABLE (a fungo rilasciato).</li>
+<li><b>STOPPED</b>: dopo STOP o il fungo. ENABLE da solo viene rifiutato: a fungo rilasciato si manda SAFE e poi ENABLE (scelta voluta, chi riparte deve farlo apposta).</li>
 <li>Se lo SPI tace per 500 ms il firmware va in SAFE da solo (watchdog).</li></ul>
 <h2>Cinematica (Product of Exponentials)</h2>
 <p><code>T(q) = e<sup>[S₁]q₁</sup> · … · e<sup>[S₆]q₆</sup> · M</code>, con gli assi di vite <code>S</code> e la posa

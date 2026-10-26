@@ -21,9 +21,8 @@ typedef enum
                           * -> transizione automatica a IDLE in rt_loop_step. */
     STATE_IDLE,          /* Sistema attivo, pronto per comandi e pipeline VR. */
     STATE_STOPPED        /* Arresto immediato per fault (STOP/UART o emergenza).
-                          * INTENZIONALE: non ha uscita software. L'unico recovery
-                          * e' il reset hardware (power cycle o NRST).
-                          * Garantisce che un fault non sia mascherabile via software. */
+                          * ENABLE da solo e' rifiutato: si esce con SAFE -> ENABLE
+                          * (fungo rilasciato), oppure con un reset hardware. */
 } system_state_t;
 
 /* Inizializzazione state machine */
