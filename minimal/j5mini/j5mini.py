@@ -783,6 +783,12 @@ class Server:
                 with self.lock:
                     self.core.resend_vr_params()
             await ws.send(json.dumps({"type": "ack", "set_vr_mode": msg.get("mode")}))
+        elif typ == "imu_campaign":                  # record desired / commanded / firmware / IMU orientation
+            res = {"on": False, "why": "ASSIST non disponibile"}
+            if self.assist:
+                with self.lock:
+                    res = self.assist.g.set_campaign(bool(msg.get("on")), str(msg.get("label", "")))
+            await ws.send(json.dumps({"type": "imu_campaign", **res}))
         elif typ == "horizon_lock":                  # "Orizzonte": the image stays level in every mode
             on = bool(msg.get("on"))
             with self.lock:

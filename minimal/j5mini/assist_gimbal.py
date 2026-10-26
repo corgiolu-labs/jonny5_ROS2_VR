@@ -151,6 +151,12 @@ class _ha:  # noqa: N801 - the two helpers of the old head_assist module
         return np.cross(w, v) / wn
 
 BAND_DEG = 15.0          # wrist free band before the arm helps
+BAND_SOFT_DEG = 6.0      # the arm's help grows quadratically over this much past the band (C1 onset: the base
+                         # started with a visible jerk when the wrist crossed the band, user 26/10/2026)
+POINT_BLEND_S = 0.6      # after a point-at-object motion the wrist blends from the reached pose into the live IK
+                         # (trim, horizon and prediction re-enter smoothly: there was a small jerk at the end)
+POINT_ASSIST_RAMP_S = 2.0  # ... and the arm assist comes back gradually: the planned pose leaves the wrist far from
+                         # its band centre, and the arm pulled it back at full rate the moment the motion ended
 ARM_RATE = 14.0          # 1/s: the overflow decays as exp(-ARM_RATE * t) (was 7: too slow on the robot)
 ARM_MAX_DEG_S = 100.0    # arm assist speed cap (firmware caps spalla/gomito with tg-vel-*-head, now 90 deg/s)
 # time based, so the behaviour does not depend on the intent rate (60/s from the Quest XR app, 25/s web)
@@ -427,6 +433,8 @@ class GimbalState:
         self.v_lims = None           # (virtual lo[6], virtual hi[6]) of the last step
         self.goal = None             # request_point motion in progress
         self.goal_done = None        # info of the last reached goal, taken by ws_server (pop_goal_done)
+        self.blend = None            # (t_end, wrist virtual [3]) of the last goal: POINT_BLEND_S wrist blend
+        self.point_t = 0.0           # end of the last goal: the arm assist ramps back over POINT_ASSIST_RAMP_S
         self.head_hist = []          # (t, R_head) of the last ~0.3 s, for the prediction
         self.w_f = np.zeros(3)       # smoothed head angular velocity, rad/s (robot base frame)
         self.w_t = 0.0
@@ -844,6 +852,12 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
                        - math.atan2(st.r_head_ref[1, 0], st.r_head_ref[0, 0]))
             st.goal_done = dict(g["info"], t=now)
             st.goal = None
+            st.blend = (now, list(w_cmd))
+            st.point_t = now
+            st.base_est = float(np.radians(st.arm_v[0] - 90.0))   # the base model is where the goal left it
+            st.head_hist = []                                     # no prediction from the head's motion meanwhile
+            st.w_f = np.zeros(3)
+            st.w_t = 0.0
             logger.info("[GIMBAL] point: reached arm virt %s wrist virt %s", [round(v, 1) for v in st.arm_v],
                         [round(v, 1) for v in w_cmd])
         out = _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat)
@@ -878,17 +892,33 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         p5, p6 = wrist_pitch_roll_for_yaw(qm_w[:3], r_target, math.radians(w_cmd[0] - 90.0))
         w_cmd[1] = float(np.clip(math.degrees(p5) + 90.0, w_lo[1], w_hi[1]))
         w_cmd[2] = float(np.clip(math.degrees(p6) + 90.0, w_lo[2], w_hi[2]))
+    if st.blend is not None:
+        u = (now_p - st.blend[0]) / POINT_BLEND_S
+        if u >= 1.0:
+            st.blend = None
+        else:
+            e = u * u * (3.0 - 2.0 * u)
+            w_cmd = [b + (c - b) * e for b, c in zip(st.blend[1], w_cmd)]
 
     # arm assist: bring the wrist back inside +-BAND (virtual deg around 90)
     def overflow(v):
         d = v - 90.0
-        return d - max(-BAND_DEG, min(BAND_DEG, d))
+        e = abs(d) - BAND_DEG
+        if e <= 0.0:
+            return 0.0
+        # quadratic onset over BAND_SOFT_DEG, then linear (continuous value and slope)
+        o = e * e / (2.0 * BAND_SOFT_DEG) if e < BAND_SOFT_DEG else e - BAND_SOFT_DEG / 2.0
+        return math.copysign(o, d)
 
     now = time.monotonic()
     dt = min(0.1, max(0.0, now - st.last_t)) if st.last_t else 0.0
     st.last_t = now
-    frac = 1.0 - math.exp(-ARM_RATE * dt)
-    max_step = ARM_MAX_DEG_S * dt
+    ramp = 1.0
+    if st.point_t and now - st.point_t < POINT_ASSIST_RAMP_S:
+        u = (now - st.point_t) / POINT_ASSIST_RAMP_S
+        ramp = u * u * (3.0 - 2.0 * u)
+    frac = (1.0 - math.exp(-ARM_RATE * dt)) * ramp
+    max_step = ARM_MAX_DEG_S * dt * ramp
     a_lo = v_lo[:3]
     a_hi = v_hi[:3]
     ov_yaw = overflow(float(w_deg[0]))

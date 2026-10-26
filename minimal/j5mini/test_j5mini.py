@@ -796,3 +796,56 @@ def test_horizon_trim_from_the_wrist_imu():
         core.telemetry["servo_deg_Y"] += 1
         run(1)
     assert len(sent) == n
+
+
+def point_end_wrist_jump():
+    """26/10/2026, user: a small jerk at the end of "punta l'oggetto". With an IMU trim in effect the live IK after
+    the motion differs from the planned pose: the wrist now blends into it over POINT_BLEND_S. Returns the largest
+    per-intent wrist change (virtual deg)."""
+    pytest.importorskip("numpy")
+    import math
+    import numpy as np
+    import assist_gimbal as g
+    g._state = g.GimbalState()
+    g.configure([88, 85, 83, 90, 90, 98], [1, -1, 1, 1, -1, 1], telemetry=lambda: {"imu_valid": False})
+    lim = {n: {"min": a, "max": b} for n, (a, b) in zip(j5mini.Assist.LIMIT_NAMES,
+                                                       [[45, 135], [30, 145], [30, 145], [45, 135], [50, 145], [68, 128]])}
+    vr = CFG["boot_commands"][1].split()[1:]
+
+    class U:
+        async def send_uart_command(self, c, timeout_s=1.0):
+            return True, "OK HEADZERO"
+
+    phys = [88.0, 65.0, 83.0, 90.0, 110.0, 98.0]           # the VR pose
+    changes, requested = [], []                           # per intent: wrist change (deg), None during the motion
+
+    async def go():
+        nonlocal phys
+        it = dict(mode=5, grip=1, quat_w=1.0, quat_x=0.0, quat_y=0.0, quat_z=0.0)
+        for i in range(400):
+            prev = g._state.last_full_v
+            arm, *_ = g.step(dict(it), physical_six=phys, limits_src=lim, vr_params=vr, uart_manager=U(), grip=True,
+                             pos_cfg={"enable": False}, pred_cfg={"enable": False}, trim_cfg={"enable": True})
+            if g._state.phase == "track" and g._state.goal is None and i > 60 and not requested:
+                g._state.trim = np.array([0.0, 0.0, math.radians(5.0)])     # 5 deg standing IMU correction
+                ok, info = g.request_point([0.0, 0.0, 600.0], "tazza")
+                assert ok, info
+                requested.append(i)
+            if arm is not None and g._state.last_full_v is not None:   # the servos follow the command at once
+                phys = [float(v) for v in arm] + [g.settings_manager.current["offsets"][k] +
+                                                 (1 if g.settings_manager.current["dirs"][k] >= 0 else -1) *
+                                                 (g._state.last_full_v[k] - 90.0) for k in (3, 4, 5)]
+            if prev is not None and g._state.last_full_v is not None:
+                changes.append(None if g._state.goal is not None else
+                               max(abs(a - b) for a, b in zip(prev[3:], g._state.last_full_v[3:])))
+            await asyncio.sleep(0.016)
+
+    asyncio.run(go())
+    assert g._state.goal is None and g._state.goal_done is not None       # the motion ran and finished
+    end = max(i for i, c in enumerate(changes) if c is None)               # last intent of the motion
+    return max(c for c in changes[end + 1:end + 20] if c is not None)      # the 0.3 s after it
+
+
+def test_point_at_object_ends_without_a_wrist_jump():
+    assert point_end_wrist_jump() < 1.0                 # per-intent wrist change (deg) right after the motion;
+                                                        # before: 3.4 (arm assist at full rate at once)
