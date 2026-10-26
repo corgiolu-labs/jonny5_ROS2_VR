@@ -79,6 +79,10 @@ STM32 lavora a metà da `SPI_FRAME_LEN` e non si risincronizza sul fronte di CS.
 SPI sul Pi in questo branch) e il sender della testa stereo a 64 di default. Il test differenziale gira a entrambe le lunghezze: alla
 stessa lunghezza minimale e originale sono identici.
 
+**Frizione dei grip (26/10, dal robot).** In HEAD/HYBRID/ASSIST il riferimento della testa si riprende a ogni
+pressione dei grip (fronte del deadman): testa e posa di quel momento. Prima restava quello dell'ingresso nel modo,
+così girando la testa a grip rilasciati il braccio saltava alla ripresa. Test `test_grips_pressed_again_*`.
+
 **Sfasamento del DMA (trovato sul robot il 26/10).** Il DMA circolare dello slave non si riallinea sul CS:
 se si arma a metà di un trasferimento, ogni risposta esce in ritardo di qualche byte e si spezza su due
 trasferimenti (sul robot: 3 byte, poi 0 dopo un reset dello STM32). La ricezione dello STM32 regge (finestra

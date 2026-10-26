@@ -439,6 +439,17 @@ static void rt_loop_step(void)
                         deadman_edge = (!deadman_prev && deadman_now);
                     }
 
+                    /* Frizione: grip ripremuti in HEAD/HYBRID/ASSIST -> il riferimento della testa
+                     * diventa la testa e la posa di adesso. Muovere la testa a grip rilasciati non fa
+                     * piu' saltare il braccio alla ripresa (prima il riferimento restava quello
+                     * dell'ingresso nel modo o dell'ultimo HEADZERO). */
+                    if (deadman_edge &&
+                        (j5vr_current.mode == 3U || j5vr_current.mode == 4U || j5vr_current.mode == 5U))
+                    {
+                        j5vr_reset_head_calib();
+                        RT_DBG("[J5VR] HEAD calib reset (grip, mode=%u)", j5vr_current.mode);
+                    }
+
                     if (!inputs_inited)
                     {
                         inputs_prev = inputs_now;

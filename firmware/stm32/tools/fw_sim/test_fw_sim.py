@@ -389,3 +389,25 @@ def test_mismatched_length_master_64_on_128_firmware(lib128):
     n_valid = valid_replies(pi.replies)
     assert n_valid <= len(pi.replies) // 2 + 1
     assert s.state() == "IDLE"          # commands still get through, telemetry rate halves
+
+
+@pytest.mark.parametrize("mode", [3, 4])
+def test_grips_pressed_again_take_the_new_head_as_reference(lib, mode):
+    """Clutch (26/10/2026, user on the robot): turn the head with the grips released, press them again ->
+    the arm must not jump to where the old head reference says; it moves from there with the new head."""
+    s = booted(lib)
+    for line in PI_BOOT_PUSH:
+        s.command(line)
+    pi = Pi(s)
+    pi.j5vr(100, mode=2)
+    assert s.command("HOME", 10) == ["OK HOME"]
+    pi.j5vr(3000, mode=2)
+    pi.j5vr(200, mode=mode, btn_l=GRIP, btn_r=GRIP)                       # engage, head straight
+    pi.j5vr(1500, mode=mode, quat=quat_axis("y", 15), btn_l=GRIP, btn_r=GRIP)
+    held = s.angles()
+    assert max(abs(a - b) for a, b in zip(held, [100.0, 88.0, 93.0, 95.0, 90.0, 95.0])) > 5   # the wrist followed
+    pi.j5vr(500, mode=mode, quat=quat_axis("y", 35))                      # grips released, head turns on
+    pi.j5vr(1500, mode=mode, quat=quat_axis("y", 35), btn_l=GRIP, btn_r=GRIP)   # grips pressed again
+    assert max(abs(a - b) for a, b in zip(s.angles(), held)) < 0.5, "jumped to the old head reference"
+    pi.j5vr(1500, mode=mode, quat=quat_axis("y", 50), btn_l=GRIP, btn_r=GRIP)   # and it follows from here
+    assert max(abs(a - b) for a, b in zip(s.angles(), held)) > 5

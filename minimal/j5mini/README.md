@@ -11,6 +11,8 @@ parla con l'app Quest come ws-teleop e con lo STM32 come il Pi.
 | Comandi di stato | UART 115200 con `#seq`; risposte inoltrate ai client come `uart_response` |
 | Configurazione | su `BOOT_READY` (o 1,5 s dopo l'avvio) invia **le stesse righe del Pi**: `SET_OFFSETS`, `SET_VR_PARAMS` (3 tentativi), `SET_JOINT_LIMITS`, `SET_PWM_CONFIG` (la IMU è sempre accesa) |
 | Ingresso in HEAD/HYBRID/ASSIST | rimanda `SET_VR_PARAMS` (una volta ogni 2,5 s), come ws-teleop |
+| ASSIST (modo 5) | il gimbal del vecchio Pi (`assist_gimbal.py`, serve `numpy`): la camera segue la testa 1:1, base, spalla e gomito aiutano il polso (e seguono la posizione della testa), predizione del movimento e correzione con la IMU; target B/S/G nel frame J5VR (byte 36-45, marcatore `I`). Grip rilasciati: fermo; ripremuti: nuovi riferimenti, nessun salto. Parametri in `"assist"` (default = quelli del robot); `"assist": {"mode": "off"}` lo spegne |
+| Punta l'oggetto | `vision_result` con `aim` (grilletto destro in ASSIST) → il gimbal porta la camera sull'oggetto, esito a tutti come `vision_point`; arrivato, chiede una nuova analisi da vicino |
 | Stato robot | `STATUS?` ogni 2 s |
 | Telemetria ai client | 20 Hz: `robot_state`, `servo_deg_B..R`, quaternione IMU, `deadman_active`, `vr_armed`, `estop_active`, `estop_bypass`, contatori del link, stato telecamere |
 | Telecamere (app Quest) | `vr_zoom_state`, `cam_exposure`, `cam_mode`, `cam_focus` → `raspberry/tools/cam_stream.py` via UDP 5600/5601 come ws-teleop (zoom e luminosità rimandati ogni secondo); in telemetria `cam_zoom`, `cam_mode`, `cam_hfov`, `cam_fps`, `cam_ev`, `vr_zoom0/1` |
@@ -23,9 +25,8 @@ parla con l'app Quest come ws-teleop e con lo STM32 come il Pi.
 | Video della dashboard | `POST /whep/cam0` e `/whep/cam1` sulla porta HTTPS inoltrati al WHEP di MediaMTX (`https.whep`, default `http://127.0.0.1:8889`), così una pagina https può aprire il WebRTC; `cam_autofocus` = autofocus su tutte e due le camere |
 | Simulatore | `--sim`: il firmware vero compilato per il PC al posto di SPI e UART, dashboard su `http://localhost:8558` (`--http-port`) |
 
-**Non fa** (apposta): target ASSIST del gimbal (in modo 5 B/S/G restano fermi; il "punta" della visione
-risponde `vision_point` con `ok: false`), IK/FK e twin, pagine della dashboard, ROS 2, captive portal,
-demo e self-test IMU. Altri messaggi sono ignorati con una riga di log.
+**Non fa** (apposta): twin, pagine della dashboard del vecchio Pi, ROS 2, captive portal, demo e self-test
+IMU. Altri messaggi sono ignorati con una riga di log.
 
 ## Configurazione
 
@@ -52,12 +53,12 @@ python3 j5mini.py --config j5mini.json
 ```
 
 Dipendenze: `websockets`, `spidev`, `pyserial` (pacchetti Debian `python3-websockets`, `python3-spidev`,
-`python3-serial`).
+`python3-serial`); `numpy` per l'ASSIST (senza, il modo 5 muove solo il polso).
 
 ## Prove senza hardware
 
 ```bash
-cd firmware/stm32 && python -m pytest ../../minimal/j5mini -q      # 21 test, firmware vero simulato
+cd firmware/stm32 && python -m pytest ../../minimal/j5mini -q      # firmware vero simulato
 ```
 
 Coprono: push della configurazione su `BOOT_READY` (tutte OK), armo automatico, HOME, manuale con
@@ -66,4 +67,5 @@ righe E-STOP, trasporto a 64 byte (default) e a 128 con firmware a 128, validazi
 ws-teleop, comandi telecamere e zoom residuo, le due API HTTPS, e un client WebSocket reale (come
 l'app) fino al firmware simulato, con `get_settings`; inoltro fra app e servizi opzionali; modo 0 della
 PREPARAZIONE dell'app; impostazioni della dashboard (andata e ritorno, validazione, salvataggio con `.bak`),
-pagine statiche senza uscire dalla cartella, backend `--sim`.
+pagine statiche senza uscire dalla cartella, backend `--sim`; ASSIST: la testa muove anche la base, grip
+rilasciati fermo, ripresi senza salto.

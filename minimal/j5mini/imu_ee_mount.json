@@ -1,0 +1,28 @@
+{
+  "description": "Fixed IMU mounting rotation relative to EE/tool frame (R_imu = R_world_bias . R_ee . R_mount). Re-fitted 2026-10-18 from the ASSIST IMU campaign (329 still samples, gravity direction vs FK): gravity error 9.4 -> 2.8 deg RMS. base_tilt_deg = robot base tilt about x / y (rotation vector).",
+  "quat_wxyz": [
+    0.9971356382119817,
+    0.03321677091881162,
+    0.06652072496339438,
+    -0.013862116997614297
+  ],
+  "rpy_deg": [
+    3.726,
+    7.677,
+    -1.343
+  ],
+  "base_tilt_deg": [
+    -1.16,
+    1.36
+  ],
+  "calibrated_at": "2026-10-18T22:30:00",
+  "method": "imu_campaign gravity fit (mount + base tilt), raspberry/logs/imu_campaign/20261018_220745.jsonl",
+  "samples": 329,
+  "gravity_rms_deg": 2.77,
+  "previous_quat_wxyz": [
+    0.9978145291471898,
+    0.0553353613787577,
+    0.002751663137535594,
+    0.03600821508811257
+  ]
+}

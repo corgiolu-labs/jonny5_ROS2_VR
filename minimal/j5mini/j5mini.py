@@ -23,8 +23,10 @@ What it does (and nothing else):
   - The dashboard (minimal/dashboard, served on the HTTPS port): get_config / save_config (offsets, dirs,
     joint limits, SET_VR_PARAMS and SET_PWM_CONFIG lines -> j5mini.json, with a .bak), ws_ping.
 
-Not here (on purpose): ASSIST gimbal targets, IK/FK, dashboard pages, vision, collimator,
-ROS 2, captive portal, demo/self-test. Mode 5 therefore holds B/S/G.
+  - ASSIST (mode 5) as the robot had it: the gimbal of the old Pi (assist_gimbal.py, needs numpy) computes the
+    B/S/G targets and the wrist quaternion; "point at an object" of the vision service moves the arm there.
+
+Not here (on purpose): dashboard pages of the old Pi, ROS 2, captive portal, demo/self-test.
 
   python3 j5mini.py --config j5mini.json             # real hardware (spidev + pyserial)
   python3 j5mini.py --sim                            # no robot: the real firmware simulated on this PC
@@ -146,6 +148,19 @@ def intent_to_payload(d: dict) -> tuple[bytes | None, str | None]:
     return bytes(p), None
 
 
+def with_mode5_arm(p: bytes, arm) -> bytes:
+    """ASSIST B/S/G targets in the J5VR payload (bytes 36-45, marker 'I', as the old Pi's j5vr_frame.py).
+    arm = (physical deg [3] | None, grip_active, hold_active, target_id)."""
+    deg, grip_active, hold_active, tid = arm
+    if p[0] != 5 or deg is None:
+        return p
+    b = bytearray(p)
+    b[36], b[37] = ord("I"), 1 | (2 if grip_active else 0) | (4 if hold_active else 0)
+    struct.pack_into(">H", b, 38, int(tid) & 0xFFFF)
+    struct.pack_into(">hhh", b, 40, *(max(-32768, min(32767, int(round(float(v) * 100)))) for v in deg[:3]))
+    return bytes(b)
+
+
 def neutral_payload(mode: int, hb: int) -> bytes:
     p = bytearray(54)
     p[0] = mode
@@ -197,10 +212,12 @@ class Core:
                           spi_shift=0)
 
     # ---------------- inputs ----------------
-    def set_intent(self, d: dict) -> str | None:
+    def set_intent(self, d: dict, mode5_arm=None) -> str | None:
         p, err = intent_to_payload(d)
         if err:
             return err
+        if mode5_arm is not None:
+            p = with_mode5_arm(p, mode5_arm)
         mode = p[0]
         if mode in (3, 4, 5) and mode != self.last_mode:
             self.resend_vr_params()
@@ -592,6 +609,7 @@ class Server:
         self.cams = cams or Cameras()
         self.clients = set()
         self.ignored = set()
+        self.assist = Assist.create(core, lock, cfg)
 
     async def handler(self, ws):
         self.clients.add(ws)
@@ -609,11 +627,20 @@ class Server:
         typ = msg.get("type")
         if typ is None and "mode" in msg:
             with self.lock:
-                err = self.core.set_intent(msg)
+                arm = self.assist.step(msg) if self.assist and msg.get("mode") == 5 else None
+                err = self.core.set_intent(msg, arm)
             if err:
                 await ws.send(json.dumps({"type": "error", "error": err}))
+            elif arm is not None:
+                done = self.assist.pop_goal_done()
+                if done:   # point at an object: the arm got there -> the vision service looks again from close up
+                    await self.broadcast({"type": "vision_point", "ok": True, "done": True, "label": done.get("label"),
+                                          "dist_after_mm": done.get("dist_after_mm")})
+                    await self.broadcast({"type": "vision_request", "action": "analyze", "req": "after_point"})
             return
         if typ == "uart" and isinstance(msg.get("cmd"), str):
+            if self.assist and msg["cmd"].strip() == "HEADZERO":
+                self.assist.headzero_external()
             with self.lock:
                 self.core.uart_send(msg["cmd"].strip())
         elif typ == "set_vr_mode":
@@ -639,16 +666,24 @@ class Server:
             data = json.dumps(msg)
             await asyncio.gather(*(c.send(data) for c in list(self.clients) if c is not ws), return_exceptions=True)
             if typ == "vision_result" and msg.get("aim"):
-                # "point" moved the arm through ws-teleop's ASSIST gimbal, which j5mini does not have
-                label = (msg.get("target") or {}).get("label_it")
-                data = json.dumps({"type": "vision_point", "ok": False, "label": label,
-                                   "why": "puntamento non disponibile (stack minimale)"})
-                await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
+                # right trigger in ASSIST: the vision service measured the object under the crosshair, the gimbal
+                # moves the arm to point cam0 at it (grips held); the outcome goes to every client
+                tgt = msg.get("target") or {}
+                with self.lock:
+                    ok, info = (self.assist.request_point(tgt.get("cam_xyz_mm"), tgt.get("label_it")) if self.assist
+                                else (False, {"why": "ASSIST non disponibile (numpy mancante)"}))
+                self.core.log(f"[j5mini] point {tgt.get('label_it')}: ok={ok} {info}")
+                await self.broadcast(dict({k: v for k, v in info.items() if k != "pose_v"}, type="vision_point",
+                                          ok=ok, label=tgt.get("label_it")))
         elif self.cams.on_message(msg):
             pass
         elif typ not in self.ignored:
             self.ignored.add(typ)
             self.core.log(f"[j5mini] message type {typ!r} not handled by the minimal controller (ignored)")
+
+    async def broadcast(self, obj: dict):
+        data = json.dumps(obj)
+        await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
 
     def save_config(self, msg: dict) -> dict:
         """Dashboard settings -> boot lines (validated) -> j5mini.json (+ .bak) and the running config. The
@@ -668,6 +703,8 @@ class Server:
             self.cfg["settings"]["dirs"] = list(msg["dirs"])
             self.core.boot_lines = list(lines)
             self.core.vr_params_line = next((l for l in lines if l.startswith("SET_VR_PARAMS")), None)
+            if self.assist:
+                self.assist.configure()
         self.core.log(f"[j5mini] configuration saved ({'file' if path else 'memory only'})")
         return {"type": "config_saved", "ok": True, "saved_to_file": bool(path), "boot_commands": lines}
 
@@ -703,6 +740,99 @@ class Server:
                 for m in msgs:
                     data = json.dumps(m)
                     await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
+
+
+# ------------------------------------------------------------------ ASSIST (mode 5): the old Pi's gimbal
+
+ASSIST_DEFAULTS = {          # the robot's routing_config.json (gimbalPosition / gimbalPrediction / gimbalImuTrim)
+    "mode": "gimbal",
+    "position": {"enable": True, "scale": 0.7},
+    "prediction": {"enable": True, "lead_s": 0.2, "max_deg": 12.0, "yaw_lead_s": 0.12, "brake": True,
+                   "base_tau_s": 0.12},
+    "imu_trim": {"enable": True, "tau_s": 1.0, "deadband_deg": 0.7, "max_deg": 8.0},
+}
+
+
+class Assist:
+    """Mode 5 like ws-teleop with "assistMode": "gimbal": per intent, B/S/G targets (physical, in the J5VR
+    payload) and a synthetic head quaternion for the firmware's wrist pipeline. Grips released: nothing moves;
+    pressed again: new references, no jump. Off with "assist": {"mode": "off"} (B/S/G then hold, as before)."""
+
+    LIMIT_NAMES = ("base", "spalla", "gomito", "yaw", "pitch", "roll")
+
+    def __init__(self, core: Core, lock: threading.Lock, cfg: dict, gimbal):
+        self.core, self.lock, self.cfg, self.g = core, lock, cfg, gimbal
+        a = cfg.get("assist", {})
+        self.opts = {k: {**v, **a.get(k, {})} if isinstance(v, dict) else a.get(k, v)
+                     for k, v in ASSIST_DEFAULTS.items()}
+        self.uart = _UartBridge(core, lock)
+        self.configure()
+
+    @classmethod
+    def create(cls, core, lock, cfg):
+        if cfg.get("assist", {}).get("mode", "gimbal") != "gimbal":
+            return None
+        try:
+            import assist_gimbal
+        except ImportError as e:            # numpy missing: mode 5 holds B/S/G as without ASSIST
+            core.log(f"[j5mini] ASSIST gimbal not available ({e}): mode 5 moves the wrist only")
+            return None
+        return cls(core, lock, cfg, assist_gimbal)
+
+    def configure(self):
+        s = settings_from_config(self.cfg)
+        try:
+            with open(HERE.parent / "dashboard" / "kinematics.json", encoding="utf-8") as f:
+                screws = json.load(f)["S"]
+        except (OSError, ValueError, KeyError):
+            screws = None
+        self.limits = {n: {"min": lo, "max": hi} for n, (lo, hi) in zip(self.LIMIT_NAMES, s["limits"])}
+        self.g.configure(s["offsets"], s["dirs"], screws=screws, telemetry=lambda: self.core.telemetry)
+
+    def step(self, intent: dict):
+        """Called with the lock held; rewrites intent quat_*; returns the mode-5 arm tuple for the payload."""
+        tm = self.core.telemetry
+        six = [float(tm[k]) for k in SERVO_KEYS] if all(k in tm for k in SERVO_KEYS) else None
+        vr = (self.core.vr_params_line or "").split()[1:]
+        if len(vr) < 19:
+            return None
+        return self.g.step(intent, physical_six=six, limits_src=self.limits, vr_params=vr, uart_manager=self.uart,
+                           grip=intent.get("grip") == 1, pos_cfg=self.opts["position"],
+                           pred_cfg=self.opts["prediction"], trim_cfg=self.opts["imu_trim"])
+
+    def request_point(self, xyz, label):
+        if not (isinstance(xyz, list) and len(xyz) == 3):
+            return False, {"why": "distanza non misurata"}
+        try:
+            return self.g.request_point([float(v) for v in xyz], label)
+        except Exception as e:               # noqa: BLE001 - a planning error must not stop the server
+            return False, {"why": f"errore: {e}"}
+
+    def pop_goal_done(self):
+        return self.g.pop_goal_done()
+
+    def headzero_external(self):
+        self.g.notify_headzero_external()
+
+
+class _UartBridge:
+    """uart_manager.send_uart_command() of the old Pi, for the gimbal's HEADZERO (sent from an asyncio task)."""
+
+    def __init__(self, core: Core, lock: threading.Lock):
+        self.core, self.lock = core, lock
+
+    async def send_uart_command(self, cmd: str, timeout_s: float = 1.0):
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+
+        def done(ok, resp):                   # control thread
+            loop.call_soon_threadsafe(lambda: fut.done() or fut.set_result((ok, resp)))
+        with self.lock:
+            self.core.uart_send(cmd, done)
+        try:
+            return await asyncio.wait_for(fut, timeout_s + 0.5)
+        except asyncio.TimeoutError:
+            return False, "TIMEOUT"
 
 
 WHEP_PATHS = ("cam0", "cam1")

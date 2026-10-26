@@ -295,7 +295,8 @@ def test_https_api_of_the_app():
 
 def test_relay_for_collimator_and_vision(lib, tmp_path):
     """The optional robot services are WebSocket clients: their messages reach the app and back, an "aim"
-    result gets vision_point ok=false (no ASSIST gimbal), and the servo angles land in the telemetry file."""
+    result without a measured distance gets vision_point ok=false, and the servo angles land in the telemetry
+    file."""
     websockets = pytest.importorskip("websockets")
     r = Rig(lib)
     r.run(300)
@@ -330,7 +331,7 @@ def test_relay_for_collimator_and_vision(lib, tmp_path):
     assert col["dx"] == 12.5 and col["lock"] is True
     assert req["action"] == "point" and req["req"] == 7
     assert res["req"] == 7
-    assert pt["ok"] is False and pt["label"] == "tazza" and "minimale" in pt["why"]
+    assert pt["ok"] is False and pt["label"] == "tazza" and pt["why"] == "distanza non misurata"
     tm = json.loads((tmp_path / "j5vr_telemetry.json").read_text())
     assert set(tm) == set(j5mini.SERVO_KEYS)
 
@@ -507,3 +508,76 @@ def test_link_survives_the_slave_dma_phase(lib, phase):
     assert s["spi_shift"] == (64 - phase) % 64                        # phase 61 = the robot: frame at byte 3
     assert r.core.diag.get("estop_active") is False                   # STATUS replies decoded
     assert r.core.telemetry.get("servo_deg_B") is not None
+
+
+# ------------------------------------------------------------------ ASSIST (mode 5, the old Pi's gimbal)
+
+def quat_y(deg):
+    """Head turned left by deg (XR frame: y up)."""
+    import math
+    h = math.radians(deg) / 2
+    return {"quat_w": math.cos(h), "quat_x": 0.0, "quat_y": math.sin(h), "quat_z": 0.0}
+
+
+def test_assist_moves_the_whole_arm_and_regrip_does_not_jump(lib):
+    """26/10/2026 on the robot: mode 5 held B/S/G (no gimbal in j5mini). Now the head turn moves the base too, and
+    grips released + head turned + grips pressed again = no jump, the arm goes on from where it is."""
+    pytest.importorskip("numpy")
+    import assist_gimbal
+    assist_gimbal._state = assist_gimbal.GimbalState()
+    r = Rig(lib)
+    lock, stop = threading.Lock(), threading.Event()
+    r.run(1000)
+    r.run(300, intent())
+    r.core.uart_send("HOME")
+    r.run(3000, intent())
+    home = r.sim.angles()
+
+    def stepper():
+        while not stop.is_set():
+            with lock:
+                r.core.step()
+                r.sim.run(10)
+            time.sleep(0.01)
+
+    srv = j5mini.Server(r.core, lock, json.loads(json.dumps(CFG)), j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+    assert srv.assist is not None
+
+    class Ws:
+        async def send(self, data):
+            pass
+
+    async def stream(seconds, deg0, deg1, grip):
+        n = int(seconds * 60)
+        for i in range(n):
+            r.hb += 1
+            deg = deg0 + (deg1 - deg0) * (i + 1) / n
+            g = GRIP if grip else 0
+            await srv.on_message(Ws(), intent(mode=5, grip=1 if grip else 0, buttons_left=g, buttons_right=g,
+                                              heartbeat=r.hb, **quat_y(deg)))
+            await asyncio.sleep(1 / 60)
+
+    async def go():
+        await stream(1.0, 0, 0, True)                     # engage: HEADZERO, references
+        await stream(2.0, 0, 40, True)                    # head left 40 deg
+        await stream(1.0, 40, 40, True)
+        turned = r.sim.angles()
+        await stream(1.0, 40, 80, False)                  # grips released, the head turns on
+        await stream(0.5, 80, 80, False)
+        released = r.sim.angles()
+        await stream(1.5, 80, 80, True)                   # grips pressed again with the head elsewhere
+        regrip = r.sim.angles()
+        await stream(1.5, 80, 60, True)                   # and it follows from here
+        return turned, released, regrip, r.sim.angles()
+
+    th = threading.Thread(target=stepper, daemon=True)
+    th.start()
+    try:
+        turned, released, regrip, back = asyncio.run(go())
+    finally:
+        stop.set()
+        th.join(1)
+    assert abs(turned[0] - home[0]) > 5, (home, turned)                    # the base helped the wrist yaw
+    assert max(abs(a - b) for a, b in zip(released, turned)) < 1.0         # released: nothing moves
+    assert max(abs(a - b) for a, b in zip(regrip, released)) < 2.0, (released, regrip)   # no jump
+    assert max(abs(a - b) for a, b in zip(back, regrip)) > 3.0             # steering again
