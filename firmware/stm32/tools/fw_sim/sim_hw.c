@@ -214,6 +214,14 @@ SIM_API void sim_spi_transfer(const uint8_t *mosi, uint8_t *miso, int len)
     }
 }
 
+/** Shift the slave DMA by `bytes` against the master's transfers, as on the robot: the circular DMA does not
+ *  resynchronise on CS, so if it was (re)armed in the middle of a transfer every reply comes out late by a few
+ *  bytes and straddles two transfers (26/10/2026: 3 bytes). The RX side copes (cross-boundary window). */
+SIM_API void sim_spi_phase(int bytes)
+{
+    s_spi_pos = (s_spi_pos + bytes) % (2 * SPI_FRAME_LEN);
+}
+
 /** Bytes as if the Pi wrote them on the control UART. */
 SIM_API void sim_uart_write(const char *data)
 {

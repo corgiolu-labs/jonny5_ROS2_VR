@@ -86,6 +86,10 @@ class Sim:
     def run(self, ms):
         self.lib.sim_run_ms(int(ms))
 
+    def spi_phase(self, n):
+        """Shift the slave DMA by n bytes against the master's transfers (the robot's real misalignment)."""
+        self.lib.sim_spi_phase(n)
+
     def spi(self, mosi):
         out = ctypes.create_string_buffer(len(mosi))
         self.lib.sim_spi_transfer(bytes(mosi), out, len(mosi))

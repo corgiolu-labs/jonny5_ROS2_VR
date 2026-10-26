@@ -490,3 +490,20 @@ def test_cam_autofocus_message():
     cams = j5mini.Cameras("/nonexistent", sendto=lambda d, p: sent.append((p, json.loads(d))))
     assert cams.on_message({"type": "cam_autofocus"})
     assert sent == [(5600, {"af": {"src": "button"}}), (5601, {"af": {"src": "button"}})]
+
+
+@pytest.mark.parametrize("phase", [0, 3, 37, 61, 63])
+def test_link_survives_the_slave_dma_phase(lib, phase):
+    """On the robot the slave DMA ran 3 bytes late (26/10/2026): every reply straddled two 64-byte transfers and
+    j5mini, which looked for the frame at offset 0 only, saw no valid reply at all. It now scans the last two
+    transfers for the newest complete frame."""
+    r = Rig(lib)
+    r.sim.spi_phase(phase)
+    r.run(1000)
+    r.run(500, intent())
+    s = r.core.stats
+    assert r.sim.state() == "IDLE"                                    # the firmware still reads our frames
+    assert s["spi_rx_ok"] >= 0.9 * s["spi_tx"] - 3, s                # and we read its replies
+    assert s["spi_shift"] == (64 - phase) % 64                        # phase 61 = the robot: frame at byte 3
+    assert r.core.diag.get("estop_active") is False                   # STATUS replies decoded
+    assert r.core.telemetry.get("servo_deg_B") is not None

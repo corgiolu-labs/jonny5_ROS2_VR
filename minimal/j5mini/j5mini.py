@@ -59,6 +59,18 @@ def build_frame(ftype: int, seq: int, payload: bytes, length: int) -> bytes:
     return f.ljust(length, b"\0")
 
 
+def find_frame_window(prev: bytes, rx: bytes):
+    """Newest complete J5 frame in the last two transfers. The STM32's circular DMA does not resynchronise on CS:
+    once armed in the middle of a transfer every reply comes out a few bytes late and straddles two transfers
+    (on the robot, 26/10/2026: 3 bytes with 64-byte transfers). Returns (frame, offset in the window) or None."""
+    w = prev + rx
+    for o in range(len(w) - 64, -1, -1):          # newest first
+        f = w[o:o + 64]
+        if f[:2] == b"J5" and f[2] == 1 and f[6] == 64 and f[7] == 0 and f[3] in (1, 2, 3, 4, 5):
+            return f, o
+    return None
+
+
 def find_frame(rx: bytes):
     """Canonical 64-byte frame in a transfer (rule of the Pi's spi_transport_mode.py)."""
     def ok(o):
@@ -165,6 +177,8 @@ class Core:
         self.payload_t = -1e9
         self.last_mode, self.last_hb = 0, 0
         self.tx_seq, self.transfers = 0, 0
+        self.prev_rx = b""
+        self.last_frame_key = None
         # uart
         self.rx_buf = b""
         self.uart_seq = 0
@@ -179,7 +193,8 @@ class Core:
         self.telemetry: dict = {}
         self.diag: dict = {}
         self.events: list[dict] = []        # unsolicited lines, uart responses (drained by the server)
-        self.stats = dict(spi_tx=0, spi_rx_ok=0, spi_rx_bad=0, neutral=0, uart_tx=0, uart_rx=0, uart_timeouts=0)
+        self.stats = dict(spi_tx=0, spi_rx_ok=0, spi_rx_bad=0, neutral=0, uart_tx=0, uart_rx=0, uart_timeouts=0,
+                          spi_shift=0)
 
     # ---------------- inputs ----------------
     def set_intent(self, d: dict) -> str | None:
@@ -282,11 +297,19 @@ class Core:
             frame = build_frame(J5_J5VR, self.tx_seq, p, self.len)
         rx = self.spi.transfer(frame)
         self.stats["spi_tx"] += 1
-        f = find_frame(rx)
-        if f is None:
+        found = find_frame_window(self.prev_rx, rx)
+        self.prev_rx = rx
+        if found is None:
             self.stats["spi_rx_bad"] += 1
             return
+        f, off = found
+        key = (f[3], f[4], f[5])                   # the same frame seen again in the next window
+        if key == self.last_frame_key:
+            self.stats["spi_rx_bad"] += 1
+            return
+        self.last_frame_key = key
         self.stats["spi_rx_ok"] += 1
+        self.stats["spi_shift"] = off % len(rx)    # 0 = aligned; else the slave's DMA phase in bytes
         pl = f[8:62]
         if f[3] == J5_TELEMETRY:
             self.telemetry = {
