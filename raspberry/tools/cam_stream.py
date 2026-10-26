@@ -614,6 +614,8 @@ def main():
 
     def learn_pair(d: float, lens: float):
         """(true dioptres, refined lens) -> least-squares line over the last FIT_N pairs (needs a spread)."""
+        if match_calib.get("frozen"):
+            return
         pairs = [pr for pr in (match_calib.get(pairs_key) or []) if isinstance(pr, (list, tuple)) and len(pr) == 2]
         pairs = (pairs + [[round(float(d), 3), round(float(lens), 3)]])[-FIT_N:]
         match_calib[pairs_key] = pairs
@@ -766,7 +768,7 @@ def main():
         af["lens_d"] = round(max(0.0, (float(best) - float(a0)) / max(0.1, float(b0))), 3)
         af["done_seq"] = af["seq"]
         seed = af.get("seed")
-        if ok and seed is not None and state["zoom"] <= LEARN_MAX_ZOOM:
+        if ok and seed is not None and state["zoom"] <= LEARN_MAX_ZOOM and not match_calib.get("frozen"):
             off_old = float(match_calib.get("master_offset", 0.0))
             n = int(match_calib.get("master_offset_n", 0))
             pair = float(best) - float(seed)
@@ -794,10 +796,13 @@ def main():
             start_refine(float(lp), master_af_done)
 
     # ---- stereo follower (cam1): copy the master's exposure / colour, cross-check the focus
+    # "frozen": true in the file keeps the focus calibration (fits, lens_delta, master_offset) as it is: the
+    # learning uses the stereo distance, and a wrong one (26/10/2026: 40 % off until recalibrated) pulled the
+    # fits learned on the 19-25/10 campaign away, one eye out of focus. Exposure / colour matching still adapts.
     match_calib = {"lens_delta": 0.0, "lens_delta_n": 0, "gain_ratio": 1.0, "colour_ratio": [1.0, 1.0],
                    "master_offset": 0.0, "master_offset_n": 0,
                    "master_fit": list(FIT_DEFAULT_MASTER), "follower_fit": list(FIT_DEFAULT_FOLLOWER),
-                   "master_pairs": [], "follower_pairs": []}
+                   "master_pairs": [], "follower_pairs": [], "frozen": False}
     try:
         with open(args.match_calib) as f:
             match_calib.update({k: v for k, v in json.load(f).items() if k in match_calib})
@@ -833,7 +838,7 @@ def main():
                 learn_pair(seed, best)
             if ok and state["zoom"] > LEARN_MAX_ZOOM:
                 log(f"cam{cam}: focus {best:.2f} = master {ml:.2f} {best - ml:+.2f} (zoom {state['zoom']:.1f}: not learned)")
-            elif ok:
+            elif ok and not match_calib.get("frozen"):
                 d_old = float(match_calib["lens_delta"])
                 n = int(match_calib.get("lens_delta_n", 0))
                 pair = float(best) - float(ml)
