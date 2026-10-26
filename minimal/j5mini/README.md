@@ -7,6 +7,7 @@ parla con l'app Quest come ws-teleop e con lo STM32 come il Pi.
 |---|---|
 | Setpoint al braccio | SPI master 100 Hz, 64 byte, frame J5VR dall'ultimo intent; dopo 150 ms senza intent payload neutro (stesso modo e heartbeat, deadman rilasciato) |
 | Diagnostica | una richiesta STATUS ogni 20 trasferimenti (5 Hz): deadman, armato, freeze, E-STOP, bypass |
+| Movimento fluido | in HEAD/HYBRID/ASSIST il quaternione della testa e i target B/S/G dell'ASSIST vengono rigiocati `smoothing_ms` (default 30) indietro, interpolati sui timestamp del visore: l'app manda 60 intent/s da un ciclo a 90 Hz (11 e 22 ms) e il Wi-Fi aggiunge jitter (misurato 8-28 ms), il firmware segue ogni target in pochi ms e il braccio andava a scatti. Grip, pulsanti e stick restano immediati. `0` lo spegne; `smoothed` in telemetria |
 | Risposte SPI | cercate negli ultimi due trasferimenti: il DMA dello STM32 può essere sfasato di qualche byte rispetto al CS (sul robot 3 byte); `spi_shift` in telemetria |
 | Comandi di stato | UART 115200 con `#seq`; risposte inoltrate ai client come `uart_response` |
 | Configurazione | su `BOOT_READY` (o 1,5 s dopo l'avvio) invia **le stesse righe del Pi**: `SET_OFFSETS`, `SET_VR_PARAMS` (3 tentativi), `SET_JOINT_LIMITS`, `SET_PWM_CONFIG` (la IMU è sempre accesa) |

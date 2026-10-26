@@ -608,3 +608,56 @@ def test_park_and_vr_pose_go_to_the_saved_poses_with_ack(lib):
     for cmd in out:
         assert out[cmd][1] and out[cmd][1][0]["ok"], cmd       # the reply keeps the client's command
         assert len(out[cmd][2]) == 1, cmd
+
+
+def jerkiness(lib, smoothing_ms, seed=1):
+    """HEAD mode, the head turning smoothly (sinusoid), intents as the Quest app sends them: 60/s from a 90 Hz
+    frame loop (11 / 22 ms apart) plus Wi-Fi delay jitter, timestamped at sampling. Returns the spread of the
+    moving wrist servo's velocity over 10 ms windows (relative), i.e. how uneven the motion is."""
+    import math
+    import random
+    rnd = random.Random(seed)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["smoothing_ms"] = smoothing_ms
+    r = Rig(lib, cfg)
+    r.run(1000)
+    r.run(300, intent())
+    r.core.uart_send("HOME")
+    r.run(3000, intent())
+    r.run(200, intent(mode=3, grip=1, buttons_left=GRIP, buttons_right=GRIP))
+    t0 = r.sim.now_ms()
+    sends, t, k = [], 0.0, 0
+    while t < 3000:                                   # sampling times on the 90 Hz grid, 1 or 2 frames apart
+        t += (1000 / 90) * (1 if k % 2 else 2)
+        k += 1
+        sends.append((t + 4 + rnd.uniform(0, 14), t))  # (arrival, sampled) in ms after t0
+    sends.sort()
+    angles, i, hb = [], 0, 0
+    for ms in range(3000):
+        while i < len(sends) and sends[i][0] <= ms:
+            ts = sends[i][1]
+            a = math.radians(15 * math.sin(2 * math.pi * ts / 2000.0)) / 2
+            hb += 1
+            assert r.core.set_intent(intent(mode=3, grip=1, buttons_left=GRIP, buttons_right=GRIP, heartbeat=hb,
+                                            quat_w=math.cos(a), quat_x=0.0, quat_y=math.sin(a), quat_z=0.0,
+                                            timestamp=(t0 + ts) / 1000.0)) is None
+            i += 1
+        if ms % 10 == 0:
+            r.core.step()
+        r.sim.run(1)
+        angles.append(r.sim.angles())
+    j = max(range(6), key=lambda n: max(a[n] for a in angles) - min(a[n] for a in angles))
+    x = [a[j] for a in angles[500:]]
+    v = [x[n + 10] - x[n] for n in range(0, len(x) - 10, 10)]
+    dv = [b - a for a, b in zip(v, v[1:])]
+    mean_abs_v = sum(abs(q) for q in v) / len(v)
+    return (sum(q * q for q in dv) / len(dv)) ** 0.5 / mean_abs_v, max(x) - min(x)
+
+
+def test_head_motion_is_smoothed_against_the_apps_irregular_intents(lib):
+    """26/10/2026: small jerks in ASSIST on the robot. The same smooth head motion, irregular intents: with the
+    interpolation the servo's 10 ms velocity varies much less."""
+    raw, span_raw = jerkiness(lib, 0)
+    smooth, span = jerkiness(lib, 30)
+    assert span > 10 and span_raw > 10                  # the wrist really followed the head
+    assert smooth < raw * 0.5, (raw, smooth)

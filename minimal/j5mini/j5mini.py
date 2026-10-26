@@ -8,7 +8,8 @@ One process replaces ws-teleop + the SPI bridge (or the ROS 2 container) for tel
   j5mini --UART (ASCII lines, #seq)-------------> STM32      (ENABLE/SAFE/HOME/..., config push)
 
 What it does (and nothing else):
-  - SPI master at 100 Hz: the newest intent as a J5VR payload; after 150 ms without intents
+  - SPI master at 100 Hz: the newest intent as a J5VR payload (in HEAD/HYBRID/ASSIST the head quaternion and the
+    ASSIST arm targets interpolated on the headset's timestamps, smoothing_ms behind); after 150 ms without intents
     a neutral payload (same mode and heartbeat, no input: deadman released). One STATUS
     request every 20 transfers (5 Hz) for the diagnostics (deadman/armed/E-STOP bits).
   - UART owner: commands from the clients with #seq replies; on BOOT_READY (or 1.5 s after
@@ -39,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import json
 import math
 import os
@@ -163,6 +165,22 @@ def with_mode5_arm(p: bytes, arm) -> bytes:
     return bytes(b)
 
 
+def slerp(a, b, u: float):
+    """Quaternion (w, x, y, z) between a (u=0) and b (u=1), shortest arc."""
+    dot = sum(x * y for x, y in zip(a, b))
+    if dot < 0.0:
+        b, dot = tuple(-v for v in b), -dot
+    if dot > 0.9995:
+        q = [x + (y - x) * u for x, y in zip(a, b)]
+    else:
+        th = math.acos(min(1.0, dot))
+        s = math.sin(th)
+        wa, wb = math.sin((1.0 - u) * th) / s, math.sin(u * th) / s
+        q = [wa * x + wb * y for x, y in zip(a, b)]
+    n = math.sqrt(sum(v * v for v in q)) or 1.0
+    return tuple(v / n for v in q)
+
+
 def neutral_payload(mode: int, hb: int) -> bytes:
     p = bytearray(54)
     p[0] = mode
@@ -192,6 +210,13 @@ class Core:
         # setpoint
         self.payload: bytes | None = None
         self.payload_t = -1e9
+        # smoothing (26/10/2026, jerky ASSIST on the robot): the app sends 60 intents/s from a 90 Hz frame loop
+        # (gaps of 11 and 22 ms) and Wi-Fi adds jitter (measured 8..28 ms, up to 45). The firmware follows every
+        # new target within a few ms, so the arm moved in uneven steps. In modes 3/4/5 the continuous part (head
+        # quaternion, ASSIST B/S/G targets) is replayed smoothing_ms behind, interpolated on the headset's own
+        # timestamps; grips, buttons and sticks stay immediate (releasing the grips still stops at once).
+        self.smooth_s = max(0.0, float(cfg.get("smoothing_ms", 30))) / 1000.0
+        self.samples: collections.deque = collections.deque(maxlen=90)   # (t_headset, t_local, quat, arm | None)
         self.last_mode, self.last_hb = 0, 0
         self.tx_seq, self.transfers = 0, 0
         self.prev_rx = b""
@@ -211,7 +236,7 @@ class Core:
         self.diag: dict = {}
         self.events: list[dict] = []        # unsolicited lines, uart responses (drained by the server)
         self.stats = dict(spi_tx=0, spi_rx_ok=0, spi_rx_bad=0, neutral=0, uart_tx=0, uart_rx=0, uart_timeouts=0,
-                          spi_shift=0)
+                          spi_shift=0, smoothed=0)
 
     # ---------------- inputs ----------------
     def set_intent(self, d: dict, mode5_arm=None) -> str | None:
@@ -221,6 +246,13 @@ class Core:
         if mode5_arm is not None:
             p = with_mode5_arm(p, mode5_arm)
         mode = p[0]
+        now = self.clock()
+        ts = d.get("timestamp")
+        ts = float(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) and math.isfinite(ts) else now
+        if mode != self.last_mode or (self.samples and ts <= self.samples[-1][0]):
+            self.samples.clear()                    # other mode, or the headset clock went back (app restart)
+        arm = struct.unpack_from(">hhh", p, 40) if p[36] == ord("I") else None
+        self.samples.append((ts, now, struct.unpack_from(">ffff", p, 16), arm))
         if mode in (3, 4, 5) and mode != self.last_mode:
             self.resend_vr_params()
         self.payload, self.payload_t = p, self.clock()
@@ -310,6 +342,8 @@ class Core:
         else:
             if self.payload is not None and now - self.payload_t <= self.link_timeout:
                 p = self.payload
+                if self.smooth_s > 0 and p[0] in (3, 4, 5) and len(self.samples) >= 2:
+                    p = self._smoothed(p, now)
             else:
                 p = neutral_payload(self.last_mode, self.last_hb)
                 self.stats["neutral"] += 1
@@ -342,6 +376,28 @@ class Core:
             diag = struct.unpack_from(">H", pl, 50)[0]
             self.diag = {"heartbeat_echo": struct.unpack_from(">H", pl, 46)[0], "mode_echo": pl[48], "diag": diag,
                          **{name: bool(diag & (1 << b)) for b, name in enumerate(DIAG_BITS)}}
+
+    def _smoothed(self, p: bytes, now: float) -> bytes:
+        """The newest payload with the head quaternion (and the ASSIST arm targets) as they were smooth_s ago on
+        the headset's clock. Headset -> local offset = the smallest one seen in the window (least delayed
+        packet)."""
+        s = self.samples
+        off = min(tl - th for th, tl, _, _ in s)
+        r = now - off - self.smooth_s
+        if r <= s[0][0]:
+            a = b = s[0]
+        elif r >= s[-1][0]:
+            a = b = s[-1]
+        else:
+            i = next(k for k in range(len(s) - 1) if s[k + 1][0] > r)
+            a, b = s[i], s[i + 1]
+        u = (r - a[0]) / (b[0] - a[0]) if b[0] > a[0] else 0.0
+        out = bytearray(p)
+        struct.pack_into(">ffff", out, 16, *slerp(a[2], b[2], u))
+        if p[36] == ord("I") and a[3] is not None and b[3] is not None:
+            struct.pack_into(">hhh", out, 40, *(int(round(x + (y - x) * u)) for x, y in zip(a[3], b[3])))
+        self.stats["smoothed"] += 1
+        return bytes(out)
 
     # ---------------- step ----------------
     def step(self):
