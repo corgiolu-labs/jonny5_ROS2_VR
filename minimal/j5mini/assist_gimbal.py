@@ -159,6 +159,8 @@ POINT_ASSIST_RAMP_S = 2.0  # ... and the arm assist comes back gradually: the pl
                          # its band centre, and the arm pulled it back at full rate the moment the motion ended
 ARM_RATE = 14.0          # 1/s: the overflow decays as exp(-ARM_RATE * t) (was 7: too slow on the robot)
 ARM_MAX_DEG_S = 100.0    # arm assist speed cap (firmware caps spalla/gomito with tg-vel-*-head, now 90 deg/s)
+ARM_ACC_DEG_S2 = 250.0   # arm assist acceleration cap: the base left a joint limit, or re-engaged, at full speed at
+                         # once and the wrist compensation could not follow (IMU campaign 26/10: 2-8x the command)
 # time based, so the behaviour does not depend on the intent rate (60/s from the Quest XR app, 25/s web)
 WRIST_MARGIN_DEG = 1.0   # stay this far from the wrist hard limits
 
@@ -192,8 +194,10 @@ BASE_TAU_S = 0.0            # first-order lag of the real base behind the arm co
                             # IMU campaign on the robot: the base answers in ~0.09 s, the wrist in ~0.17 s, so the
                             # base is NOT slower than the wrist (0.12 made the compensation late: the camera swung
                             # with the base for ~0.2 s at every base onset, "scatto all'aggancio della base")
-ARM_DELAY_S = 0.08          # the arm command (B/S/G) is sent low-passed by this much so that it reaches the camera
-                            # together with the wrist compensation computed from the undelayed arm (0.17 - 0.09)
+ARM_DELAY_S = 0.05          # the arm command (B/S/G) is sent low-passed by this much so that it reaches the camera
+                            # together with the wrist compensation computed from the undelayed arm. Campaign 1: base
+                            # 0.09 s, wrist 0.17 s -> 0.08; campaign 2 with 0.08: base 0.18, wrist 0.12-0.15 (over-
+                            # corrected by ~0.04) -> 0.05
 
 # IMU trim (routing_config "gimbalImuTrim": enable, tau_s, deadband_deg, max_deg)
 TRIM_TAU_S = 1.0
@@ -426,6 +430,7 @@ class GimbalState:
         self.arm_cmd_phys = None     # last arm target sent while tracking (physical, float)
         self.arm_sent_v = None       # arm target actually sent (virtual): arm_v low-passed by ARM_DELAY_S
         self.arm_sent_t = 0.0
+        self.arm_vel = [0.0, 0.0, 0.0]   # last arm_v step per second (B, S, G): ARM_ACC_DEG_S2 limits its change
         self.p_ref = None            # head position (XR, m) at engage
         self.p_last = None
         self.rz_ref = None           # wrist centre (reach, height) at engage
@@ -797,6 +802,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         st.zero_ok_at = 0.0
         st.zero_task = asyncio.get_event_loop().create_task(_send_headzero(uart_manager))
         st.arm_v = virt[:3].copy()
+        st.arm_vel = [0.0, 0.0, 0.0]
         st.head_hist = []
         st.w_f = np.zeros(3)
         st.w_t = 0.0
@@ -924,6 +930,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         ramp = u * u * (3.0 - 2.0 * u)
     frac = (1.0 - math.exp(-ARM_RATE * dt)) * ramp
     max_step = ARM_MAX_DEG_S * dt * ramp
+    arm_before = list(st.arm_v)
     a_lo = v_lo[:3]
     a_hi = v_hi[:3]
     ov_yaw = overflow(float(w_deg[0]))
@@ -996,6 +1003,14 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         st.arm_v[2] = g_new
         st.arm_v[1] = float(np.clip(st.arm_v[1] + rest, a_lo[1], a_hi[1]))
 
+    # acceleration cap on the arm help (B/S/G): the wrist compensation lags ~0.15 s, a step in the arm's speed
+    # shows up as a camera jerk
+    if dt > 0:
+        for k in range(3):
+            want = (st.arm_v[k] - arm_before[k]) / dt
+            dv = ARM_ACC_DEG_S2 * dt
+            st.arm_vel[k] += max(-dv, min(dv, want - st.arm_vel[k]))
+            st.arm_v[k] = float(np.clip(arm_before[k] + st.arm_vel[k] * dt, a_lo[k], a_hi[k]))
     full_v = list(virt)
     full_v[0:3] = [float(v) for v in st.arm_v]
     full_v[3:6] = w_cmd
