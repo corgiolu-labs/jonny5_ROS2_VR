@@ -23,6 +23,8 @@ What it does (and nothing else):
   - The dashboard (minimal/dashboard, served on the HTTPS port): get_config / save_config (offsets, dirs,
     joint limits, SET_VR_PARAMS and SET_PWM_CONFIG lines -> j5mini.json, with a .bak), ws_ping.
 
+  - PARK / TELEOPPOSE from the clients become a SETPOSE to the saved poses (settings "park" / "vr", virtual
+    degrees), as ws-teleop did (the firmware's own PARK/TELEOPPOSE go to one factory pose), then teleop_pose_ack.
   - ASSIST (mode 5) as the robot had it: the gimbal of the old Pi (assist_gimbal.py, needs numpy) computes the
     B/S/G targets and the wrist quaternion; "point at an object" of the vision service moves the arm there.
 
@@ -371,6 +373,31 @@ class Core:
 JOINTS = ("B", "S", "G", "Y", "P", "R")
 
 
+POSE_DEFAULTS = {            # the robot's j5_settings.json (virtual degrees, 90 = HOME)
+    "park": [90, 50, 150, 90, 130, 90],
+    "vr": [90, 110, 90, 90, 70, 90],
+    "vel_max": 120,              # deg/s -> SETPOSE speed percent as ws-teleop: (vel - 1) / 119 * 100
+    "profile": "RTR5",
+}
+
+
+def pose_setpose_line(cfg: dict, name: str) -> str:
+    """ws-teleop's PARK / TELEOPPOSE: the saved virtual pose -> physical (offsets, dirs, [5, 175], joint limits)
+    -> "SETPOSE b s g y p r vel% profile"."""
+    s = settings_from_config(cfg)
+    st = cfg.get("settings", {})
+    virtual = st.get(name, POSE_DEFAULTS[name])
+    phys = []
+    for i in range(6):
+        d = -1 if s["dirs"][i] < 0 else 1
+        v = max(5, min(175, int(s["offsets"][i] + d * (float(virtual[i]) - 90))))
+        lo, hi = s["limits"][i]
+        phys.append(max(lo, min(hi, v)))
+    vel = int(st.get("vel_max", POSE_DEFAULTS["vel_max"]))
+    pct = max(1, min(100, round((vel - 1.0) / 119.0 * 100)))
+    return "SETPOSE " + " ".join(str(v) for v in phys) + f" {pct} {st.get('profile', POSE_DEFAULTS['profile'])}"
+
+
 def settings_from_config(cfg: dict) -> dict:
     """What the dashboard edits, read back from the boot lines (the firmware's view) and cfg["settings"]."""
     lines = [l for l in cfg.get("boot_commands", []) if l not in ("IMUON", "IMUOFF")]   # older configs
@@ -639,10 +666,14 @@ class Server:
                     await self.broadcast({"type": "vision_request", "action": "analyze", "req": "after_point"})
             return
         if typ == "uart" and isinstance(msg.get("cmd"), str):
-            if self.assist and msg["cmd"].strip() == "HEADZERO":
+            cmd = msg["cmd"].strip()
+            if self.assist and cmd == "HEADZERO":
                 self.assist.headzero_external()
+            if cmd in ("PARK", "TELEOPPOSE"):
+                self.pose_command(cmd)
+                return
             with self.lock:
-                self.core.uart_send(msg["cmd"].strip())
+                self.core.uart_send(cmd)
         elif typ == "set_vr_mode":
             if msg.get("mode") in (3, 4, 5):
                 with self.lock:
@@ -680,6 +711,21 @@ class Server:
         elif typ not in self.ignored:
             self.ignored.add(typ)
             self.core.log(f"[j5mini] message type {typ!r} not handled by the minimal controller (ignored)")
+
+    def pose_command(self, cmd: str):
+        """PARK / TELEOPPOSE as ws-teleop: SETPOSE to the saved pose; the reply goes out under the client's command,
+        and on OK teleop_pose_ack (the Quest app waits for it, up to 5 s, before its next step)."""
+        with self.lock:
+            line = pose_setpose_line(self.cfg, "park" if cmd == "PARK" else "vr")
+            core = self.core
+
+            def done(ok, resp):                # control thread, lock held
+                core.events.append({"type": "uart_response", "cmd": cmd, "ok": ok, "response": resp})
+                if ok:
+                    core.events.append({"type": "teleop_pose_ack", "teleop_pose_ack": True,
+                                        "id": int(time.monotonic() * 1000)})
+            core.uart_send(line, done)
+        self.core.log(f"[j5mini] {cmd} -> {line}")
 
     async def broadcast(self, obj: dict):
         data = json.dumps(obj)

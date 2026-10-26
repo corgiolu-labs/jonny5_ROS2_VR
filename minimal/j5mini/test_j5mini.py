@@ -581,3 +581,30 @@ def test_assist_moves_the_whole_arm_and_regrip_does_not_jump(lib):
     assert max(abs(a - b) for a, b in zip(released, turned)) < 1.0         # released: nothing moves
     assert max(abs(a - b) for a, b in zip(regrip, released)) < 2.0, (released, regrip)   # no jump
     assert max(abs(a - b) for a, b in zip(back, regrip)) > 3.0             # steering again
+
+
+def test_park_and_vr_pose_go_to_the_saved_poses_with_ack(lib):
+    """26/10/2026 on the robot: PARK and VR pose both went to the firmware's factory teleop pose. ws-teleop sent a
+    SETPOSE to the saved virtual poses (j5_settings park / vr) and teleop_pose_ack (the Quest app waits for it)."""
+    cfg = json.loads(json.dumps(CFG))
+    cfg["settings"]["dirs"] = [1, -1, 1, 1, -1, 1]                 # the robot's
+    r = Rig(lib, cfg)
+    r.run(1000)
+    r.run(300, intent())
+    srv = j5mini.Server(r.core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+
+    async def send(cmd):
+        await srv.on_message(None, {"type": "uart", "cmd": cmd})
+
+    out = {}
+    for cmd in ("PARK", "TELEOPPOSE"):
+        r.core.events = []
+        asyncio.run(send(cmd))
+        r.run(3000, intent())
+        out[cmd] = ([round(a) for a in r.sim.angles()],
+                    [e for e in r.core.events if e.get("cmd") == cmd], [e for e in r.core.events if e.get("teleop_pose_ack")])
+    assert out["PARK"][0] == [88, 125, 143, 90, 50, 98]
+    assert out["TELEOPPOSE"][0] == [88, 65, 83, 90, 110, 98]
+    for cmd in out:
+        assert out[cmd][1] and out[cmd][1][0]["ok"], cmd       # the reply keeps the client's command
+        assert len(out[cmd][2]) == 1, cmd
