@@ -3,7 +3,8 @@
 # The radio link carries ONLY:
 #   Pi  -> headset : video      (RTP/UDP from MediaMTX, RTSP control on 8554; or direct RTP, outbound)
 #   headset -> Pi  : commands   (j5mini WebSocket on 8557; telemetry rides the same socket)
-#                    app HTTPS  (443: controller mappings, refocus) and DNS from NetworkManager's dnsmasq
+#                    app HTTPS  (443: controller mappings, refocus, dashboard + its WebRTC signalling)
+#                    and DNS from NetworkManager's dnsmasq; WebRTC media of the dashboard's video test on UDP 8189
 # Everything else on wlan0 is dropped: SSH, dashboards, and any forwarding between wlan0 and eth0
 # (no internet through the robot, no access to the PC LAN).
 # Installed by raspberry/setup_pi.sh as /etc/j5-wlan0.nft and loaded by j5-wlan0-firewall.service.
@@ -32,6 +33,9 @@ table inet j5wlan {
 
         # commands: j5mini WebSocket (wss 8557) and the app's HTTPS API (443)
         tcp dport { 443, 8557 } accept
+
+        # video test in the dashboard: WebRTC media from MediaMTX (signalling goes through 443)
+        udp dport 8189 accept
 
         counter drop
     }

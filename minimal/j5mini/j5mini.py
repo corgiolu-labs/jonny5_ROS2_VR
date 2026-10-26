@@ -446,6 +446,8 @@ class Cameras:
             if msg.get("mode") in ("tele", "wide"):
                 self.mode, self.mode_sent = msg["mode"], self.clock()
                 self._send({"mode": self.mode})
+        elif typ == "cam_autofocus":                 # one-shot AF on both cameras (dashboard / phone video test)
+            self.autofocus()
         elif typ == "cam_focus":                     # cam0 only: cam1 follows the master (cam_stream --follow)
             v = "auto" if msg.get("auto") else msg.get("dioptres", "auto")
             if v == "auto" or self._num(v):
@@ -680,6 +682,7 @@ class Server:
                     await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
 
 
+WHEP_PATHS = ("cam0", "cam1")
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                 ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml"}
 
@@ -724,7 +727,10 @@ def https_server(cfg: dict, cams: Cameras, lock: threading.Lock):
             self._reply(404, b'{"ok":false}')
 
         def do_POST(self):
-            if self.path.split("?")[0] != "/api/refocus-cameras":
+            path = self.path.split("?")[0]
+            if path.startswith("/whep/"):
+                return self.whep(path[len("/whep/"):])
+            if path != "/api/refocus-cameras":
                 return self._reply(404, b'{"ok":false}')
             with lock:
                 ok = cams.autofocus()
@@ -732,6 +738,34 @@ def https_server(cfg: dict, cams: Cameras, lock: threading.Lock):
                 self._reply(200, b'{"ok":true,"mode":"af"}')
             else:
                 self._reply(429, b'{"ok":false,"error":"cooldown 1s"}')
+
+        def whep(self, cam: str):
+            """WebRTC (WHEP) for the dashboard's video test: the SDP offer goes to MediaMTX on the robot
+            (https.whep, plain http on localhost) and its answer comes back over this HTTPS port, so an https
+            page can use it; the video itself then flows over UDP 8189 between browser and MediaMTX.
+            Only the camera paths, nothing else of MediaMTX."""
+            import urllib.error
+            import urllib.request
+            if cam not in WHEP_PATHS:
+                return self._reply(404, b'{"ok":false}')
+            n = int(self.headers.get("Content-Length") or 0)
+            if not 0 < n <= 65536:
+                return self._reply(400, b'{"ok":false,"error":"offer"}')
+            offer = self.rfile.read(n)
+            req = urllib.request.Request(f"{h_cfg.get('whep', 'http://127.0.0.1:8889')}/{cam}/whep", data=offer,
+                                         method="POST", headers={"Content-Type": "application/sdp"})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    code, body = r.status, r.read()
+            except urllib.error.HTTPError as e:
+                code, body = e.code, e.read()
+            except OSError as e:
+                return self._reply(502, json.dumps({"ok": False, "error": f"MediaMTX non raggiungibile: {e}"}).encode())
+            self.send_response(code)
+            self.send_header("Content-Type", "application/sdp" if code < 300 else "text/plain")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
 
         def log_message(self, fmt, *args):
             pass

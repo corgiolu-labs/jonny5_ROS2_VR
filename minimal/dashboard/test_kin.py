@@ -136,3 +136,20 @@ def test_draw_points_lie_on_their_axes_and_move_with_the_chain():
         for i in range(6):
             assert np.allclose(pts[i], (F @ np.append(KIN["draw_points"][i], 1))[:3], atol=1e-12)
             F = F @ exp6(S[i], q[i])
+
+
+def test_video_test_helpers():
+    """camtest.js: sharpness grows with detail, gray/mean, per-eye verdict."""
+    r = run_node("""
+import * as c from "./camtest.js";
+const w = 64, h = 32, flat = new Float32Array(w * h).fill(100), edges = new Float32Array(w * h);
+for (let i = 0; i < w * h; i++) edges[i] = (Math.floor(i / 4) % 2) * 255;
+const rgba = new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 255, 255]);
+console.log(JSON.stringify({ flat: c.sharpness(flat, w, h), edges: c.sharpness(edges, w, h), g: c.toGray(rgba, 2, 1),
+  ok: c.verdict({ connected: true, fps: 60, lossPct: 0.1 }), slow: c.verdict({ connected: true, fps: 12, lossPct: 0 }),
+  lossy: c.verdict({ connected: true, fps: 60, lossPct: 3 }), none: c.verdict(null) }));
+""")
+    assert r["flat"] == 0 and r["edges"] > 1000
+    assert r["g"]["mean"] == pytest.approx((0.299 * 255 + 0.114 * 255) / 2, abs=0.01)
+    assert r["ok"]["ok"] and not r["slow"]["ok"] and "fps" in r["slow"]["why"]
+    assert not r["lossy"]["ok"] and "perdite" in r["lossy"]["why"] and r["none"]["why"] == "nessun video"

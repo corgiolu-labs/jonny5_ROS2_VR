@@ -25,6 +25,7 @@ Le impostazioni salvate in simulazione restano in memoria (non riscrive `j5mini.
 | Scheda | Cosa |
 |---|---|
 | Stato | stato del firmware e bit di diagnostica (E-STOP, deadman, armato, freeze, guard), qualità del link SPI/UART, chi comanda (visore), IMU, telecamere e collimatore, angoli dei giunti, grafico degli ultimi 60 s |
+| Camere | le due camere dal vivo (WebRTC da MediaMTX, segnalazione attraverso j5mini sulla porta HTTPS), esito per occhio (≥ 20 fps, < 1 % perdite), risoluzione, bitrate, jitter, decodifica, nitidezza e luminosità a confronto, istantanee; autofocus, tele/grandangolo, zoom, fuoco, luminosità |
 | Braccio | 6 slider in gradi virtuali dentro i limiti, "Vai" con tempo e profilo (`SETPOSE_T_HR`), modalità "segui gli slider", pose salvate nel browser (sequenze, esporta/importa), vista 3D misurato/target, posa dell'end-effector (mm, RPY) e manipolabilità |
 | Comandi | pulsanti dei comandi del firmware, console UART con cronologia, registro delle risposte e dei messaggi spontanei |
 | Impostazioni | offset (HOME), verso, limiti fisici, righe `SET_VR_PARAMS` / `SET_PWM_CONFIG`; "Applica" le manda al firmware acceso, "Salva" le scrive in `j5mini.json` (con `.bak`) e valgono dal prossimo avvio |
@@ -46,11 +47,13 @@ Le impostazioni salvate in simulazione restano in memoria (non riscrive `j5mini.
 | `app.js` | collegamento, schede, test |
 | `kin.js` | cinematica POE (diretta, Jacobiano spaziale, manipolabilità, RPY, angoli virtuali/fisici), senza dipendenze: si usa anche da node |
 | `view3d.js` | vista 3D su canvas |
+| `camtest.js` | prova delle camere: WHEP, statistiche, nitidezza (varianza del laplaciano), esito |
 | `kinematics.json` | assi di vite `S`, posa `M`, punti per il disegno (dal modello dello stack del Pi) |
 | `test_kin.py` | `kin.js` contro un riferimento numpy (FK, RPY, Jacobiano vs differenze finite, punti sugli assi) |
 
 Messaggi verso `j5mini` oltre a quelli dell'app: `get_config` → `config`, `save_config` → `config_saved`,
-`ws_ping` → `ws_pong`; le righe UART passano con `{"type":"uart","cmd":...}` e le risposte arrivano a tutti come
+`ws_ping` → `ws_pong`, `cam_autofocus`; HTTPS `POST /whep/cam0|cam1` (offerta SDP, inoltrata al WHEP di MediaMTX
+su `127.0.0.1:8889`; il video arriva poi in UDP 8189, aperta sul Wi-Fi dal firewall); le righe UART passano con `{"type":"uart","cmd":...}` e le risposte arrivano a tutti come
 `uart_response` / `uart_unsolicited`.
 
 ## Prove

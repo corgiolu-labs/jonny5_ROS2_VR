@@ -19,6 +19,7 @@ parla con l'app Quest come ws-teleop e con lo STM32 come il Pi.
 | Servizi opzionali | collimatore e visione (`raspberry/tools/`) sono client del WebSocket come l'app: j5mini inoltra `stereo_collimation`, `stereo_calibrate`, `vision_request`, `vision_result` e scrive gli angoli dei servo in `/dev/shm/j5vr_telemetry.json` (`telemetry_file`) per la visione |
 | Orologio | `time_sync` dall'app → `sudo -n date` se sfasato > 2 s (`set_clock`) |
 | Dashboard | `minimal/dashboard` servita sulla porta HTTPS (`https.dashboard`); `get_config` / `save_config` (offset, versi, limiti, righe VR e PWM → `j5mini.json` con `.bak`), `ws_ping`; in telemetria tutti i bit di diagnostica e il numero di client |
+| Video della dashboard | `POST /whep/cam0` e `/whep/cam1` sulla porta HTTPS inoltrati al WHEP di MediaMTX (`https.whep`, default `http://127.0.0.1:8889`), così una pagina https può aprire il WebRTC; `cam_autofocus` = autofocus su tutte e due le camere |
 | Simulatore | `--sim`: il firmware vero compilato per il PC al posto di SPI e UART, dashboard su `http://localhost:8558` (`--http-port`) |
 
 **Non fa** (apposta): target ASSIST del gimbal (in modo 5 B/S/G restano fermi; il "punta" della visione

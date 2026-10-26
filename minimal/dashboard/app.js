@@ -2,6 +2,7 @@
 // Parla solo con j5mini (WebSocket, stessi messaggi dell'app Quest), che inoltra le righe UART allo STM32.
 import * as K from "./kin.js";
 import { View3D } from "./view3d.js";
+import { CamTest } from "./camtest.js";
 
 const $ = id => document.getElementById(id);
 const JN = ["Base", "Spalla", "Gomito", "Yaw polso", "Pitch polso", "Roll polso"];
@@ -577,8 +578,11 @@ document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
   b.classList.add("active"); $(b.dataset.tab).classList.add("active");
   if (b.dataset.tab === "braccio") view.draw();
   if (b.dataset.tab === "stato") drawChart();
+  if (b.dataset.tab !== "camere" && camTest.pcs.some(Boolean)) camTest.stop();   // the video costs CPU on the Pi
 });
 
+const camTest = new CamTest({ send, getTelemetry: () => S.tm, toast,
+  getCollimation: () => (S.col && Date.now() - S.colAt < 2000 ? S.col : null) });
 $("guide").innerHTML = GUIDE();
 loadPoses(); renderPoses(); connect();
 
@@ -620,6 +624,11 @@ accelerazione massime, rumore, vibrazioni.</li>
 (Newton-Raphson con lo Jacobiano di <code>kin.js</code>, Modern Robotics cap. 6). Provala prima sul simulatore.</li>
 <li><b>Sequenze</b>: insegna al braccio una sequenza di pose (salva, riordina, esegui) e misurane la ripetibilità.</li>
 </ol>
+<h2>Telecamere</h2>
+<p>Due Camera Module 3 (IMX708) a 63 mm, sincronizzate fra loro, pubblicate da MediaMTX: le app le ricevono in
+RTSP, la scheda Camere in WebRTC. Per provarle: avvia il video, controlla l'esito di ogni occhio, inquadra un
+oggetto con dettagli e confronta nitidezza e luminosità; con il collimatore attivo la distanza al mirino dice
+se le due immagini si sovrappongono.</p>
 <h2>Sicurezza</h2>
 <ul><li><b>STOP</b> (in alto, o Esc / barra spaziatrice) ferma tutto in ogni momento.</li>
 <li>I comandi di movimento sono spenti finché non attivi "comandi di movimento", e si spengono da soli se il

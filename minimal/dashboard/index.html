@@ -26,6 +26,7 @@
 <nav id="tabs">
   <button data-tab="stato" class="active">Stato</button>
   <button data-tab="braccio">Braccio</button>
+  <button data-tab="camere">Camere</button>
   <button data-tab="comandi">Comandi</button>
   <button data-tab="impostazioni">Impostazioni</button>
   <button data-tab="test">Test</button>
@@ -114,6 +115,32 @@
         <div class="manip">manipolabilità |det J| del target <meter id="manip" min="0" max="1" low="0.08" optimum="1"></meter>
           <span id="manip-v"></span></div>
       </div>
+    </div>
+  </section>
+
+  <!-- ======================================================================= CAMERE -->
+  <section id="camere" class="tab">
+    <div class="card">
+      <div class="row">
+        <button id="cam-start" class="primary">Avvia video</button>
+        <button id="cam-af">Autofocus</button>
+        <label>sensore <select id="cam-mode"><option value="tele">tele 47°, 90 fps</option><option value="wide">grandangolo 66°, 56 fps</option></select></label>
+        <label>zoom <select id="cam-zoom"><option>1</option><option>1.5</option><option>2</option><option>3</option><option>4</option></select></label>
+        <label>fuoco <select id="cam-focus"><option value="auto">auto</option><option value="0">∞</option><option value="0.5">2 m</option>
+          <option value="1">1 m</option><option value="2">50 cm</option><option value="4">25 cm</option></select></label>
+        <label>luminosità <input type="range" id="cam-ev" min="-2" max="2" step="0.33" value="0"> <span id="cam-ev-v">0.0 EV</span></label>
+      </div>
+      <div class="cams">
+        <div><h3>Sinistra <small>cam0</small> <button id="cam-shot0" class="tiny">istantanea</button></h3>
+          <video id="cam-v0" autoplay muted playsinline></video><pre id="cam-s0" class="small">fermo</pre></div>
+        <div><h3>Destra <small>cam1</small> <button id="cam-shot1" class="tiny">istantanea</button></h3>
+          <video id="cam-v1" autoplay muted playsinline></video><pre id="cam-s1" class="small">fermo</pre></div>
+      </div>
+      <pre id="cam-cmp" class="small"></pre>
+      <p class="note">Video WebRTC da MediaMTX sul robot (lo stesso flusso delle app, che lo ricevono in RTSP). Esito OK con
+        almeno 20 fps e meno dell'1 % di pacchetti persi. La nitidezza (varianza del laplaciano) serve a confrontare le due
+        camere sulla stessa scena: inquadra un oggetto con dettagli. Zoom, fuoco e luminosità cambiano anche ciò che vede
+        il visore. In simulazione non c'è video.</p>
     </div>
   </section>
 

@@ -81,6 +81,10 @@ body:not(.motion-on) button.motion, body.teleop-live button.motion { opacity: .3
 #console-in { flex: 1; min-width: 220px; font-family: ui-monospace, Consolas, monospace; }
 #pose-name { flex: 1; min-width: 140px; }
 pre:empty { display: none; }
+.cams { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
+@media (max-width: 700px) { .cams { grid-template-columns: 1fr; } }
+.cams video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; display: block; }
+button.tiny { padding: 2px 8px; font-size: 12px; margin-left: 8px; }
 @media (max-width: 600px) {
   main { padding: 10px; }
   .joint { grid-template-columns: 78px 1fr 70px; row-gap: 0; }

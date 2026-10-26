@@ -439,3 +439,54 @@ def test_sim_backend_boots_and_takes_the_configuration():
         core.step()
         robot.tick()
     assert robot.sim.state() == "IDLE"
+
+
+def test_whep_proxy_for_the_video_test():
+    """POST /whep/cam0 -> MediaMTX's WHEP (here a fake), only the camera paths; 502 when MediaMTX is down."""
+    import urllib.error
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    seen = []
+
+    class FakeMtx(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            seen.append((self.path, self.headers["Content-Type"], body))
+            self.send_response(201)
+            self.send_header("Content-Type", "application/sdp")
+            self.end_headers()
+            self.wfile.write(b"v=0 answer")
+
+        def log_message(self, *a):
+            pass
+
+    mtx = ThreadingHTTPServer(("127.0.0.1", 0), FakeMtx)
+    threading.Thread(target=mtx.serve_forever, daemon=True).start()
+    cams = j5mini.Cameras("/nonexistent", sendto=lambda d, p: None)
+    srv = j5mini.https_server({"https": {"host": "127.0.0.1", "port": 0,
+                                         "whep": f"http://127.0.0.1:{mtx.server_address[1]}"}}, cams, threading.Lock())
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def post(path, data=b"v=0 offer"):
+        return urllib.request.urlopen(urllib.request.Request(base + path, data=data, method="POST",
+                                                             headers={"Content-Type": "application/sdp"}), timeout=3)
+    r = post("/whep/cam1")
+    assert r.status == 201 and r.read() == b"v=0 answer" and r.headers["Content-Type"] == "application/sdp"
+    assert seen == [("/cam1/whep", "application/sdp", b"v=0 offer")]
+    for bad in ("/whep/cam_g2g", "/whep/../v3/config/global/get"):
+        with pytest.raises(urllib.error.HTTPError) as e:
+            post(bad)
+        assert e.value.code == 404
+    mtx.shutdown(); mtx.server_close()
+    with pytest.raises(urllib.error.HTTPError) as e:
+        post("/whep/cam0")
+    assert e.value.code == 502 and b"MediaMTX" in e.value.read()
+    srv.shutdown()
+
+
+def test_cam_autofocus_message():
+    sent = []
+    cams = j5mini.Cameras("/nonexistent", sendto=lambda d, p: sent.append((p, json.loads(d))))
+    assert cams.on_message({"type": "cam_autofocus"})
+    assert sent == [(5600, {"af": {"src": "button"}}), (5601, {"af": {"src": "button"}})]
