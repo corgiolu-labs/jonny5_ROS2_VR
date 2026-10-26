@@ -280,10 +280,15 @@ class Core:
         """Called at ~5 Hz with the vertical measured by the wrist IMU in the tool frame (None = no IMU): while the
         arm and the IMU are still, the image's horizontal axis (tool y) should be level; what is left is fed back
         into the firmware's roll (trim, deg). Base tilt, servo play, offsets: whatever the kinematics miss."""
-        if not self.horizon_on or up_tool is None:
+        now = self.clock()
+        # only while the firmware really drives the roll: a VR mode with the grips held and a live intent. In
+        # PREPARAZIONE (mode 0) or with the grips released nothing moves, and the trim ran away to its cap
+        # (26/10/2026 on the robot: 8 deg, then the camera entered ASSIST tilted by 8 deg for 15 s)
+        applied = (self.horizon_on and self.last_mode in (2, 3, 4, 5) and self.diag.get("deadman") is True
+                   and now - self.payload_t < 0.5)
+        if not applied or up_tool is None:
             self.horizon_hist = []
             return
-        now = self.clock()
         pose = tuple(self.telemetry.get(k) for k in SERVO_KEYS)
         h = self.horizon_hist
         h.append((now, pose, tuple(up_tool)))

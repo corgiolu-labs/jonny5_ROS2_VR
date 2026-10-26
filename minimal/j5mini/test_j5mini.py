@@ -775,15 +775,24 @@ def test_horizon_trim_from_the_wrist_imu():
     core.telemetry = {k: 90 for k in j5mini.SERVO_KEYS}
     tilt = math.radians(3.0)
     up = (0.0, math.sin(tilt), math.cos(tilt))                 # image tilted by 3 deg, left side up
-    for _ in range(5):
-        core.clock.t += 0.2
-        core.horizon_trim_step(up)
+
+    def run(n):
+        for _ in range(n):
+            core.clock.t += 0.2
+            core.payload_t = core.clock.t
+            core.horizon_trim_step(up)
+    # PREPARAZIONE (mode 0) / grips released: the firmware does not drive the roll -> no trim (it ran away before)
+    core.last_mode, core.diag = 0, {"deadman": True}
+    run(5)
+    core.last_mode, core.diag = 5, {"deadman": False}
+    run(5)
+    assert sent == [] and core.horizon_trim == 0.0
+    core.last_mode, core.diag = 5, {"deadman": True}
+    run(5)
     assert sent and core.horizon_trim == pytest.approx(-1.5, abs=0.01)
     assert sent[-1].endswith(" -1.50")
     n = len(sent)
-    core.telemetry["servo_deg_Y"] = 95                          # the arm moves: no correction
-    for _ in range(5):
-        core.clock.t += 0.2
-        core.horizon_trim_step(up)
+    for _ in range(5):                                         # the arm moves: no correction
         core.telemetry["servo_deg_Y"] += 1
+        run(1)
     assert len(sent) == n
