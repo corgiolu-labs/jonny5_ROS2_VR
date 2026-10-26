@@ -226,30 +226,6 @@ bool imu_is_orientation_valid(void)
 	return g_imu_orientation_valid;
 }
 
-/**
- * Azzera lo stato di orientamento (quaternione + snapshot) quando IMU è disabilitata (IMUOFF).
- * Evita che la telemetria o altri consumer riutilizzino l'ultimo quat valido.
- */
-void imu_clear_orientation_state(void)
-{
-	g_imu_orientation_valid = false;
-	g_imu_quat.w = 1.0f;
-	g_imu_quat.x = 0.0f;
-	g_imu_quat.y = 0.0f;
-	g_imu_quat.z = 0.0f;
-
-	/* Scrivi snapshot di reset su entrambi i buffer per coerenza */
-	imu_snapshot_t reset = {
-		.quat_w = 1.0f, .quat_x = 0.0f, .quat_y = 0.0f, .quat_z = 0.0f,
-		.zworld_x = 0.0f, .zworld_y = 0.0f, .zworld_z = 1.0f,
-		.wrist_roll_rate = 0.0f, .wrist_pitch_rate = 0.0f, .wrist_yaw_rate = 0.0f,
-	};
-	g_imu_buffers[0] = reset;
-	g_imu_buffers[1] = reset;
-	atomic_set(&g_imu_active_idx, 0);
-	g_imu_has_valid_snapshot = false;
-	g_imu_sample_counter = 0;
-}
 
 /* ------------------------------------------------------------------------- *
  * imu_update_orientation — production body (BNO085 backend).

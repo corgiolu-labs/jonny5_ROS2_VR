@@ -5,7 +5,7 @@
  *
  * Comandi supportati:
  *   STOP, SAFE, RESET, ENABLE, STATUS?
- *   IMUON, IMUOFF, VR?, HEADZERO
+ *   VR?, HEADZERO   (IMUON / IMUOFF tolti: la IMU e' sempre accesa)
  *   HOME, PARK
  *   SETPOSE <B S G Y P R vel PLANNER>
  *   SETPOSE_T <B S G Y P R time_ms PLANNER>
@@ -375,18 +375,6 @@ static void uart_process_command(uint32_t seq, const char *cmd)
     else if (strcmp(cmd, "HYBRID DISABLE") == 0)
     {
         uart_send_response_with_seq(seq, "OK HYBRID DISABLED");
-    }
-    /* --- IMU --- */
-    else if (strcmp(cmd, "IMUON") == 0)
-    {
-        g_imu_reads_enabled = 1;
-        uart_send_response_with_seq(seq, "OK IMUON");
-    }
-    else if (strcmp(cmd, "IMUOFF") == 0)
-    {
-        g_imu_reads_enabled = 0;
-        imu_clear_orientation_state();
-        uart_send_response_with_seq(seq, "OK IMUOFF");
     }
     /* --- Diagnostica VR --- */
     else if (strncmp(cmd, "VR?", 3) == 0)

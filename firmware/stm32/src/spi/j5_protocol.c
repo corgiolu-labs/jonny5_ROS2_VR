@@ -273,14 +273,7 @@ void j5_build_frame(j5_frame_t *frame, j5_frame_type_t type, uint16_t seq)
 
     /* --- TELEMETRY payload --- */
 
-    if (!g_imu_reads_enabled)
-    {
-        /* IMUOFF: imu_valid=0, quaternione identità */
-        frame->payload[28] = 0u;
-        float_to_be32(1.0f, frame->payload + 29);
-        /* quat x/y/z restano 0 per memset */
-    }
-    else if (imu_is_available())
+    if (imu_is_available())
     {
         imu_snapshot_t snap;
         const bool snap_ok = imu_get_snapshot(&snap);

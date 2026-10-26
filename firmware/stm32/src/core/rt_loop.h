@@ -45,6 +45,5 @@ extern volatile uint8_t g_vr_input_active;
 /* Diagnostica IMU thread liveness */
 extern volatile uint32_t g_imu_thread_ticks;
 extern volatile uint8_t g_imu_thread_stage;
-extern volatile uint8_t g_imu_reads_enabled;
 
 #endif /* RT_LOOP_H */

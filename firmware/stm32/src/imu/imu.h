@@ -72,8 +72,6 @@ void imu_i2c_bus_recovery(void);
 /* True se l'orientamento IMU (quaternione BNO085) è basato su campioni validi */
 bool imu_is_orientation_valid(void);
 
-/** Azzera orientamento e snapshot quando IMU è disabilitata (IMUOFF). Da chiamare da UART su IMUOFF. */
-void imu_clear_orientation_state(void);
 
 /* Verifica se IMU è disponibile */
 bool imu_is_available(void);

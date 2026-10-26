@@ -127,22 +127,12 @@ static void imu_thread_fn(void *a, void *b, void *c)
 		g_imu_thread_ticks++;
 		k_sleep(K_MSEC(50));
 	}
-	/* --- FASE 1b: verifica flag IMU abilitata ---
-	 * g_imu_reads_enabled parte a 1 (ON di default).
-	 * Il comando IMUOFF può disabilitarla runtime; in quel caso aspettiamo
-	 * che venga riabilitata prima di tentare l'init I2C. */
-	g_imu_thread_stage = 8; /* stage=8: verifica flag IMU */
-	while (!g_imu_reads_enabled) {
-		g_imu_thread_ticks++;
-		k_sleep(K_MSEC(50));
-	}
-	/* --- FASE 2: init IMU con retry ---
+	/* --- FASE 2: init IMU con retry (la IMU e' sempre accesa) ---
 	 * Se il sensore o il bus I2C non sono pronti subito dopo il boot, non
 	 * restiamo bloccati in stage 10 fino a un reset hardware: ritentiamo
-	 * periodicamente finche' IMUON resta attivo. */
+	 * ogni secondo. */
 	while (1) {
-		LOG_INF("[IMU] avvio init I2C (rt_ticks=%u, imu_reads_enabled=%u)",
-			(unsigned)g_rt_loop_ticks, (unsigned)g_imu_reads_enabled);
+		LOG_INF("[IMU] avvio init I2C (rt_ticks=%u)", (unsigned)g_rt_loop_ticks);
 		g_imu_thread_stage = 9;
 		{
 			int rc = imu_init();
@@ -150,12 +140,6 @@ static void imu_thread_fn(void *a, void *b, void *c)
 				break;
 			}
 			LOG_ERR("[IMU] init fallita rc=%d - retry tra 1 s", rc);
-		}
-
-		while (!g_imu_reads_enabled) {
-			g_imu_thread_ticks++;
-			g_imu_thread_stage = 8;
-			k_sleep(K_MSEC(100));
 		}
 
 		g_imu_thread_ticks++;
@@ -170,16 +154,9 @@ static void imu_thread_fn(void *a, void *b, void *c)
 	while (1) {
 		g_imu_thread_ticks++;
 
-		if (g_imu_reads_enabled)
-		{
-			g_imu_thread_stage = 1;
-			imu_update_orientation(IMU_DT_S);
-			g_imu_thread_stage = 2;
-		}
-		else
-		{
-			g_imu_thread_stage = 0;
-		}
+		g_imu_thread_stage = 1;
+		imu_update_orientation(IMU_DT_S);
+		g_imu_thread_stage = 2;
 
 		int64_t now_us = (int64_t)k_uptime_get() * 1000;
 		int64_t sleep_us = next_us - now_us;
@@ -217,9 +194,6 @@ volatile uint8_t g_vr_input_active = 0;
 
 volatile uint32_t g_imu_thread_ticks = 0;
 volatile uint8_t g_imu_thread_stage = 0;
-/* IMU abilitata di default: il thread IMU avvia l'init I2C non appena il RT loop
- * è a regime (>2s). Il comando IMUOFF può disabilitarla runtime, IMUON la riabilita. */
-volatile uint8_t g_imu_reads_enabled = 1;
 
 static inline int iabs_i32(int v) { return (v < 0) ? -v : v; }
 

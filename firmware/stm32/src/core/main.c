@@ -29,7 +29,7 @@ int main(void)
     estop_init();             /* fungo E-STOP PC6 */
 
     /* imu_init() NON viene chiamata qui: il thread IMU in rt_loop aspetta
-     * che RT sia a regime (>2s) e che le letture siano abilitate (default ON, IMUOFF le spegne).
+     * che RT sia a regime (>2s); la IMU e' sempre accesa (IMUON/IMUOFF tolti il 26/10/2026).
      * Così main() non si blocca se il sensore non risponde sul bus I2C. */
 
     rt_loop_init();

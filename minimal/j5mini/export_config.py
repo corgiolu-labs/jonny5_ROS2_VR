@@ -8,7 +8,7 @@ Run it ON THE PI (the calibrated files live there), with its venv:
 It imports raspberry/controller/web_services/ws_handlers_uart.py and calls the same builders
 ws-teleop uses on BOOT_READY, so the lines are byte-identical to what the Pi sends today:
 SET_OFFSETS (j5_settings.json), SET_VR_PARAMS + SET_JOINT_LIMITS (routing_config.json),
-SET_PWM_CONFIG (pwm_config.json), then IMUON. Also the app's settings (offsets/dirs, get_settings).
+SET_PWM_CONFIG (pwm_config.json); no IMUON (the IMU is always on). Also the app's settings (offsets/dirs, get_settings).
 Copy the button bindings next to it as well:
 
     cp ~/raspberry5/config_runtime/robot/controller_mappings.json .
@@ -41,7 +41,6 @@ def main():
             if lim and "min" in lim and "max" in lim:
                 lines.append(f"SET_JOINT_LIMITS {idx} {int(lim['min'])} {int(lim['max'])}")
     lines.append(u._build_set_pwm_config_cmd(u.load_persisted_pwm_config()))
-    lines.append("IMUON")
     out = {
         "boot_commands": lines,
         "spi": {"device": "/dev/spidev0.0", "speed_hz": 1000000, "transfer_len": 64},

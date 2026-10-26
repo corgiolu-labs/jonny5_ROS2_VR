@@ -156,7 +156,8 @@ class Core:
         self.cfg, self.spi, self.uart, self.clock, self.log = cfg, spi, uart, clock, log
         self.len = int(cfg.get("spi", {}).get("transfer_len", 64))
         self.link_timeout = cfg.get("link_timeout_ms", 150) / 1000.0
-        self.boot_lines = list(cfg.get("boot_commands", []))
+        # IMUON / IMUOFF no longer exist in the firmware (IMU always on): skipped if an older config has them
+        self.boot_lines = [l for l in cfg.get("boot_commands", []) if l not in ("IMUON", "IMUOFF")]
         self.vr_params_line = next((l for l in self.boot_lines if l.startswith("SET_VR_PARAMS")), None)
         self.t0 = clock()
         # setpoint
@@ -332,7 +333,7 @@ JOINTS = ("B", "S", "G", "Y", "P", "R")
 
 def settings_from_config(cfg: dict) -> dict:
     """What the dashboard edits, read back from the boot lines (the firmware's view) and cfg["settings"]."""
-    lines = cfg.get("boot_commands", [])
+    lines = [l for l in cfg.get("boot_commands", []) if l not in ("IMUON", "IMUOFF")]   # older configs
     offsets = next(([int(v) for v in l.split()[1:7]] for l in lines if l.startswith("SET_OFFSETS ")), [90] * 6)
     limits = [[0, 180] for _ in range(6)]
     for l in lines:
@@ -348,7 +349,7 @@ def settings_from_config(cfg: dict) -> dict:
 
 def boot_lines_from_settings(s: dict) -> tuple[list[str] | None, str | None]:
     """Validated boot lines in the Pi's order (SET_OFFSETS, SET_VR_PARAMS, SET_JOINT_LIMITS x6,
-    SET_PWM_CONFIG, IMUON), or (None, error)."""
+    SET_PWM_CONFIG), or (None, error). No IMUON: the IMU is always on."""
     def ints(v, n, lo, hi):
         return (isinstance(v, list) and len(v) == n and
                 all(isinstance(x, int) and not isinstance(x, bool) and lo <= x <= hi for x in v))
@@ -369,7 +370,6 @@ def boot_lines_from_settings(s: dict) -> tuple[list[str] | None, str | None]:
     lines += [f"SET_JOINT_LIMITS {i} {a} {b}" for i, (a, b) in enumerate(lim)]
     if s.get("pwm_config"):
         lines.append(s["pwm_config"])
-    lines.append("IMUON")
     return lines, None
 
 

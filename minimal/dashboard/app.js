@@ -421,7 +421,7 @@ const CMDS = [
   ["STOP", "STOPPED: serve ENABLE"], ["RESET", "azzera lo stato del firmware"],
   ["HOME", "va agli offset (90 virtuali)", true], ["PARK", "posa di parcheggio", true],
   ["TELEOPPOSE", "posa di partenza della teleoperazione", true], ["RELAX_DIGITAL", "rilascia i servo digitali del polso"],
-  ["HEADZERO", "azzera il riferimento della testa"], ["IMUON", "accende la IMU"], ["IMUOFF", "spegne la IMU"],
+  ["HEADZERO", "azzera il riferimento della testa"],
   ["STATUS?", "stato del firmware"], ["ESTOP?", "stato della linea di emergenza"], ["VR?", "parametri VR attivi"],
 ];
 for (const [c, tip, motion] of CMDS) {

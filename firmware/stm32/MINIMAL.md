@@ -30,7 +30,9 @@ sono rimasti parola per parola, è stato tolto solo ciò che è morto, speriment
 
 | protocollo v2 con CRC (`TELEMETRY_V2` 0x08, contatori gap/CRC) e frame J5IK (0x05, modo 6 JOINT_STREAM, `pose_known`) | li usava solo lo stack ROS 2, tolto il 26/10 (j5mini parla v1). Un frame v2 o J5IK ora è un frame non valido: risposta STATUS 0xEE e nessun "rinfresco" del watchdog SPI. Un J5VR con modo 6 resta come prima: servo spenti in IDLE, nessun riarmo automatico |
 
-Rimasti, anche se poco usati: IMU BNO085 (solo telemetria), `HYBRID ENABLE/DISABLE` (rispondono OK, il Pi li manda), `VR?`,
+| comandi `IMUON` / `IMUOFF` | la IMU è sempre accesa (era già il default all'avvio); j5mini non manda più `IMUON` e lo salta nelle configurazioni vecchie |
+
+Rimasti, anche se poco usati: IMU BNO085 (solo telemetria, sempre accesa), `HYBRID ENABLE/DISABLE` (rispondono OK, il Pi li manda), `VR?`,
 pulsante centrale PC13, log `J5VR_DEBUG_MINIMAL` (attivo).
 
 Spostato senza modifiche: la logica dei frame SPI (finestra, scelta del frame, risposte, contatori) da
@@ -40,7 +42,7 @@ restano HAL, DMA e thread.
 | | Originale | Minimale |
 |---|---|---|
 | righe in `src/` | 9.675 (41 file) | 7.486 (33 file) |
-| flash / RAM | 96.908 / 28.292 B | 93.096 / 27.471 B (a 64 byte, senza v2/J5IK) |
+| flash / RAM | 96.908 / 28.292 B | 92.768 / 27.470 B (a 64 byte, senza v2/J5IK e IMUON/IMUOFF) |
 
 ## Come è stata verificata l'equivalenza (senza hardware)
 

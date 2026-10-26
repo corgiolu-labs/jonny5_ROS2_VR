@@ -2,7 +2,7 @@
  * uart_control.h — UART Control Plane API
  *
  * Control plane UART ASCII per comandi di teleoperazione e configurazione.
- * Comandi supportati: STOP, SAFE, RESET, ENABLE, STATUS?, IMUON, IMUOFF,
+ * Comandi supportati: STOP, SAFE, RESET, ENABLE, STATUS?,
  *   HOME, PARK, TELEOPPOSE, SETPOSE, SETPOSE_T, SET_OFFSETS,
  *   SET_JOINT_LIMITS, SET_VR_PARAMS, VR?
  *
