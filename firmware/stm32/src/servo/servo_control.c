@@ -55,6 +55,9 @@ static uint32_t _max_deg_tim1    = 180U;
 
 /* Stato corrente angoli servo in gradi logici 0..180 per tutti i giunti. */
 static uint8_t servo_angles[SERVO_COUNT] = {90, 90, 90, 90, 90, 90};
+/* Ultimo angolo logico comandato con la frazione (servo_set_angle_f): il path di attuazione
+ * VR riparte da qui, cosi' il comando non viene quantizzato a 1 grado (~11 us). */
+static float servo_angles_f[SERVO_COUNT] = {90.0f, 90.0f, 90.0f, 90.0f, 90.0f, 90.0f};
 static uint16_t servo_last_pulse_us[SERVO_COUNT] = {0, 0, 0, 0, 0, 0};
 
 static uint8_t servo_last_sent_angle[SERVO_COUNT] = {255, 255, 255, 255, 255, 255};
@@ -203,6 +206,7 @@ bool servo_control_init(void)
 
 	for (int i = 0; i < SERVO_COUNT; i++) {
 		servo_angles[i] = 90;
+		servo_angles_f[i] = 90.0f;
 		servo_last_sent_angle[i] = 255;
 	}
 
@@ -231,6 +235,7 @@ bool servo_set_angle(servo_joint_t joint, uint16_t angle_deg)
 
 	uint32_t logical_deg = (angle_deg > max_deg) ? max_deg : (uint32_t)angle_deg;
 	servo_angles[joint] = (uint8_t)CLAMP(logical_deg, 0U, 255U);
+	servo_angles_f[joint] = (float)servo_angles[joint];
 
 	/* pulse_us = min_us + (deg / max_deg) * (max_us - min_us) */
 	uint32_t span_us = (max_us > min_us) ? (max_us - min_us) : 0U;
@@ -303,6 +308,7 @@ bool servo_set_angle_f(servo_joint_t joint, float angle_deg)
 
 	/* Update angolo logico (uint8 per servo_get_angle compatibility) */
 	servo_angles[joint] = (uint8_t)(angle_deg + 0.5f);
+	servo_angles_f[joint] = angle_deg;
 
 	/* PWM pulse calculato in float: pulse_us = min + (deg/max_deg) * span */
 	float span_us = (max_us > min_us) ? (max_us - min_us) : 0.0f;
@@ -365,6 +371,14 @@ uint8_t servo_get_angle(servo_joint_t joint)
 		return 90;
 	}
 	return servo_angles[joint];
+}
+
+float servo_get_angle_f(servo_joint_t joint)
+{
+	if (joint >= SERVO_COUNT) {
+		return 90.0f;
+	}
+	return servo_angles_f[joint];
 }
 
 void servo_disable_all(void)
