@@ -40,26 +40,18 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/irq.h>
 #include <zephyr/sys/atomic.h>
-#if defined(CONFIG_SOC_SERIES_STM32G4X)
 #include <stm32g4xx.h>
 #include <stm32g4xx_hal.h>
 #include <stm32g4xx_hal_spi.h>
 #include <stm32g4xx_hal_gpio.h>
 #include <stm32g4xx_hal_dma.h>
-#else
-#include <stm32f4xx.h>
-#include <stm32f4xx_hal.h>
-#include <stm32f4xx_hal_spi.h>
-#include <stm32f4xx_hal_gpio.h>
-#include <stm32f4xx_hal_dma.h>
-#endif
 #include <string.h>
 
 /* =========================================================
  * Costanti
  * ========================================================= */
 
-#if IS_ENABLED(CONFIG_ASSIST_V2_RAW_MODE) || IS_ENABLED(CONFIG_J5_CANONICAL_PADDED_128_MODE)
+#if IS_ENABLED(CONFIG_J5_CANONICAL_PADDED_128_MODE)
 #define SPI_FRAME_LEN          J5_ASSIST_V2_FRAME_SIZE /* 128 — WIRE REGISTER v1 */
 #else
 #define SPI_FRAME_LEN          J5_PROTOCOL_FRAME_SIZE  /* 64 */
@@ -187,15 +179,8 @@ static HAL_StatusTypeDef spi_start_dma_circular(void);
  */
 static inline void dma_clear_spi1_flags(void)
 {
-#if defined(CONFIG_SOC_SERIES_STM32G4X)
     /* G4: DMA1 Channel1 (RX) flags bit[3:0], Channel2 (TX) flags bit[7:4] */
     DMA1->IFCR = 0x0FU | 0xF0U;
-#else
-    /* Stream0 (RX): LIFCR bit[5:0] */
-    DMA2->LIFCR  = (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5);
-    /* Stream3 (TX): LIFCR bit[27:22] */
-    DMA2->LIFCR |= (1u << 22) | (1u << 24) | (1u << 25) | (1u << 26) | (1u << 27);
-#endif
 }
 
 /* =========================================================
@@ -543,21 +528,12 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
 {
     if (hspi->Instance != SPI1) { return; }
 
-    #if defined(CONFIG_SOC_SERIES_STM32G4X)
     __HAL_RCC_DMAMUX1_CLK_ENABLE();
     __HAL_RCC_DMA1_CLK_ENABLE();
-#else
-    __HAL_RCC_DMA2_CLK_ENABLE();
-#endif
 
     /* DMA2 Stream0 Channel3 — SPI1 RX (PERIPH → MEMORY, circular) */
-#if defined(CONFIG_SOC_SERIES_STM32G4X)
     hdma_spi1_rx.Instance                 = DMA1_Channel1;
     hdma_spi1_rx.Init.Request             = DMA_REQUEST_SPI1_RX;
-#else
-    hdma_spi1_rx.Instance                 = DMA2_Stream0;
-    hdma_spi1_rx.Init.Channel             = DMA_CHANNEL_3;
-#endif
     hdma_spi1_rx.Init.Direction           = DMA_PERIPH_TO_MEMORY;
     hdma_spi1_rx.Init.PeriphInc           = DMA_PINC_DISABLE;
     hdma_spi1_rx.Init.MemInc              = DMA_MINC_ENABLE;
@@ -565,9 +541,6 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
     hdma_spi1_rx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
     hdma_spi1_rx.Init.Mode                = DMA_CIRCULAR;
     hdma_spi1_rx.Init.Priority            = DMA_PRIORITY_HIGH;
-#if !defined(CONFIG_SOC_SERIES_STM32G4X)
-    hdma_spi1_rx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
-#endif
     if (HAL_DMA_Init(&hdma_spi1_rx) != HAL_OK)
     {
         printk("[SPI] ERROR: HAL_DMA_Init RX failed\n");
@@ -576,13 +549,8 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
     __HAL_LINKDMA(hspi, hdmarx, hdma_spi1_rx);
 
     /* DMA2 Stream3 Channel3 — SPI1 TX (MEMORY → PERIPH, circular) */
-#if defined(CONFIG_SOC_SERIES_STM32G4X)
     hdma_spi1_tx.Instance                 = DMA1_Channel2;
     hdma_spi1_tx.Init.Request             = DMA_REQUEST_SPI1_TX;
-#else
-    hdma_spi1_tx.Instance                 = DMA2_Stream3;
-    hdma_spi1_tx.Init.Channel             = DMA_CHANNEL_3;
-#endif
     hdma_spi1_tx.Init.Direction           = DMA_MEMORY_TO_PERIPH;
     hdma_spi1_tx.Init.PeriphInc           = DMA_PINC_DISABLE;
     hdma_spi1_tx.Init.MemInc              = DMA_MINC_ENABLE;
@@ -590,9 +558,6 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
     hdma_spi1_tx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
     hdma_spi1_tx.Init.Mode                = DMA_CIRCULAR;
     hdma_spi1_tx.Init.Priority            = DMA_PRIORITY_HIGH;
-#if !defined(CONFIG_SOC_SERIES_STM32G4X)
-    hdma_spi1_tx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
-#endif
     if (HAL_DMA_Init(&hdma_spi1_tx) != HAL_OK)
     {
         printk("[SPI] ERROR: HAL_DMA_Init TX failed\n");
@@ -600,17 +565,10 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
     }
     __HAL_LINKDMA(hspi, hdmatx, hdma_spi1_tx);
 
-#if defined(CONFIG_SOC_SERIES_STM32G4X)
     IRQ_CONNECT(11, 0, dma2_stream0_isr, NULL, 0); /* DMA1_Channel1 (SPI1_RX) */
     irq_enable(11);
     IRQ_CONNECT(12, 0, dma2_stream3_isr, NULL, 0); /* DMA1_Channel2 (SPI1_TX) */
     irq_enable(12);
-#else
-    IRQ_CONNECT(56, 0, dma2_stream0_isr, NULL, 0);
-    irq_enable(56);
-    IRQ_CONNECT(59, 0, dma2_stream3_isr, NULL, 0);
-    irq_enable(59);
-#endif
 
     printk("[SPI] MSP Init: DMA configured (RX=Stream0/Ch3, TX=Stream3/Ch3)\n");
 }
@@ -717,43 +675,6 @@ static void handle_status_error(const uint8_t *rx, j5_frame_t *tx,
     tx->payload[1] = bad_type;
 }
 
-#if IS_ENABLED(CONFIG_ASSIST_V2_RAW_MODE)
-/**
- * SPI guard (128B RAW): mismatch dichiarato / tipo illegale su frame "esteso".
- * Non invoca j5vr_parse né tocca attuazione; STATUS 0xED osservabile lato Pi.
- * payload[1]=subcode: 0x01=len RX insufficiente, 0x02=byte[6] non 64/128,
- *                    0x03=byte[6]==128 ma frame_type non 0x06/0x07
- * payload[2]=dettaglio (len, byte6, o frame_type)
- */
-static volatile uint32_t s_assist_spi_guard_events;
-
-static void assist_spi_emit_guard_tx(const uint8_t *rx, uint8_t *out_tx, uint8_t subcode,
-				     uint8_t detail)
-{
-	s_assist_spi_guard_events++;
-
-	j5_frame_t tx_frame;
-
-	j5_build_frame(&tx_frame, J5_FRAME_TYPE_STATUS, get_rx_sequence(rx));
-	tx_frame.payload[0] = 0xED;
-	tx_frame.payload[1] = subcode;
-	tx_frame.payload[2] = detail;
-	if (sizeof(tx_frame.payload) > 3) {
-		(void)memset(tx_frame.payload + 3, 0, sizeof(tx_frame.payload) - 3);
-	}
-
-	memcpy(out_tx, &tx_frame, sizeof(tx_frame));
-#if SPI_FRAME_LEN > J5_PROTOCOL_FRAME_SIZE
-	memset(out_tx + sizeof(tx_frame), 0, SPI_FRAME_LEN - sizeof(tx_frame));
-#endif
-
-	if ((s_assist_spi_guard_events & 0x3FU) == 1U) {
-		printk("[ASSIST_RAW][SPI_GUARD] sub=0x%02X detail=0x%02X count=%u\n",
-		       (unsigned)subcode, (unsigned)detail,
-		       (unsigned)s_assist_spi_guard_events);
-	}
-}
-#endif /* CONFIG_ASSIST_V2_RAW_MODE */
 
 /**
  * process_spi_command_build_tx — parser frame RX e costruzione risposta TX.
@@ -813,69 +734,6 @@ static void process_spi_command_build_tx(const uint8_t *rx, size_t len,
     }
     (void)0; /* SPI_RX_NORM diagnostic removed — use LOG_DBG if needed */
 
-#if IS_ENABLED(CONFIG_ASSIST_V2_RAW_MODE)
-    /* RAW 128B: niente interpretazione J5VR su frame incompleti o incoerenti */
-    if ((len < J5_ASSIST_V2_FRAME_SIZE) && (len < J5_PROTOCOL_FRAME_SIZE)) {
-	assist_spi_emit_guard_tx(rx_norm, out_tx, 0x01, (uint8_t)(len & 0xFF));
-	return;
-    }
-
-    if (rx_norm[0] == 'J' && rx_norm[1] == '5') {
-	const uint8_t d6 = rx_norm[6];
-
-	if (d6 != J5_PROTOCOL_FRAME_SIZE && d6 != J5_ASSIST_V2_FRAME_SIZE) {
-	    assist_spi_emit_guard_tx(rx_norm, out_tx, 0x02, d6);
-	    return;
-	}
-
-	if (d6 == J5_ASSIST_V2_FRAME_SIZE) {
-	    const uint8_t ft = rx_norm[3];
-	    static uint32_t raw_ft_log = 0;
-	    if ((raw_ft_log++ % 100U) == 0U) {
-		printk("[SPI_RX_RAW128] ft=0x%02X d6=%u seq=%u\n",
-		       (unsigned)ft, (unsigned)d6, (unsigned)get_rx_sequence(rx_norm));
-	    }
-
-	    if (ft == (uint8_t)J5_FRAME_TYPE_ASSIST_V2_CONTROL) {
-		assist_v2_raw_handle_control_and_build_telemetry(rx_norm, out_tx);
-		return;
-	    }
-	    if (ft == (uint8_t)J5_FRAME_TYPE_ASSIST_V2_TELEMETRY) {
-		assist_v2_raw_build_telemetry_only(rx_norm, out_tx);
-		return;
-	    }
-	    /* Compat: alcuni bridge inviano frame J5VR/J5IK legacy (64B) padded a 128B.
-	     * In RAW mode non devono essere scartati: parse payload legacy e rispondi telemetria legacy. */
-	    if (ft == (uint8_t)J5_FRAME_TYPE_J5VR) {
-		g_j5vr_last_rx_seq = get_rx_sequence(rx_norm);
-		if (!spi_is_dup_j5vr_ik_apply(rx_norm, (uint8_t)J5_FRAME_TYPE_J5VR)) {
-			j5vr_parse_payload(rx_frame->payload);
-			spi_mark_j5vr_ik_applied(rx_norm);
-		}
-		j5_build_frame(&tx_frame, J5_FRAME_TYPE_TELEMETRY, get_rx_sequence(rx_norm));
-		memcpy(out_tx, &tx_frame, sizeof(j5_frame_t));
-		memset(out_tx + sizeof(j5_frame_t), 0, SPI_FRAME_LEN - sizeof(j5_frame_t));
-		return;
-	    }
-	    if (ft == (uint8_t)J5_FRAME_TYPE_J5IK) {
-		if (!spi_is_dup_j5vr_ik_apply(rx_norm, (uint8_t)J5_FRAME_TYPE_J5IK)) {
-			j5ik_parse_payload(rx_frame->payload);
-			spi_mark_j5vr_ik_applied(rx_norm);
-		}
-		j5_build_frame(&tx_frame, J5_FRAME_TYPE_TELEMETRY, get_rx_sequence(rx_norm));
-		memcpy(out_tx, &tx_frame, sizeof(j5_frame_t));
-		memset(out_tx + sizeof(j5_frame_t), 0, SPI_FRAME_LEN - sizeof(j5_frame_t));
-		return;
-	    }
-	    /* byte[6]==128 ma tipo non v2: non passare al parser legacy su 128 byte */
-	    assist_spi_emit_guard_tx(rx, out_tx, 0x03, ft);
-	    return;
-	}
-	/* d6==64: frame legacy nel prefisso 64B; prosegui sotto */
-	/* Legacy frame diagnostic removed — zero-cost on RT path */
-	/* J5VR frame diagnostic parsing removed — protocol dispatch below */
-    }
-#endif
 
     if (rx_norm[0] == 'J' && rx_norm[1] == '5')
     {
@@ -958,11 +816,7 @@ static bool spi_is_valid_j5_frame_at(const uint8_t *buf, size_t len, size_t off,
     }
     if (ver != (uint8_t)J5_PROTOCOL_VERSION_V1) { return false; } /* protocol_version */
     const uint8_t l = buf[off + 6];
-#if IS_ENABLED(CONFIG_ASSIST_V2_RAW_MODE)
-    if (l != J5_PROTOCOL_FRAME_SIZE && l != J5_ASSIST_V2_FRAME_SIZE) { return false; }
-#else
     if (l != J5_PROTOCOL_FRAME_SIZE) { return false; }
-#endif
     if (off + (size_t)l > len) { return false; }
     if (buf[off + 7] != 0x00) { return false; } /* flags attesi 0 */
     const uint8_t t = buf[off + 3];
@@ -973,11 +827,6 @@ static bool spi_is_valid_j5_frame_at(const uint8_t *buf, size_t len, size_t off,
         case J5_FRAME_TYPE_J5VR:
         case J5_FRAME_TYPE_J5IK:
             break;
-#if IS_ENABLED(CONFIG_ASSIST_V2_RAW_MODE)
-        case J5_FRAME_TYPE_ASSIST_V2_CONTROL:
-        case J5_FRAME_TYPE_ASSIST_V2_TELEMETRY:
-            break;
-#endif
         default:
             return false;
     }
@@ -998,22 +847,11 @@ static const uint8_t *spi_pick_normalized_frame(const uint8_t *rx, size_t len, s
         if (!spi_is_valid_j5_frame_at(rx, len, off, &ft, &d6)) { continue; }
         const uint16_t seq = (uint16_t)(((uint16_t)rx[off + 4] << 8) | (uint16_t)rx[off + 5]);
         int score = 0;
-#if IS_ENABLED(CONFIG_ASSIST_V2_RAW_MODE)
-        if (d6 == J5_ASSIST_V2_FRAME_SIZE) {
-            score += (off == 0U) ? 100 : -100;
-        } else {
-            /* Legacy 64B in slot 128: prefer offsets canonici 0/64, ma consenti recovery da disallineamento. */
-            if (off == 0U || off == 64U) score += 50;
-            else score += 10;
-        }
-        if (ft == (uint8_t)J5_FRAME_TYPE_J5VR || ft == (uint8_t)J5_FRAME_TYPE_ASSIST_V2_CONTROL) score += 20;
-#else
         /* Canonical 128 padded: la sola semantica attiva resta quella 64B nel prefisso.
          * Il tail 64..127 e ignorato e non deve competere come fonte semantica. */
         if (off == 0U || off == 64U) score += 50;
         else score += 10;
         if (ft == (uint8_t)J5_FRAME_TYPE_J5VR) score += 20;
-#endif
 
         if (best_off == (size_t)-1) {
             best_off = off;
