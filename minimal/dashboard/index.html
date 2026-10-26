@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JONNY5 Banco</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e6ec8'/%3E%3Cpath d='M8 25 L13 15 L21 11 L25 6' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<header>
+  <div class="brand">JONNY5 <span>banco</span></div>
+  <div class="badges">
+    <span id="b-link" class="badge off" title="Collegamento WebSocket con j5mini">non collegato</span>
+    <span id="b-state" class="badge" title="Stato del firmware (STATUS?)">?</span>
+    <span id="b-estop" class="badge" title="Fungo di emergenza">E-STOP ?</span>
+    <span id="b-teleop" class="badge dim" title="Chi comanda il braccio">visore: no</span>
+    <span id="b-sim" class="badge sim hidden">SIMULATO</span>
+  </div>
+  <label class="arm" title="Senza questo i comandi di movimento sono disattivati">
+    <input type="checkbox" id="motion"> comandi di movimento
+  </label>
+  <button id="stop" class="stop" title="STOP (anche con Esc o barra spaziatrice)">STOP</button>
+</header>
+
+<nav id="tabs">
+  <button data-tab="stato" class="active">Stato</button>
+  <button data-tab="braccio">Braccio</button>
+  <button data-tab="comandi">Comandi</button>
+  <button data-tab="impostazioni">Impostazioni</button>
+  <button data-tab="test">Test</button>
+  <button data-tab="guida">Guida</button>
+</nav>
+
+<main>
+  <!-- ======================================================================= STATO -->
+  <section id="stato" class="tab active">
+    <div class="grid">
+      <div class="card">
+        <h3>Robot</h3>
+        <dl id="st-robot"></dl>
+      </div>
+      <div class="card">
+        <h3>Link Pi ↔ STM32</h3>
+        <dl id="st-link"></dl>
+      </div>
+      <div class="card">
+        <h3>Teleoperazione</h3>
+        <dl id="st-teleop"></dl>
+      </div>
+      <div class="card">
+        <h3>IMU (polso)</h3>
+        <dl id="st-imu"></dl>
+      </div>
+      <div class="card">
+        <h3>Telecamere e stereo</h3>
+        <dl id="st-cam"></dl>
+      </div>
+      <div class="card">
+        <h3>Giunti (fisici, gradi)</h3>
+        <dl id="st-joints"></dl>
+      </div>
+      <div class="card wide">
+        <h3>Ultimi 60 s</h3>
+        <canvas id="chart" height="150"></canvas>
+        <div class="legend"><span class="l1">SPI ok/s</span><span class="l2">telemetria/s ×5</span><span class="l3">frame SPI non validi/s ×10</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================================= BRACCIO -->
+  <section id="braccio" class="tab">
+    <div class="split">
+      <div class="card">
+        <h3>Giunti <small>angoli virtuali, HOME = 90°</small></h3>
+        <div id="joints"></div>
+        <div class="row">
+          <label>tempo <input type="number" id="move-ms" value="1500" min="200" max="10000" step="100"> ms</label>
+          <label>profilo <select id="move-prof">
+            <option value="RTR5">RTR5 quintico (min. jerk)</option>
+            <option value="RTR3">RTR3 cubico</option>
+            <option value="BCB">BCB trapezio</option>
+            <option value="BB">BB bang-bang</option>
+          </select></label>
+        </div>
+        <div class="row">
+          <button id="go" class="motion primary">Vai al target</button>
+          <button id="tgt-meas">target = posa misurata</button>
+          <button id="tgt-home">target = HOME</button>
+          <label class="chk"><input type="checkbox" id="live"> segui gli slider</label>
+        </div>
+        <div class="cmdline" id="go-cmd"></div>
+        <h3>Pose salvate <small>nel browser</small></h3>
+        <div class="row">
+          <input id="pose-name" placeholder="nome della posa">
+          <button id="pose-save">salva target</button>
+          <button id="pose-play" class="motion">esegui la sequenza</button>
+          <button id="pose-export">esporta</button>
+          <label class="file">importa <input type="file" id="pose-import" accept=".json"></label>
+        </div>
+        <ol id="poses"></ol>
+      </div>
+      <div class="card">
+        <h3>Cinematica <small>Product of Exponentials</small></h3>
+        <canvas id="view3d" height="420"></canvas>
+        <div class="hint">trascina per ruotare, rotella per lo zoom. Pieno = misurato, tratteggio = target</div>
+        <table class="kin">
+          <thead><tr><th></th><th>x</th><th>y</th><th>z</th><th>roll</th><th>pitch</th><th>yaw</th></tr></thead>
+          <tbody>
+            <tr><td>misurato</td><td id="m-x"></td><td id="m-y"></td><td id="m-z"></td><td id="m-r"></td><td id="m-p"></td><td id="m-w"></td></tr>
+            <tr><td>target</td><td id="t-x"></td><td id="t-y"></td><td id="t-z"></td><td id="t-r"></td><td id="t-p"></td><td id="t-w"></td></tr>
+          </tbody>
+        </table>
+        <div class="manip">manipolabilità |det J| del target <meter id="manip" min="0" max="1" low="0.08" optimum="1"></meter>
+          <span id="manip-v"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================================= COMANDI -->
+  <section id="comandi" class="tab">
+    <div class="card">
+      <h3>Stato del firmware</h3>
+      <div class="row buttons" id="cmd-buttons"></div>
+      <h3>Console UART <small>righe verso lo STM32, ↑↓ per la cronologia</small></h3>
+      <form id="console" class="row">
+        <input id="console-in" autocomplete="off" placeholder="es. STATUS?  oppure  SETPOSE_T 90 90 90 90 90 90 1500 RTR5">
+        <button type="submit">invia</button>
+      </form>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="log-resp" checked> risposte</label>
+        <label class="chk"><input type="checkbox" id="log-unsol" checked> messaggi spontanei</label>
+        <label class="chk"><input type="checkbox" id="log-poll"> anche STATUS? automatici</label>
+        <button id="log-clear">svuota</button>
+      </div>
+      <pre id="log"></pre>
+    </div>
+  </section>
+
+  <!-- ======================================================================= IMPOSTAZIONI -->
+  <section id="impostazioni" class="tab">
+    <div class="card">
+      <h3>Giunti</h3>
+      <p class="note">Offset = angolo fisico del servo in HOME. Dir = verso del servo rispetto all'angolo virtuale
+        (solo lato Pi/app). Limiti in gradi fisici: il firmware non supera questi valori in nessun modo.</p>
+      <table id="set-joints" class="set"></table>
+      <details>
+        <summary>Avanzate: righe SET_VR_PARAMS e SET_PWM_CONFIG</summary>
+        <p class="note">Parametri della teleoperazione (velocità, filtri, instradamento del polso) e dei PWM. Si
+          modificano come riga intera; il firmware risponde OK o ERR.</p>
+        <label>SET_VR_PARAMS <textarea id="set-vr" rows="2"></textarea></label>
+        <label>SET_PWM_CONFIG <input id="set-pwm"></label>
+      </details>
+      <div class="row">
+        <button id="set-apply" class="motion">Applica al firmware</button>
+        <button id="set-save" class="primary">Salva in j5mini.json</button>
+        <button id="set-reload">Ricarica</button>
+      </div>
+      <pre id="set-out" class="small"></pre>
+    </div>
+  </section>
+
+  <!-- ======================================================================= TEST -->
+  <section id="test" class="tab">
+    <div class="grid">
+      <div class="card">
+        <h3>Latenza WebSocket</h3>
+        <p class="note">50 ping a j5mini: misura la rete tra questo browser e il Pi (non lo SPI).</p>
+        <button id="t-ping">avvia</button>
+        <pre id="t-ping-out" class="small"></pre>
+      </div>
+      <div class="card">
+        <h3>Qualità del link SPI</h3>
+        <p class="note">10 s di contatori: trasferimenti ok, frame non validi, payload neutri, timeout UART.</p>
+        <button id="t-link">avvia</button>
+        <pre id="t-link-out" class="small"></pre>
+      </div>
+      <div class="card">
+        <h3>Escursione di un giunto</h3>
+        <p class="note">Dal target attuale: +A, −A, ritorno. Per ogni tratto: SETPOSE_DONE (durata, velocità e
+          accelerazione massime del profilo) ed errore finale misurato.</p>
+        <div class="row">
+          <label>giunto <select id="t-sweep-j"></select></label>
+          <label>A <input type="number" id="t-sweep-a" value="15" min="1" max="60"> °</label>
+          <label>tempo <input type="number" id="t-sweep-ms" value="1200" min="200" max="10000" step="100"> ms</label>
+        </div>
+        <button id="t-sweep" class="motion">avvia</button>
+        <pre id="t-sweep-out" class="small"></pre>
+      </div>
+      <div class="card">
+        <h3>Prova del fungo di emergenza</h3>
+        <p class="note">Procedura guidata: premi il fungo, prova ENABLE (deve essere rifiutato), rilascia, ENABLE.</p>
+        <button id="t-estop">avvia</button>
+        <pre id="t-estop-out" class="small"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================================= GUIDA -->
+  <section id="guida" class="tab">
+    <div class="card prose" id="guide"></div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

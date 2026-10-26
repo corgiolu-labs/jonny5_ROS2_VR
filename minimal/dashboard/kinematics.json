@@ -1,0 +1,120 @@
+{
+ "_doc": "JONNY5 6R, Product of Exponentials (Lynch & Park, Modern Robotics cap. 4). S[i] = asse di vite del giunto i nello spazio, [wx wy wz vx vy vz] (w unitario, v = -w x q, q = un punto dell asse), metri. M = posa dell end-effector con tutti i giunti a 0 (angoli virtuali 90 = HOME). Angolo del giunto in radianti = (virtuale - 90) * pi/180. Copia di raspberry/config_runtime/kinematics/j5_poe_params.json dello stack completo.",
+ "joints": [
+  "Base",
+  "Spalla",
+  "Gomito",
+  "Yaw polso",
+  "Pitch polso",
+  "Roll polso"
+ ],
+ "S": [
+  [
+   0.0,
+   0.0,
+   1.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  [
+   0.0,
+   1.0,
+   0.0,
+   -0.1343,
+   0.0,
+   0.0
+  ],
+  [
+   0.0,
+   1.0,
+   0.0,
+   -0.1943,
+   0.0,
+   0.0
+  ],
+  [
+   0.0,
+   0.0,
+   1.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  [
+   0.0,
+   1.0,
+   0.0,
+   -0.381225,
+   0.0,
+   0.0
+  ],
+  [
+   1.0,
+   0.0,
+   0.0,
+   0.0,
+   0.381225,
+   0.0
+  ]
+ ],
+ "M": [
+  [
+   1.0,
+   0.0,
+   0.0,
+   0.057
+  ],
+  [
+   0.0,
+   1.0,
+   0.0,
+   0.0
+  ],
+  [
+   0.0,
+   0.0,
+   1.0,
+   0.381225
+  ],
+  [
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ]
+ ],
+ "draw_points": [
+  [
+   0,
+   0,
+   0.03
+  ],
+  [
+   0,
+   0,
+   0.1343
+  ],
+  [
+   0,
+   0,
+   0.1943
+  ],
+  [
+   0,
+   0,
+   0.29
+  ],
+  [
+   0,
+   0,
+   0.381225
+  ],
+  [
+   0.02,
+   0,
+   0.381225
+  ]
+ ],
+ "_draw_doc": "Solo per il disegno: un punto sull'asse di ogni giunto in HOME (q = 0), dove sta il giunto vero. La cinematica usa solo S e M."
+}

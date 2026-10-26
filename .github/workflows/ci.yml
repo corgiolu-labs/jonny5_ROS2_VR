@@ -35,12 +35,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: Dependencies
-        run: pip install pytest websockets
+        run: pip install pytest websockets numpy
       - name: Tests (fw_sim, differential vs the original firmware, j5mini)
         working-directory: firmware/stm32
         run: |
           git fetch --depth=1 origin 22b6a46
           mkdir -p /tmp/orig && git -C ../.. archive 22b6a46 firmware/stm32/src | tar -x -C /tmp/orig
           FW_SIM_ORIG_SRC=/tmp/orig/firmware/stm32/src python -m pytest tools/fw_sim ../../minimal/j5mini -q
+      - name: Dashboard kinematics (kin.js vs numpy, node)
+        run: python -m pytest minimal/dashboard -q
       - name: Shell syntax
         run: for f in $(git ls-files '*.sh'); do bash -n "$f"; done

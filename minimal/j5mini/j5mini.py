@@ -20,11 +20,16 @@ What it does (and nothing else):
   - Camera controls of the Quest app (zoom, brightness, wide/tele, focus, autofocus) forwarded to
     raspberry/tools/cam_stream.py over UDP, as ws-teleop; get_settings (offsets/dirs); HTTPS on 443
     for the app's GET /api/controller-mappings and POST /api/refocus-cameras.
+  - The dashboard (minimal/dashboard, served on the HTTPS port): get_config / save_config (offsets, dirs,
+    joint limits, SET_VR_PARAMS and SET_PWM_CONFIG lines -> j5mini.json, with a .bak), ws_ping.
 
 Not here (on purpose): ASSIST gimbal targets, IK/FK, dashboard pages, vision, collimator,
 ROS 2, captive portal, demo/self-test. Mode 5 therefore holds B/S/G.
 
   python3 j5mini.py --config j5mini.json             # real hardware (spidev + pyserial)
+  python3 j5mini.py --sim                            # no robot: the real firmware simulated on this PC
+                                                     # (firmware/stm32/tools/fw_sim, needs gcc), dashboard
+                                                     # on http://localhost:8558 (--http-port)
 """
 from __future__ import annotations
 
@@ -33,8 +38,10 @@ import asyncio
 import json
 import math
 import os
+import pathlib
 import ssl
 import struct
+import sys
 import threading
 import time
 from typing import Callable
@@ -311,9 +318,78 @@ class Core:
         return {"type": "telemetry", "robot_state": self.robot_state, **self.telemetry,
                 "deadman_active": self.diag.get("deadman"), "vr_armed": self.diag.get("armed"),
                 "estop_active": self.diag.get("estop_active"), "estop_bypass": self.diag.get("estop_bypass"),
+                "input_active": self.diag.get("input_active"), "vr_freeze": self.diag.get("freeze"),
+                "vr_guard": self.diag.get("guard"), "diag": self.diag.get("diag"),
                 "teleop_mode": self.last_mode if intent_age < 1.0 else -1,
                 "intent_age_ms": int(intent_age * 1000) if self.payload is not None else None,
                 "link": dict(self.stats)}
+
+
+# ------------------------------------------------------------------ settings (dashboard)
+
+JOINTS = ("B", "S", "G", "Y", "P", "R")
+
+
+def settings_from_config(cfg: dict) -> dict:
+    """What the dashboard edits, read back from the boot lines (the firmware's view) and cfg["settings"]."""
+    lines = cfg.get("boot_commands", [])
+    offsets = next(([int(v) for v in l.split()[1:7]] for l in lines if l.startswith("SET_OFFSETS ")), [90] * 6)
+    limits = [[0, 180] for _ in range(6)]
+    for l in lines:
+        f = l.split()
+        if f[0] == "SET_JOINT_LIMITS" and len(f) == 4 and f[1].isdigit() and int(f[1]) < 6:
+            limits[int(f[1])] = [int(f[2]), int(f[3])]
+    dirs = list(cfg.get("settings", {}).get("dirs", [1] * 6))
+    return {"offsets": offsets, "dirs": dirs, "limits": limits,
+            "vr_params": next((l for l in lines if l.startswith("SET_VR_PARAMS ")), ""),
+            "pwm_config": next((l for l in lines if l.startswith("SET_PWM_CONFIG ")), ""),
+            "boot_commands": list(lines)}
+
+
+def boot_lines_from_settings(s: dict) -> tuple[list[str] | None, str | None]:
+    """Validated boot lines in the Pi's order (SET_OFFSETS, SET_VR_PARAMS, SET_JOINT_LIMITS x6,
+    SET_PWM_CONFIG, IMUON), or (None, error)."""
+    def ints(v, n, lo, hi):
+        return (isinstance(v, list) and len(v) == n and
+                all(isinstance(x, int) and not isinstance(x, bool) and lo <= x <= hi for x in v))
+    if not ints(s.get("offsets"), 6, 0, 180):
+        return None, "offsets: 6 interi 0..180"
+    if not (isinstance(s.get("dirs"), list) and len(s["dirs"]) == 6 and all(d in (1, -1) for d in s["dirs"])):
+        return None, "dirs: 6 valori 1 o -1"
+    lim = s.get("limits")
+    if not (isinstance(lim, list) and len(lim) == 6 and all(ints(x, 2, 0, 180) and x[0] < x[1] for x in lim)):
+        return None, "limits: 6 coppie [min, max] intere 0..180 con min < max"
+    lines = ["SET_OFFSETS " + " ".join(str(v) for v in s["offsets"])]
+    for key, prefix in (("vr_params", "SET_VR_PARAMS "), ("pwm_config", "SET_PWM_CONFIG ")):
+        v = s.get(key) or ""
+        if v and (not v.startswith(prefix) or any(not (c.isalnum() or c in " .-_") for c in v) or len(v) > 400):
+            return None, f"{key}: deve iniziare con '{prefix.strip()}' e contenere solo numeri"
+        if v and key == "vr_params":
+            lines.append(v)
+    lines += [f"SET_JOINT_LIMITS {i} {a} {b}" for i, (a, b) in enumerate(lim)]
+    if s.get("pwm_config"):
+        lines.append(s["pwm_config"])
+    lines.append("IMUON")
+    return lines, None
+
+
+def save_config_file(path: str, lines: list[str], dirs: list[int]):
+    """Rewrites only boot_commands and settings in the config file (the in-memory cfg has absolute paths),
+    keeping the previous file as .bak."""
+    with open(path, encoding="utf-8") as f:
+        disk = json.load(f)
+    disk["boot_commands"] = lines
+    disk.setdefault("settings", {})["offsets"] = [int(v) for v in lines[0].split()[1:7]]
+    disk["settings"]["dirs"] = dirs
+    try:
+        os.replace(path, path + ".bak")
+    except OSError:
+        pass
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(disk, f, indent=1)
+        f.write("\n")
+    os.replace(tmp, path)
 
 
 # ------------------------------------------------------------------ cameras (tools/cam_stream.py)
@@ -449,6 +525,35 @@ class SerialBackend:
         return self.s.read(4096)
 
 
+class SimRobot:
+    """--sim: the real firmware compiled for this PC (firmware/stm32/tools/fw_sim) as SPI + UART backend.
+    The control thread advances its clock by 10 ms after every step, so it runs in real time."""
+
+    def __init__(self, transfer_len: int):
+        sys.path.insert(0, str(SIM_DIR))
+        import fw_sim
+        out = fw_sim.BUILD / ("fw_sim_j5mini_sim" + fw_sim.LIB.suffix)
+        if not out.exists() or out.stat().st_mtime < max(f.stat().st_mtime for f in fw_sim.SRC.rglob("*.[ch]")):
+            fw_sim.build(padded128=transfer_len == 128, out=out)
+        self.sim = fw_sim.Sim(out)
+
+    def transfer(self, data: bytes) -> bytes:
+        return self.sim.spi(data)
+
+    def write(self, data: bytes):
+        self.sim.lib.sim_uart_write(data)
+
+    def read(self) -> bytes:
+        return self.sim.uart_read().encode()
+
+    def tick(self):
+        self.sim.run(10)
+
+
+HERE = pathlib.Path(__file__).resolve().parent
+SIM_DIR = HERE.parents[1] / "firmware" / "stm32" / "tools" / "fw_sim"
+
+
 # ------------------------------------------------------------------ WebSocket server (ws-teleop subset)
 
 class Server:
@@ -495,6 +600,16 @@ class Server:
             self.time_sync(msg.get("epoch_ms"))
         elif typ == "get_settings":
             await ws.send(json.dumps({"type": "settings", **self.cfg.get("settings", {})}))
+        elif typ == "get_config":
+            with self.lock:
+                s = settings_from_config(self.cfg)
+            await ws.send(json.dumps({"type": "config", **s, "sim": bool(self.cfg.get("_sim")),
+                                      "saveable": bool(self.cfg.get("_path"))}))
+        elif typ == "save_config":
+            await ws.send(json.dumps(self.save_config(msg)))
+        elif typ == "ws_ping":
+            await ws.send(json.dumps({"type": "ws_pong", "id": msg.get("id"), "ts_client": msg.get("ts_client"),
+                                      "ts_server": time.time()}))
         elif typ in self.RELAY:
             data = json.dumps(msg)
             await asyncio.gather(*(c.send(data) for c in list(self.clients) if c is not ws), return_exceptions=True)
@@ -509,6 +624,27 @@ class Server:
         elif typ not in self.ignored:
             self.ignored.add(typ)
             self.core.log(f"[j5mini] message type {typ!r} not handled by the minimal controller (ignored)")
+
+    def save_config(self, msg: dict) -> dict:
+        """Dashboard settings -> boot lines (validated) -> j5mini.json (+ .bak) and the running config. The
+        firmware gets them at its next BOOT_READY, or now from the dashboard's "Applica" (UART lines)."""
+        lines, err = boot_lines_from_settings(msg)
+        if err:
+            return {"type": "config_saved", "ok": False, "error": err}
+        path = self.cfg.get("_path")
+        try:
+            if path:
+                save_config_file(path, lines, list(msg["dirs"]))
+        except (OSError, ValueError) as e:
+            return {"type": "config_saved", "ok": False, "error": str(e)}
+        with self.lock:
+            self.cfg["boot_commands"] = lines
+            self.cfg.setdefault("settings", {})["offsets"] = list(msg["offsets"])
+            self.cfg["settings"]["dirs"] = list(msg["dirs"])
+            self.core.boot_lines = list(lines)
+            self.core.vr_params_line = next((l for l in lines if l.startswith("SET_VR_PARAMS")), None)
+        self.core.log(f"[j5mini] configuration saved ({'file' if path else 'memory only'})")
+        return {"type": "config_saved", "ok": True, "saved_to_file": bool(path), "boot_commands": lines}
 
     def time_sync(self, epoch_ms):
         if not self.cfg.get("set_clock") or not isinstance(epoch_ms, (int, float)):
@@ -534,7 +670,8 @@ class Server:
         while True:
             await asyncio.sleep(0.05)
             with self.lock:
-                msgs = [{**self.core.telemetry_message(), **self.cams.telemetry()}] + self.core.events
+                msgs = [{**self.core.telemetry_message(), **self.cams.telemetry(), "clients": len(self.clients)}] + \
+                    self.core.events
                 self.core.events = []
             self.write_telemetry_file(msgs[0])
             if self.clients:
@@ -543,9 +680,14 @@ class Server:
                     await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
 
 
+STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml"}
+
+
 def https_server(cfg: dict, cams: Cameras, lock: threading.Lock):
     """The two HTTPS calls of the Quest app (the old https_server.py on 443): GET /api/controller-mappings
-    (button bindings; the app falls back to its built-in copy) and POST /api/refocus-cameras."""
+    (button bindings; the app falls back to its built-in copy) and POST /api/refocus-cameras; every other GET
+    serves the dashboard's static files (https.dashboard)."""
     import socket
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     h_cfg, ws_cfg = cfg.get("https", {}), cfg.get("ws", {})
@@ -559,12 +701,26 @@ def https_server(cfg: dict, cams: Cameras, lock: threading.Lock):
             self.wfile.write(body)
 
         def do_GET(self):
-            if self.path.split("?")[0] == "/api/controller-mappings" and h_cfg.get("controller_mappings"):
+            path = self.path.split("?")[0]
+            if path == "/api/controller-mappings" and h_cfg.get("controller_mappings"):
                 try:
                     with open(h_cfg["controller_mappings"], "rb") as f:
                         return self._reply(200, f.read())
                 except OSError:
                     pass
+            root = h_cfg.get("dashboard")
+            if root and not path.startswith("/api/"):
+                rel = "index.html" if path in ("/", "") else path.lstrip("/")
+                full = os.path.realpath(os.path.join(root, rel))
+                if full.startswith(os.path.realpath(root) + os.sep) and os.path.isfile(full):
+                    with open(full, "rb") as f:
+                        body = f.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", STATIC_TYPES.get(os.path.splitext(full)[1], "application/octet-stream"))
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
             self._reply(404, b'{"ok":false}')
 
         def do_POST(self):
@@ -591,11 +747,13 @@ def https_server(cfg: dict, cams: Cameras, lock: threading.Lock):
     return srv
 
 
-def control_thread(core: Core, lock: threading.Lock, stop: threading.Event, period=0.01):
+def control_thread(core: Core, lock: threading.Lock, stop: threading.Event, period=0.01, sim=None):
     nxt = time.monotonic()
     while not stop.is_set():
         with lock:
             core.step()
+            if sim is not None:
+                sim.tick()
         nxt += period
         d = nxt - time.monotonic()
         if d > 0:
@@ -619,19 +777,36 @@ async def serve(core: Core, lock: threading.Lock, cfg: dict, cams: Cameras):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", default="j5mini.json")
+    ap.add_argument("--config", default=None, help="default: j5mini.json (with --sim: j5mini.example.json)")
+    ap.add_argument("--sim", action="store_true", help="simulated firmware on this PC instead of SPI/UART")
+    ap.add_argument("--http-port", type=int, default=8558, help="--sim: dashboard port (default 8558)")
     a = ap.parse_args()
-    cfg = json.load(open(a.config, encoding="utf-8"))
-    base = os.path.dirname(os.path.abspath(a.config))          # relative paths in the config: from its folder
-    for sect, key in (("ws", "cert"), ("ws", "key"), ("https", "controller_mappings")):
+    path = a.config or str(HERE / ("j5mini.example.json" if a.sim else "j5mini.json"))
+    cfg = json.load(open(path, encoding="utf-8"))
+    cfg["_path"] = None if (a.sim and a.config is None) else path   # --sim alone never rewrites the example
+    base = os.path.dirname(os.path.abspath(path))              # relative paths in the config: from its folder
+    for sect, key in (("ws", "cert"), ("ws", "key"), ("https", "controller_mappings"), ("https", "dashboard")):
         if cfg.get(sect, {}).get(key):
             cfg[sect][key] = os.path.join(base, cfg[sect][key])
-    spi = SpidevBackend(cfg["spi"]["device"], int(cfg["spi"].get("speed_hz", 1000000)))
-    uart = SerialBackend(cfg["uart"]["device"], int(cfg["uart"].get("baud", 115200)))
+    sim = None
+    if a.sim:
+        # plain ws/http on this PC (no certificate), dashboard on --http-port, no clock setting, no telemetry file
+        cfg["_sim"] = True
+        cfg["ws"] = {"host": cfg.get("ws", {}).get("host", "0.0.0.0"), "port": 8557}
+        cfg["https"] = {**cfg.get("https", {}), "host": "0.0.0.0", "port": a.http_port}
+        cfg["set_clock"] = False
+        cfg.pop("telemetry_file", None)
+        sim = SimRobot(int(cfg.get("spi", {}).get("transfer_len", 64)))
+        spi = uart = sim
+        print(f"[j5mini] simulated robot: dashboard on http://localhost:{a.http_port}")
+    else:
+        spi = SpidevBackend(cfg["spi"]["device"], int(cfg["spi"].get("speed_hz", 1000000)))
+        uart = SerialBackend(cfg["uart"]["device"], int(cfg["uart"].get("baud", 115200)))
     core = Core(cfg, spi, uart)
     cams = Cameras()
     lock, stop = threading.Lock(), threading.Event()
-    threading.Thread(target=control_thread, args=(core, lock, stop), daemon=True, name="j5mini-100hz").start()
+    threading.Thread(target=control_thread, args=(core, lock, stop), kwargs={"sim": sim}, daemon=True,
+                     name="j5mini-100hz").start()
     if cfg.get("https", {}).get("port"):
         threading.Thread(target=https_server(cfg, cams, lock).serve_forever, daemon=True, name="j5mini-https").start()
     try:

@@ -333,3 +333,109 @@ def test_relay_for_collimator_and_vision(lib, tmp_path):
     assert pt["ok"] is False and pt["label"] == "tazza" and "minimale" in pt["why"]
     tm = json.loads((tmp_path / "j5vr_telemetry.json").read_text())
     assert set(tm) == set(j5mini.SERVO_KEYS)
+
+
+# ------------------------------------------------------------------ dashboard support
+
+def test_settings_round_trip_rebuilds_the_boot_lines():
+    s = j5mini.settings_from_config(CFG)
+    assert s["offsets"] == CFG["settings"]["offsets"] and s["dirs"] == CFG["settings"]["dirs"]
+    assert s["limits"][5] == [68, 128] and s["vr_params"].startswith("SET_VR_PARAMS ")
+    lines, err = j5mini.boot_lines_from_settings(s)
+    assert err is None and lines == CFG["boot_commands"]          # same lines, same order as export_config
+
+
+@pytest.mark.parametrize("change, msg", [
+    (dict(offsets=[90] * 5), "offsets"), (dict(dirs=[1, 0, 1, 1, 1, 1]), "dirs"),
+    (dict(limits=[[10, 170]] * 5 + [[120, 60]]), "limits"), (dict(vr_params="SET_VR_PARAMS 1; rm -rf"), "vr_params"),
+    (dict(pwm_config="SET_OFFSETS 1 2 3"), "pwm_config"),
+])
+def test_settings_validation(change, msg):
+    s = {**j5mini.settings_from_config(CFG), **change}
+    lines, err = j5mini.boot_lines_from_settings(s)
+    assert lines is None and err.startswith(msg)
+
+
+def test_save_config_keeps_paths_and_a_backup(tmp_path):
+    path = tmp_path / "j5mini.json"
+    path.write_text((HERE / "j5mini.example.json").read_text(encoding="utf-8"), encoding="utf-8")
+    s = j5mini.settings_from_config(CFG)
+    s["offsets"][0] = 91
+    lines, _ = j5mini.boot_lines_from_settings(s)
+    j5mini.save_config_file(str(path), lines, [1, 1, 1, 1, 1, 1])
+    disk = json.loads(path.read_text(encoding="utf-8"))
+    assert disk["boot_commands"][0].startswith("SET_OFFSETS 91 ")
+    assert disk["settings"]["offsets"][0] == 91 and disk["settings"]["dirs"] == [1] * 6
+    assert disk["ws"]["cert"] == CFG["ws"]["cert"]                 # relative paths untouched
+    assert json.loads((tmp_path / "j5mini.json.bak").read_text(encoding="utf-8")) == CFG
+
+
+def test_dashboard_messages_over_websocket(lib, tmp_path):
+    websockets = pytest.importorskip("websockets")
+    r = Rig(lib)
+    r.run(300)
+    path = tmp_path / "j5mini.json"
+    path.write_text((HERE / "j5mini.example.json").read_text(encoding="utf-8"), encoding="utf-8")
+    cfg = json.loads(json.dumps(CFG))
+    cfg["_path"] = str(path)
+    srv = j5mini.Server(r.core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+
+    async def go():
+        async with websockets.serve(srv.handler, "127.0.0.1", 0) as wss:
+            url = "ws://127.0.0.1:%d" % next(iter(wss.sockets)).getsockname()[1]
+            async with websockets.connect(url) as ws:
+                async def ask(o, typ):
+                    await ws.send(json.dumps(o))
+                    while True:
+                        m = json.loads(await asyncio.wait_for(ws.recv(), 2))
+                        if m["type"] == typ:
+                            return m
+                conf = await ask({"type": "get_config"}, "config")
+                pong = await ask({"type": "ws_ping", "id": 7, "ts_client": 1.5}, "ws_pong")
+                bad = await ask({**conf, "type": "save_config", "offsets": [1, 2]}, "config_saved")
+                conf["limits"][0] = [40, 140]
+                ok = await ask({**conf, "type": "save_config"}, "config_saved")
+                return conf, pong, bad, ok
+
+    conf, pong, bad, ok = asyncio.run(go())
+    assert conf["offsets"] == CFG["settings"]["offsets"] and conf["saveable"] is True and conf["sim"] is False
+    assert pong["id"] == 7 and pong["ts_client"] == 1.5
+    assert bad["ok"] is False and "offsets" in bad["error"]
+    assert ok["ok"] is True and "SET_JOINT_LIMITS 0 40 140" in ok["boot_commands"]
+    assert "SET_JOINT_LIMITS 0 40 140" in json.loads(path.read_text(encoding="utf-8"))["boot_commands"]
+    assert "SET_JOINT_LIMITS 0 40 140" in r.core.boot_lines        # the next BOOT_READY pushes it
+
+
+def test_https_serves_the_dashboard_and_nothing_else():
+    import urllib.error
+    import urllib.request
+    dash = HERE.parent / "dashboard"
+    cfg = {"https": {"host": "127.0.0.1", "port": 0, "dashboard": str(dash)}}
+    srv = j5mini.https_server(cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None), threading.Lock())
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    page = urllib.request.urlopen(base + "/", timeout=2)
+    assert page.headers["Content-Type"].startswith("text/html") and b"app.js" in page.read()
+    js = urllib.request.urlopen(base + "/kin.js", timeout=2)
+    assert js.headers["Content-Type"].startswith("text/javascript")
+    for bad in ("/../j5mini/j5mini.py", "/%2e%2e/j5mini/j5mini.py", "/nope.html"):
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(base + bad, timeout=2)
+        assert e.value.code == 404
+    srv.shutdown()
+
+
+def test_sim_backend_boots_and_takes_the_configuration():
+    """--sim: the same Core on the simulated firmware, as a student's PC runs it."""
+    robot = j5mini.SimRobot(64)
+    core = j5mini.Core(json.loads(json.dumps(CFG)), robot, robot, clock=lambda: robot.sim.now_ms() / 1000.0,
+                       log=lambda s: None)
+    for _ in range(150):
+        core.step()
+        robot.tick()
+    assert all(e["ok"] for e in core.events if e["type"] == "uart_response" and e["cmd"].startswith("SET_"))
+    core.uart_send("ENABLE")
+    for _ in range(30):
+        core.step()
+        robot.tick()
+    assert robot.sim.state() == "IDLE"

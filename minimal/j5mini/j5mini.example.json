@@ -29,7 +29,8 @@
  "https": {
   "host": "::",
   "port": 443,
-  "controller_mappings": "controller_mappings.json"
+  "controller_mappings": "controller_mappings.json",
+  "dashboard": "../dashboard"
  },
  "settings": {
   "offsets": [

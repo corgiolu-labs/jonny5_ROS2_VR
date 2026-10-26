@@ -49,7 +49,8 @@ def main():
         "ws": {"host": "0.0.0.0", "port": 8557,
                "cert": "../../raspberry/config_runtime/tls/webrtc.crt",
                "key": "../../raspberry/config_runtime/tls/webrtc.key"},
-        "https": {"host": "::", "port": 443, "controller_mappings": "controller_mappings.json"},
+        "https": {"host": "::", "port": 443, "controller_mappings": "controller_mappings.json",
+                  "dashboard": "../dashboard"},
         "settings": {"offsets": offsets, "dirs": dirs},
         "telemetry_file": "/dev/shm/j5vr_telemetry.json",     # servo angles for raspberry/tools/vision_service.py
         "link_timeout_ms": 150,

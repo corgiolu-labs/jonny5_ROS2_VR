@@ -22,7 +22,8 @@ Quest app ──wss 8557 / https 443──► j5mini (Pi) ──SPI 64 B @100 Hz
 |---|---|
 | `firmware/stm32/` | Zephyr firmware for the G474 shield. `MINIMAL.md`: what was pruned, how equivalence with the flashed firmware was proven, the 64-byte SPI transfer, 13 known quirks |
 | `firmware/stm32/tools/fw_sim/` | The real firmware sources compiled for the PC (Zephyr stubs, byte-wise SPI DMA): behaviour tests and a differential test against the original firmware |
-| `minimal/j5mini/` | The Pi controller: one Python process (SPI, UART, WebSocket for the app, camera controls, HTTPS API) |
+| `minimal/j5mini/` | The Pi controller: one Python process (SPI, UART, WebSocket for the app, camera controls, HTTPS API). `--sim` runs it on a PC against the simulated firmware |
+| `minimal/dashboard/` | Web dashboard served by j5mini: diagnostics, commands, joints with POE kinematics and 3D view, settings, tests; also a teaching bench for a 6R arm (README in Italian) |
 | `raspberry/tools/cam_stream.py`, `scripts/` | Video: capture to MediaMTX (`video_capture.sh`, `start_mediamtx.sh`) or direct RTP to the app (`video_direct.sh`) |
 | `raspberry/tools/stereo_collimator.py`, `vision_service.py` | Optional: crosshair collimation (on by default) and vision (on when `raspberry/.venv-vision` and `raspberry/models/yolo11n.onnx` are on the Pi) |
 | `raspberry/network/`, `raspberry/systemd/` | Headset hotspot + firewall, eth0 autoswitch, service units |
@@ -61,11 +62,17 @@ collimator needs `websockets` >= 11 (sync client: Debian 13 / Raspberry Pi OS Tr
 venv are not versioned: on the robot they are already in the checkout; `J5_VISION=0` / `J5_COLLIMATOR=0`
 keep the optional services off.
 
+## Dashboard
+
+On the robot: `https://10.42.0.1/` (hotspot) or `https://192.168.137.221/` (cable). Without the robot:
+`python3 minimal/j5mini/j5mini.py --sim` and `http://localhost:8558/`: the real firmware runs simulated on the PC.
+
 ## Tests without hardware
 
 ```bash
 cd firmware/stm32
-python -m pytest tools/fw_sim ../../minimal/j5mini -q        # firmware simulator + j5mini (24 tests)
+python -m pytest tools/fw_sim ../../minimal/j5mini -q        # firmware simulator + j5mini (35 tests)
+cd ../.. && python -m pytest minimal/dashboard -q             # dashboard kinematics vs numpy (needs node)
 ```
 
 The differential test needs the original firmware sources (`tools/fw_sim/README.md`); CI runs it.
