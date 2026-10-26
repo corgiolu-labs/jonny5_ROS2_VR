@@ -917,7 +917,8 @@ ASSIST_DEFAULTS = {          # the robot's routing_config.json (gimbalPosition /
     "mode": "gimbal",
     "position": {"enable": True, "scale": 0.7},
     "prediction": {"enable": True, "lead_s": 0.2, "max_deg": 12.0, "yaw_lead_s": 0.12, "brake": True,
-                   "base_tau_s": 0.12},
+                   "base_tau_s": 0.0},          # 0: the wrist is solved on the intended arm, the arm command is
+                                                # delayed instead (assist_gimbal ARM_DELAY_S, from the IMU campaign)
     "imu_trim": {"enable": True, "tau_s": 1.0, "deadband_deg": 0.7, "max_deg": 8.0},
 }
 

@@ -188,7 +188,12 @@ PRED_W_LO, PRED_W_HI = 4.0, 20.0   # deg/s: no prediction below LO, full above H
 PRED_MAX_DEG = 12.0
 PRED_YAW_LEAD_S = 0.12      # lead of the yaw part (about the vertical): base + wrist yaw sprang back at stops
 PRED_SHORT_S = 0.035        # brake: speed over the last samples, the prediction scales with short / smoothed speed
-BASE_TAU_S = 0.12           # first-order lag of the real base (whole arm) behind its target, for the wrist IK
+BASE_TAU_S = 0.0            # first-order lag of the real base behind the arm command, for the wrist IK. 26/10/2026,
+                            # IMU campaign on the robot: the base answers in ~0.09 s, the wrist in ~0.17 s, so the
+                            # base is NOT slower than the wrist (0.12 made the compensation late: the camera swung
+                            # with the base for ~0.2 s at every base onset, "scatto all'aggancio della base")
+ARM_DELAY_S = 0.08          # the arm command (B/S/G) is sent low-passed by this much so that it reaches the camera
+                            # together with the wrist compensation computed from the undelayed arm (0.17 - 0.09)
 
 # IMU trim (routing_config "gimbalImuTrim": enable, tau_s, deadband_deg, max_deg)
 TRIM_TAU_S = 1.0
@@ -419,6 +424,8 @@ class GimbalState:
         self.arm_v = None            # arm target, virtual deg (B, S, G)
         self.last_arm_phys = None
         self.arm_cmd_phys = None     # last arm target sent while tracking (physical, float)
+        self.arm_sent_v = None       # arm target actually sent (virtual): arm_v low-passed by ARM_DELAY_S
+        self.arm_sent_t = 0.0
         self.p_ref = None            # head position (XR, m) at engage
         self.p_last = None
         self.rz_ref = None           # wrist centre (reach, height) at engage
@@ -770,15 +777,12 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     offsets = cfg.get("offsets", settings_manager.DEFAULTS["offsets"])
     dirs = cfg.get("dirs", settings_manager.DEFAULTS.get("dirs", [1] * 6))
     physical_six = [float(v) for v in physical_six[:6]]
-    if st.phase == "track" and st.arm_cmd_phys is not None:
-        # The telemetry reports the arm servos in WHOLE degrees (uint8 = round of the firmware's float position).
-        # With the arm now moving smoothly, the wrist compensation computed from those values advanced in 1 deg
-        # steps (camera yaw wobble of ~0.5 deg on slow turns). Best estimate of the real position: our last
-        # float target, kept within +-0.5 deg of the reported value (exact when the arm keeps up, falls back to
-        # the telemetry edge when the firmware rate limit leaves it behind).
+    if st.phase == "track" and st.arm_v is not None:
+        # The wrist is solved for the arm pose we INTEND (arm_v): the arm command goes out ARM_DELAY_S behind it
+        # (see _emit), so the real arm and the wrist compensation reach the camera at the same time. (The telemetry
+        # reports whole degrees and lags; using it made the camera wobble and swing at every arm onset.)
         for i in range(3):
-            t = physical_six[i]
-            physical_six[i] = min(t + 0.5, max(t - 0.5, float(st.arm_cmd_phys[i])))
+            physical_six[i] = _virt_to_phys_f(st.arm_v[i], offsets[i], dirs[i])
     virt = np.asarray(settings_manager.physical_to_virtual(list(physical_six), offsets, dirs), dtype=float)
     qm = np.radians(virt - 90.0)
     hw, hx, hy, hz = (float(intent.get(k, d)) for k, d in
@@ -789,6 +793,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         # engage: freeze the firmware wrist (constant quaternion) and zero its reference
         st.phase = "zeroing"
         st.arm_cmd_phys = None
+        st.arm_sent_v = None
         st.zero_ok_at = 0.0
         st.zero_task = asyncio.get_event_loop().create_task(_send_headzero(uart_manager))
         st.arm_v = virt[:3].copy()
@@ -1017,9 +1022,18 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
 
 def _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat):
     """Arm target (physical, with the fraction) + the synthetic head quaternion for the wrist part of full_v."""
+    # the arm command is low-passed by ARM_DELAY_S behind the intended arm (see BASE_TAU_S / ARM_DELAY_S)
+    now = time.monotonic()
+    if st.arm_sent_v is None:
+        st.arm_sent_v = [float(v) for v in full_v[0:3]]
+    else:
+        dt = min(0.1, max(0.0, now - st.arm_sent_t)) if st.arm_sent_t else 0.0
+        a = 1.0 - math.exp(-dt / ARM_DELAY_S) if ARM_DELAY_S > 0 else 1.0
+        st.arm_sent_v = [s + (float(v) - s) * a for s, v in zip(st.arm_sent_v, full_v[0:3])]
+    st.arm_sent_t = now
     # arm targets with the fraction (the SPI frame carries centidegrees): settings_manager.virtual_to_physical
     # truncates to whole degrees, which made the arm follow the head in 1 deg steps
-    arm_phys = [round(_virt_to_phys_f(full_v[i], offsets[i], dirs[i]), 2) for i in range(3)]
+    arm_phys = [round(_virt_to_phys_f(st.arm_sent_v[i], offsets[i], dirs[i]), 2) for i in range(3)]
     wrist_phys = [float(v) for v in
                   [offsets[i] + (dirs[i] if dirs[i] >= 0 else -1) * (full_v[i] - 90.0) for i in (3, 4, 5)]]
     pipe = HeadPipe(vr_params)
