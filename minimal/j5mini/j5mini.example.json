@@ -49,6 +49,7 @@
    1
   ]
  },
+ "telemetry_file": "/dev/shm/j5vr_telemetry.json",
  "link_timeout_ms": 150,
  "set_clock": true,
  "_comment": "Example generated from the repo copy of config_runtime (26/10/2026). On the robot regenerate it ON THE PI: export_config.py ~/raspberry5 > j5mini.json"

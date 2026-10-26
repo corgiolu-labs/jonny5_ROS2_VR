@@ -16,11 +16,12 @@ parla con l'app Quest come ws-teleop e con lo STM32 come il Pi.
 | Impostazioni | `get_settings` → `offsets`/`dirs` (barre dei giunti dell'app) |
 | HTTPS 443 | `GET /api/controller-mappings` (mappatura dei pulsanti; l'app ha una copia interna) e `POST /api/refocus-cameras` (autofocus) |
 | Inoltro | `cameras_refocus_triggered`, `vr_session_state`, `vr_zoom_command` agli altri client |
+| Servizi opzionali | collimatore e visione (`raspberry/tools/`) sono client del WebSocket come l'app: j5mini inoltra `stereo_collimation`, `stereo_calibrate`, `vision_request`, `vision_result` e scrive gli angoli dei servo in `/dev/shm/j5vr_telemetry.json` (`telemetry_file`) per la visione |
 | Orologio | `time_sync` dall'app → `sudo -n date` se sfasato > 2 s (`set_clock`) |
 
-**Non fa** (apposta): target ASSIST del gimbal (in modo 5 B/S/G restano fermi), IK/FK e twin, pagine
-della dashboard, visione, collimatore, ROS 2, captive portal, demo e self-test IMU. I messaggi dell'app
-per queste funzioni (`vision_request`, …) sono ignorati con una riga di log.
+**Non fa** (apposta): target ASSIST del gimbal (in modo 5 B/S/G restano fermi; il "punta" della visione
+risponde `vision_point` con `ok: false`), IK/FK e twin, pagine della dashboard, ROS 2, captive portal,
+demo e self-test IMU. Altri messaggi sono ignorati con una riga di log.
 
 ## Configurazione
 
@@ -52,11 +53,11 @@ Dipendenze: `websockets`, `spidev`, `pyserial` (pacchetti Debian `python3-websoc
 ## Prove senza hardware
 
 ```bash
-cd firmware/stm32 && python -m pytest ../../minimal/j5mini -q      # 9 test, firmware vero simulato
+cd firmware/stm32 && python -m pytest ../../minimal/j5mini -q      # 10 test, firmware vero simulato
 ```
 
 Coprono: push della configurazione su `BOOT_READY` (tutte OK), armo automatico, HOME, manuale con
 deadman, neutro dopo il silenzio del visore (uscite a 0), reinvio di `SET_VR_PARAMS` in HEAD, bit e
 righe E-STOP, trasporto a 64 byte (default) e a 128 con firmware a 128, validazione degli intent come
 ws-teleop, comandi telecamere e zoom residuo, le due API HTTPS, e un client WebSocket reale (come
-l'app) fino al firmware simulato, con `get_settings`.
+l'app) fino al firmware simulato, con `get_settings`; inoltro fra app e servizi opzionali.

@@ -1,0 +1,22 @@
+# Optional. On-demand object recognition, stereo distance and OCR for the Quest app (raspberry/tools/vision_service.py):
+# waits for {"type":"vision_request"} relayed by j5mini; YOLO11n + RapidOCR run only on request, at idle priority.
+# Needs raspberry/.venv-vision (system site packages for PyAV / numpy, onnxruntime + rapidocr + opencv inside) and
+# raspberry/models/yolo11n.onnx: setup_pi.sh enables it only when both are there.
+[Unit]
+Description=JONNY5 vision (objects, distance, text on request)
+After=jonny5-video-capture.service jonny5-j5mini.service
+Wants=jonny5-video-capture.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/raspberry/.venv-vision/bin/python -u @REPO@/raspberry/tools/vision_service.py --threads 1
+Nice=19
+# only spare CPU: the camera encoders must never wait for an analysis
+CPUSchedulingPolicy=idle
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

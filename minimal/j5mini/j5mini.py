@@ -452,8 +452,10 @@ class SerialBackend:
 # ------------------------------------------------------------------ WebSocket server (ws-teleop subset)
 
 class Server:
-    # forwarded as they are to the other clients, like ws-teleop
-    RELAY = ("cameras_refocus_triggered", "vr_session_state", "vr_zoom_command")
+    # forwarded as they are to the other clients, like ws-teleop; the optional services on the robot
+    # (raspberry/tools/stereo_collimator.py, vision_service.py) are clients of this server too
+    RELAY = ("cameras_refocus_triggered", "vr_session_state", "vr_zoom_command",
+             "stereo_collimation", "stereo_calibrate", "vision_request", "vision_result")
 
     def __init__(self, core: Core, lock: threading.Lock, cfg: dict, cams: Cameras | None = None):
         self.core, self.lock, self.cfg = core, lock, cfg
@@ -496,6 +498,12 @@ class Server:
         elif typ in self.RELAY:
             data = json.dumps(msg)
             await asyncio.gather(*(c.send(data) for c in list(self.clients) if c is not ws), return_exceptions=True)
+            if typ == "vision_result" and msg.get("aim"):
+                # "point" moved the arm through ws-teleop's ASSIST gimbal, which j5mini does not have
+                label = (msg.get("target") or {}).get("label_it")
+                data = json.dumps({"type": "vision_point", "ok": False, "label": label,
+                                   "why": "puntamento non disponibile (stack minimale)"})
+                await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
         elif self.cams.on_message(msg):
             pass
         elif typ not in self.ignored:
@@ -509,19 +517,33 @@ class Server:
             import subprocess
             subprocess.run(["sudo", "-n", "date", "-u", "-s", f"@{epoch_ms / 1000.0:.3f}"], check=False)
 
+    def write_telemetry_file(self, tm: dict):
+        """Servo angles for vision_service.py (it reads the old Pi's /dev/shm/j5vr_telemetry.json)."""
+        path = self.cfg.get("telemetry_file")
+        if not path or not all(k in tm for k in SERVO_KEYS):
+            return
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({k: tm[k] for k in SERVO_KEYS}, f)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
     async def broadcast_loop(self):
         while True:
             await asyncio.sleep(0.05)
             with self.lock:
                 msgs = [{**self.core.telemetry_message(), **self.cams.telemetry()}] + self.core.events
                 self.core.events = []
+            self.write_telemetry_file(msgs[0])
             if self.clients:
                 for m in msgs:
                     data = json.dumps(m)
                     await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
 
 
-def https_thread(cfg: dict, cams: Cameras, lock: threading.Lock):
+def https_server(cfg: dict, cams: Cameras, lock: threading.Lock):
     """The two HTTPS calls of the Quest app (the old https_server.py on 443): GET /api/controller-mappings
     (button bindings; the app falls back to its built-in copy) and POST /api/refocus-cameras."""
     import socket
@@ -566,7 +588,7 @@ def https_thread(cfg: dict, cams: Cameras, lock: threading.Lock):
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(ws_cfg["cert"], ws_cfg["key"])
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-    srv.serve_forever()
+    return srv
 
 
 def control_thread(core: Core, lock: threading.Lock, stop: threading.Event, period=0.01):
@@ -611,7 +633,7 @@ def main():
     lock, stop = threading.Lock(), threading.Event()
     threading.Thread(target=control_thread, args=(core, lock, stop), daemon=True, name="j5mini-100hz").start()
     if cfg.get("https", {}).get("port"):
-        threading.Thread(target=https_thread, args=(cfg, cams, lock), daemon=True, name="j5mini-https").start()
+        threading.Thread(target=https_server(cfg, cams, lock).serve_forever, daemon=True, name="j5mini-https").start()
     try:
         asyncio.run(serve(core, lock, cfg, cams))
     finally:

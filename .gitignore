@@ -77,3 +77,7 @@ raspberry/tools/rtp_push
 firmware/stm32/build-zephyr/
 # j5mini: the robot's own config (generated on the Pi from j5mini.example.json or export_config.py)
 minimal/j5mini/j5mini.json
+# Pi runtime: stereo calibration, vision models and venv (installed on the robot, not versioned)
+raspberry/config_runtime/video/stereo_calib.json
+raspberry/models/
+raspberry/.venv-vision/

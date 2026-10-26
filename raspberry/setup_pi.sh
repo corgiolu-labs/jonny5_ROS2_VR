@@ -8,10 +8,12 @@
 # 2. eth0: .221 static on the PC (ICS) / DHCP on the home router, switched by j5-net-autoswitch
 # 3. wlan0: 5 GHz hotspot for the headset (10.42.0.1) + firewall "video out, commands in"
 # 4. j5mini: Python deps, TLS pair, j5mini.json (from the example if missing)
-# 5. services: j5mini, MediaMTX, camera capture, sync route; the old stack (ws-teleop, SPI bridge, ROS 2,
-#    dashboards, captive portal, vision, collimator) stopped and disabled
+# 5. services: j5mini, MediaMTX, camera capture, sync route; optional: stereo collimator (on by default) and
+#    vision (on when raspberry/.venv-vision and raspberry/models/yolo11n.onnx exist); the old stack (ws-teleop,
+#    SPI bridge, ROS 2, dashboards, captive portal) stopped and disabled
 #
-# Env: J5_HOTSPOT_SSID, J5_HOTSPOT_PSK (8..63 chars), J5_HOTSPOT_CHANNEL; J5_SKIP_NET=1 skips 2 and 3.
+# Env: J5_HOTSPOT_SSID, J5_HOTSPOT_PSK (8..63 chars), J5_HOTSPOT_CHANNEL; J5_SKIP_NET=1 skips 2 and 3;
+#      J5_COLLIMATOR=0 / J5_VISION=0 leave the optional services off.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 RUN_USER="$(id -un)"
@@ -82,7 +84,7 @@ if [ "${J5_SKIP_NET:-0}" != "1" ]; then
 fi
 
 echo "[4/5] j5mini: dependencies, TLS, config..."
-sudo apt-get install -y python3-websockets python3-spidev python3-serial >/dev/null
+sudo apt-get install -y python3-websockets python3-spidev python3-serial python3-av python3-numpy >/dev/null
 TLS="$REPO/raspberry/config_runtime/tls"
 if [ ! -f "$TLS/webrtc.crt" ]; then
   mkdir -p "$TLS"
@@ -100,8 +102,7 @@ fi
 
 echo "[5/5] Services..."
 OLD="jonny5-ws-teleop jonny5-spi-j5vr jonny5-spi-shm-bridge jonny5-ros2 jonny5-https jonny5-https-443-proxy
-     jonny5-captive-portal jonny5-vision jonny5-stereo-collimator jonny5-refocus-cams jonny5-refocus-cams.timer
-     jonny5-video-init jonny5-video-fallback.timer"
+     jonny5-captive-portal jonny5-refocus-cams jonny5-refocus-cams.timer jonny5-video-init jonny5-video-fallback.timer"
 for u in $OLD; do
   sudo systemctl disable --now "$u" >/dev/null 2>&1 || true
 done
@@ -111,6 +112,20 @@ done
 sudo systemctl daemon-reload
 EN="jonny5-sync-route jonny5-mediamtx jonny5-video-capture jonny5-j5mini"
 [ "${J5_SKIP_NET:-0}" = "1" ] || EN="$EN j5-net-autoswitch j5-wlan0-firewall"
+# optional services (j5mini relays their messages to the app)
+if [ "${J5_COLLIMATOR:-1}" = "1" ]; then
+  EN="$EN jonny5-stereo-collimator"
+else
+  sudo systemctl disable --now jonny5-stereo-collimator >/dev/null 2>&1 || true
+fi
+if [ "${J5_VISION:-1}" = "1" ] && [ -x "$REPO/raspberry/.venv-vision/bin/python" ]    && [ -f "$REPO/raspberry/models/yolo11n.onnx" ]; then
+  EN="$EN jonny5-vision"
+else
+  sudo systemctl disable --now jonny5-vision >/dev/null 2>&1 || true
+  if [ "${J5_VISION:-1}" = "1" ]; then
+    echo "    vision off: raspberry/.venv-vision or raspberry/models/yolo11n.onnx missing"
+  fi
+fi
 sudo systemctl enable $EN >/dev/null
 sudo systemctl restart $EN || true
 [ "${J5_SKIP_NET:-0}" = "1" ] || sudo nmcli con up jonny5-hotspot >/dev/null 2>&1 || true

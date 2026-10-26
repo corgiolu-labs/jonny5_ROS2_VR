@@ -1,0 +1,20 @@
+# Optional. Automatic crosshair collimation (raspberry/tools/stereo_collimator.py): decodes only the keyframes of
+# cam0/cam1 from the local MediaMTX (~10 % of one core), finds where the centre of cam0 is in cam1 and sends
+# {"type":"stereo_collimation",...} to j5mini, which relays it to the app (convergence + distance in the headset).
+# Installed by raspberry/setup_pi.sh (@REPO@ = repo checkout, @USER@ = its owner).
+[Unit]
+Description=JONNY5 stereo crosshair collimation (cam0/cam1 disparity at the crosshair)
+After=jonny5-video-capture.service jonny5-j5mini.service
+Wants=jonny5-video-capture.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=/usr/bin/python3 -u @REPO@/raspberry/tools/stereo_collimator.py
+Nice=10
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

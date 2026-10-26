@@ -178,13 +178,13 @@ def test_websocket_end_to_end(lib):
             time.sleep(0.01)
 
     cfg = json.loads(json.dumps(CFG))
-    cfg["ws"] = {"host": "127.0.0.1", "port": 28557}
     srv = j5mini.Server(r.core, lock, cfg)
 
     async def go():
-        async with websockets.serve(srv.handler, "127.0.0.1", 28557):
+        async with websockets.serve(srv.handler, "127.0.0.1", 0) as wss:      # free port from the OS
+            port = next(iter(wss.sockets)).getsockname()[1]
             bt = asyncio.create_task(srv.broadcast_loop())
-            async with websockets.connect("ws://127.0.0.1:28557") as ws:
+            async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
                 hb = 0
                 seen = {}
                 t_end = time.time() + 3.0
@@ -262,15 +262,11 @@ def test_https_api_of_the_app():
     import urllib.request
     sent = []
     cams = j5mini.Cameras("/nonexistent", sendto=lambda data, port: sent.append(port))
-    cfg = {"https": {"host": "127.0.0.1", "port": 28443, "controller_mappings": str(HERE / "controller_mappings.json")}}
-    threading.Thread(target=j5mini.https_thread, args=(cfg, cams, threading.Lock()), daemon=True).start()
-    base = "http://127.0.0.1:28443"
-    for _ in range(50):
-        try:
-            body = urllib.request.urlopen(base + "/api/controller-mappings", timeout=1).read()
-            break
-        except OSError:
-            time.sleep(0.05)
+    cfg = {"https": {"host": "127.0.0.1", "port": 0, "controller_mappings": str(HERE / "controller_mappings.json")}}
+    srv = j5mini.https_server(cfg, cams, threading.Lock())
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    body = urllib.request.urlopen(base + "/api/controller-mappings", timeout=2).read()
     assert json.loads(body) == json.loads((HERE / "controller_mappings.json").read_text(encoding="utf-8"))
     req = urllib.request.Request(base + "/api/refocus-cameras", data=b"", method="POST")
     assert json.loads(urllib.request.urlopen(req, timeout=2).read())["ok"] is True
@@ -278,3 +274,45 @@ def test_https_api_of_the_app():
     with pytest.raises(urllib.error.HTTPError) as e:
         urllib.request.urlopen(urllib.request.Request(base + "/api/refocus-cameras", data=b"", method="POST"), timeout=2)
     assert e.value.code == 429
+
+
+def test_relay_for_collimator_and_vision(lib, tmp_path):
+    """The optional robot services are WebSocket clients: their messages reach the app and back, an "aim"
+    result gets vision_point ok=false (no ASSIST gimbal), and the servo angles land in the telemetry file."""
+    websockets = pytest.importorskip("websockets")
+    r = Rig(lib)
+    r.run(300)
+    cfg = json.loads(json.dumps(CFG))
+    cfg["telemetry_file"] = str(tmp_path / "j5vr_telemetry.json")
+    srv = j5mini.Server(r.core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+
+    async def recv_type(ws, typ):
+        while True:
+            m = json.loads(await asyncio.wait_for(ws.recv(), 2))
+            if m["type"] == typ:
+                return m
+
+    async def go():
+        async with websockets.serve(srv.handler, "127.0.0.1", 0) as wss:
+            url = "ws://127.0.0.1:%d" % next(iter(wss.sockets)).getsockname()[1]
+            bt = asyncio.create_task(srv.broadcast_loop())
+            async with websockets.connect(url) as app, websockets.connect(url) as svc:
+                await asyncio.sleep(0.1)
+                await svc.send(json.dumps({"type": "stereo_collimation", "dx": 12.5, "dy": -1.0, "lock": True}))
+                col = await recv_type(app, "stereo_collimation")
+                await app.send(json.dumps({"type": "vision_request", "action": "point", "req": 7}))
+                req = await recv_type(svc, "vision_request")
+                await svc.send(json.dumps({"type": "vision_result", "req": 7, "ok": True, "aim": True,
+                                           "target": {"label_it": "tazza"}}))
+                res = await recv_type(app, "vision_result")
+                pt = await recv_type(app, "vision_point")
+            bt.cancel()
+            return col, req, res, pt
+
+    col, req, res, pt = asyncio.run(go())
+    assert col["dx"] == 12.5 and col["lock"] is True
+    assert req["action"] == "point" and req["req"] == 7
+    assert res["req"] == 7
+    assert pt["ok"] is False and pt["label"] == "tazza" and "minimale" in pt["why"]
+    tm = json.loads((tmp_path / "j5vr_telemetry.json").read_text())
+    assert set(tm) == set(j5mini.SERVO_KEYS)

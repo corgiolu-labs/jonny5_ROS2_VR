@@ -51,6 +51,7 @@ def main():
                "key": "../../raspberry/config_runtime/tls/webrtc.key"},
         "https": {"host": "::", "port": 443, "controller_mappings": "controller_mappings.json"},
         "settings": {"offsets": offsets, "dirs": dirs},
+        "telemetry_file": "/dev/shm/j5vr_telemetry.json",     # servo angles for raspberry/tools/vision_service.py
         "link_timeout_ms": 150,
         "set_clock": True,
     }
