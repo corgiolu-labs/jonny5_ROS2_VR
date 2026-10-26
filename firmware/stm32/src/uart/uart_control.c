@@ -36,7 +36,6 @@
 #include "servo/j5vr_actuation.h"
 #include "servo/j5vr_head.h"
 #include "servo/servo_control.h"
-#include "servo/pickplace.h"
 #include "spi/j5_protocol.h"
 #include "core/rt_loop.h"
 #include "imu/imu.h"
@@ -288,9 +287,7 @@ static void uart_process_command(uint32_t seq, const char *cmd)
      * STATE_IDLE esistenti ("#<seq> ERR <TOKEN>"). Blocca SOLO moto/arm
      * (ENABLE, HOME, PARK, TELEOPPOSE, SETPOSE* — la demo lato Pi passa da
      * SETPOSE). STOP, SAFE, RESET, STATUS?, IMU*, query, SET_* restano permessi
-     * per non rompere il boot-sync del Pi; PP1/PP2 hanno un gate dedicato nel
-     * loro ramo (blocca solo duty>0, lascia duty=0 e PP?). Sul F446
-     * estop_is_active() e' lo stub che ritorna sempre false: nessun cambio. */
+     * per non rompere il boot-sync del Pi. */
     /* --- E-STOP: query e bypass temporaneo (prima del gate: devono
      * funzionare anche a fungo attivo). "ESTOP_BYPASS ON [min]" ignora la
      * linea fino alla scadenza (default 30, max 120 min), "ESTOP_BYPASS OFF"
@@ -353,7 +350,6 @@ static void uart_process_command(uint32_t seq, const char *cmd)
         j5vr_setpose_abort();   /* annulla traiettoria SETPOSE in corso: senza
                                  * questo resterebbe attiva e riprenderebbe da
                                  * sola al ritorno in SAFE/IDLE (auto-ripresa) */
-        pickplace_safe_off();   /* sicurezza: spegne valvola e motori vuoto */
         uart_send_response_with_seq(seq, "OK STOP");
     }
     else if (strcmp(cmd, "SAFE") == 0 || strcmp(cmd, "RESET") == 0)
@@ -363,7 +359,6 @@ static void uart_process_command(uint32_t seq, const char *cmd)
                                  * j5vr_setpose_tick() girerebbe comunque (viene
                                  * chiamato PRIMA dello switch di stato nel RT
                                  * loop) e muoverebbe i servo senza ENABLE */
-        pickplace_safe_off();   /* sicurezza: spegne valvola e motori vuoto */
         uart_send_response_with_seq(seq, "OK SAFE");
     }
     else if (strncmp(cmd, "ENABLE", 6) == 0)
@@ -496,58 +491,6 @@ static void uart_process_command(uint32_t seq, const char *cmd)
          * più stressati. Gli altri servo restano ingaggiati. */
         servo_relax_digital();
         uart_send_response_with_seq(seq, "OK RELAX_DIGITAL");
-    }
-    /* --- Pick & Place: PP1/PP2 <duty 0..100>, PP? per stato ---
-     * PP1 = elettrovalvola (PA0 TIM2_CH1).
-     * PP2 = vacuum motors (PA1 TIM2_CH2).
-     * Comandi config-only: NON gated dalla state machine (parità con SET_*).
-     * Lo spegnimento di sicurezza è già nei rami STOP/SAFE/RESET. */
-    else if ((strncmp(cmd, "PP1 ", 4) == 0) || (strncmp(cmd, "PP2 ", 4) == 0))
-    {
-        uint8_t channel = (cmd[2] == '1') ? PICKPLACE_CH_PP1 : PICKPLACE_CH_PP2;
-        const char *p = cmd + 4;
-        unsigned int duty = 0U;
-        if (!parse_uint(&p, &duty)) {
-            uart_send_response_with_seq(seq,
-                (channel == PICKPLACE_CH_PP1) ? "ERR PP1_FMT" : "ERR PP2_FMT");
-            return;
-        }
-        skip_spaces(&p);
-        if (*p != '\0') {
-            uart_send_response_with_seq(seq,
-                (channel == PICKPLACE_CH_PP1) ? "ERR PP1_FMT" : "ERR PP2_FMT");
-            return;
-        }
-        if (duty > 100U) {
-            uart_send_response_with_seq(seq,
-                (channel == PICKPLACE_CH_PP1) ? "ERR PP1_RANGE" : "ERR PP2_RANGE");
-            return;
-        }
-        /* Gate E-STOP: a fungo premuto NESSUN attuatore va ri-energizzato,
-         * pick&place incluso (pickplace_safe_off del fronte non basta se poi
-         * arriva un PP1/PP2 con duty>0). duty==0 e PP? restano permessi per
-         * il boot-sync del Pi. Sul F446 estop_is_active() e' sempre false. */
-        if (estop_is_active() && duty > 0U) {
-            uart_send_response_with_seq(seq, "ERR ESTOP_ACTIVE");
-            return;
-        }
-        if (!pickplace_set_duty(channel, (uint8_t)duty)) {
-            uart_send_response_with_seq(seq,
-                (channel == PICKPLACE_CH_PP1) ? "ERR PP1_HW" : "ERR PP2_HW");
-            return;
-        }
-        char ack[24];
-        snprintf(ack, sizeof(ack), "OK PP%u %u",
-                 (unsigned)(channel + 1U), (unsigned)duty);
-        uart_send_response_with_seq(seq, ack);
-    }
-    else if (strcmp(cmd, "PP?") == 0)
-    {
-        char msg[32];
-        snprintf(msg, sizeof(msg), "OK PP %u %u",
-                 (unsigned)pickplace_get_duty(PICKPLACE_CH_PP1),
-                 (unsigned)pickplace_get_duty(PICKPLACE_CH_PP2));
-        uart_send_response_with_seq(seq, msg);
     }
     /* --- SETPOSE_T_HR <B*10 S*10 G*10 Y*10 P*10 R*10 time_ms PLANNER> ---
      * High-resolution: angoli moltiplicati per 10 (50–1750 = 5.0°–175.0°).

@@ -8,7 +8,7 @@
  *
  * Fronte di ATTIVAZIONE (stessa via del comando UART STOP, senza parser):
  *   coppia via subito (servo_disable_all + abort SETPOSE + disarm VR),
- *   poi latch STATE_STOPPED + pickplace_safe_off, LOG_WRN; "ESTOP" verso il
+ *   poi latch STATE_STOPPED, LOG_WRN; "ESTOP" verso il
  *   Pi via flag, emesso dal main loop (estop_notify_poll) per non bloccare
  *   il tick RT con uart_poll_out.
  * Fronte di RILASCIO: solo log + flag "ESTOP_CLEAR". NESSUNA auto-ripresa:
@@ -18,7 +18,7 @@
  * Finche' ATTIVO lo stato viene ri-forzato a STOPPED a ogni tick: neutralizza
  * SAFE/ENABLE via UART e la auto-transizione SAFE->IDLE del RT loop.
  *
- * Guardia devicetree stile pickplace.c: senza alias "estop" (build F446)
+ * Guardia devicetree: senza alias "estop"
  * compila lo stub no-op in fondo, zero cambi di comportamento.
  */
 
@@ -39,9 +39,7 @@ LOG_MODULE_REGISTER(estop, LOG_LEVEL_INF);
 #include "core/state_machine.h"
 #include "core/rt_loop.h"
 #include "servo/servo_control.h"
-#include "servo/motion_planner.h"
 #include "servo/j5vr_setpose.h"
-#include "servo/pickplace.h"
 #include "uart/uart_control.h"
 
 #define ESTOP_GPIO_PORT  DT_GPIO_CTLR(ESTOP_NODE, gpios)
@@ -106,7 +104,6 @@ int32_t estop_bypass_set(bool on, uint32_t minutes)
 static void estop_engage(void)
 {
     servo_disable_all();        /* (a) coppia via IMMEDIATA: PWM=0 sui 6 servo */
-    motion_planner_stop_all();  /*     stub legacy (no-op) */
     j5vr_setpose_abort();       /*     ABORT traiettoria SETPOSE: senza questo
                                  *     g_setpose_state.active resterebbe true e
                                  *     il vecchio target riprenderebbe da solo
@@ -114,7 +111,6 @@ static void estop_engage(void)
                                  *     vietata dalla specifica). */
     g_vr_armed = 0;             /*     disarm pipeline VR */
     state_machine_set_stopped();/* (b) latch STOPPED (via del comando UART STOP) */
-    pickplace_safe_off();       /*     valvola + vacuum off, come ramo STOP */
 }
 
 /* Init fallita = dispositivo di sicurezza assente: FAIL-SAFE, non degradare a

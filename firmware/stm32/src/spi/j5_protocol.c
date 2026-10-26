@@ -71,15 +71,6 @@ void j5vr_latest_snapshot(struct j5vr_state *out)
     k_spin_unlock(&g_j5vr_lock, key);
 }
 
-void j5vr_latest_set_buttons_xy(uint16_t xy_bits)
-{
-    const uint16_t mask = (uint16_t)((1U << 4) | (1U << 5));
-    k_spinlock_key_t key = k_spin_lock(&g_j5vr_lock);
-    g_j5vr_latest.buttons_left =
-        (uint16_t)((g_j5vr_latest.buttons_left & ~mask) | (xy_bits & mask));
-    k_spin_unlock(&g_j5vr_lock, key);
-}
-
 struct j5ik_state g_j5ik_latest = {
     .valid         = 0,
     .control_flags = 0,

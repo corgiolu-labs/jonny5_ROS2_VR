@@ -2,7 +2,7 @@
  * RT Loop - Implementation
  *
  * Loop realtime a 1 kHz tramite workqueue Zephyr.
- * Refresh watchdog, gestione state machine, boundary layer RX/TX.
+ * Gestione state machine, watchdog SPI, dispatch dei modi VR / SETPOSE / J5IK.
  * Step 5.2: port rev2 logic, scheduling neutro (periodo/prioritÃƒÆ’Ã‚Â  = rev1).
  *
  * Architettura JONNY5 v1.0 - Sezione 5.1 - FASE 2
@@ -17,14 +17,11 @@
 #include "core/rt_loop.h"
 #include "core/state_machine.h"
 #include "core/estop.h"
-#include "core/hw_watchdog.h"
-#include "spi/boundary_buffers.h"
 #include "spi/hal_spi_slave.h"
 #include "spi/j5_protocol.h"
 #include "servo/servo_control.h"
 #include "servo/j5vr_actuation.h"
 #include "servo/j5vr_manual.h"
-#include "servo/motion_planner.h"
 #include "imu/imu.h"
 #include "uart/uart_control.h"
 
@@ -313,7 +310,6 @@ static void rt_loop_step(void)
 {
     g_rt_loop_ticks++;
     g_rt_loop_stage = 1;
-    hw_watchdog_feed();   /* no-op senza CONFIG_J5_HW_WATCHDOG */
 
     /* SPI frame watchdog: ogni 100 tick (= 100 ms) verifica che il Pi stia
      * ancora inviando frame. Se il timeout scade e il sistema e' in IDLE,
@@ -625,7 +621,6 @@ static void rt_loop_step(void)
 
                 if (!deadman_active)
                 {
-                    motion_planner_stop_all();
                 }
                 else if (!movement_allowed)
                 {
@@ -636,7 +631,6 @@ static void rt_loop_step(void)
                     switch (j5vr_current.mode)
                     {
                     case 0: /* CALIBRATION_CAMERA: no teleop actuation */
-                        motion_planner_stop_all();
                         break;
                     case 2: /* MANUAL_VR */
                         {
@@ -705,7 +699,6 @@ static void rt_loop_step(void)
                         }
                         break;
                     case 1: /* POSE_VR: no joystick actuation; pose via one-shot TELEOPPOSE only */
-                        motion_planner_stop_all();
                         break;
                     case 3: /* HEAD_VR */
                         j5vr_apply_head_tracking(&j5vr_current);

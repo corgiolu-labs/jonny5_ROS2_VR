@@ -81,8 +81,6 @@ typedef enum {
     J5_FRAME_TYPE_STATUS    = 0x03, /**< Status / ack generico            */
     J5_FRAME_TYPE_J5VR      = 0x04, /**< Payload comandi VR dal master   */
     J5_FRAME_TYPE_J5IK      = 0x05, /**< Payload target IK diretti       */
-    J5_FRAME_TYPE_ASSIST_V2_CONTROL   = 0x06, /**< ASSIST v2 CONTROL (RAW / WIRE v1) */
-    J5_FRAME_TYPE_ASSIST_V2_TELEMETRY = 0x07, /**< ASSIST v2 TELEMETRY echo          */
     J5_FRAME_TYPE_TELEMETRY_V2 = 0x08  /**< v2: telemetria compatta STM -> Pi (solo TX) */
 } j5_frame_type_t;
 
@@ -179,9 +177,6 @@ void j5ik_parse_payload(const uint8_t *p);
  * funzione invece di copiare direttamente la struct.
  */
 void j5vr_latest_snapshot(struct j5vr_state *out);
-
-/** j5vr_latest_set_buttons_xy — aggiorna in modo atomico i bit X/Y (4,5) di buttons_left. */
-void j5vr_latest_set_buttons_xy(uint16_t xy_bits);
 
 /** j5ik_latest_snapshot — copia coerente di g_j5ik_latest (stesso lock di g_j5vr_latest). */
 void j5ik_latest_snapshot(struct j5ik_state *out);

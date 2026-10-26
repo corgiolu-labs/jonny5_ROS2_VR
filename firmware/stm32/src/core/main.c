@@ -1,31 +1,19 @@
 /*
  * JONNY5-4.0 - Bootstrap
- * Pipeline: HAL SPI slave + boundary + state machine + RT loop + UART control + IMU + servo.
+ * Pipeline: HAL SPI slave + state machine + RT loop + UART control + IMU + servo.
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/init.h>
-#include "spi/boundary_buffers.h"
 #include "spi/hal_spi_slave.h"
 #include "core/state_machine.h"
 #include "core/estop.h"
-#include "core/hw_watchdog.h"
 #include "core/rt_loop.h"
 #include "uart/uart_control.h"
 #include "imu/imu.h"
 #include "servo/servo_control.h"
-#include "servo/pickplace.h"
 #include "servo/j5vr_setpose.h"
 #include <zephyr/sys/printk.h>
-
-/* Boundary init prima di HAL SPI (POST_KERNEL 50) */
-static int boundary_init_sys_init(void)
-{
-    boundary_init();
-    return 0;
-}
-
-SYS_INIT(boundary_init_sys_init, PRE_KERNEL_1, 1);
 
 int main(void)
 {
@@ -38,16 +26,14 @@ int main(void)
 
     state_machine_init();
     uart_control_init();
-    estop_init();             /* fungo E-STOP PC6 (solo G474; stub sul F446) */
-    (void)pickplace_init();   /* PA0/PA1 → MOSFET gate; duty=0 al boot */
+    estop_init();             /* fungo E-STOP PC6 */
 
     /* imu_init() NON viene chiamata qui: il thread IMU in rt_loop aspetta
-     * che RT sia a regime (>2s) e che arrivi IMUON dal Pi, poi fa l'init.
+     * che RT sia a regime (>2s) e che le letture siano abilitate (default ON, IMUOFF le spegne).
      * Così main() non si blocca se il sensore non risponde sul bus I2C. */
 
     rt_loop_init();
     rt_loop_start();
-    (void)hw_watchdog_init();   /* opt-in: CONFIG_J5_HW_WATCHDOG; dopo il RT loop che lo alimenta */
     uart_send_unsolicited("BOOT_READY");
 
     printk("[BOOT] RT loop 1kHz started\n");

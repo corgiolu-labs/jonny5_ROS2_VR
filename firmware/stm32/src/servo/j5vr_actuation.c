@@ -40,7 +40,6 @@
 
 /* Driver / HAL */
 #include "servo/servo_control.h"
-#include "servo/motion_planner.h"
 #include "imu/imu.h"
 
 /* Core Zephyr / RTOS */
@@ -100,7 +99,7 @@ LOG_MODULE_REGISTER(j5vr_actuation, LOG_LEVEL_INF);
 #define VEL_VR_BTN_A   20.0f   /* pulsante A — modalità lenta */
 #define VEL_VR_BTN_B  100.0f   /* pulsante B — modalità normale */
 
-/* RT_LOOP_PERIOD_MS defined in core/rt_loop.h (included via motion_planner.h) */
+/* RT_LOOP_PERIOD_MS defined in core/rt_loop.h */
 #define RT_LOOP_PERIOD_SEC (RT_LOOP_PERIOD_MS / 1000.0f)
 
 /* Joystick deadzone: letta dai parametri HEAD a runtime (modificabile via SET_VR_PARAMS) */
@@ -691,7 +690,6 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
                    (int)j5vr->joy_y,
                    (unsigned)j5vr->buttons_left);
         }
-        motion_planner_stop_all();
         return false;
     }
 

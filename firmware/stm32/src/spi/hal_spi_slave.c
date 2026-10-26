@@ -1,36 +1,28 @@
 /*
- * hal_spi_slave.c — HAL SPI Slave con DMA circular
+ * hal_spi_slave.c — HAL SPI Slave con DMA circular (SPI1, STM32G474)
  *
  * SPI1 in slave mode always-armed: il DMA circular è avviato una sola volta
  * e rimane attivo indefinitamente. Gli eventi half/full arrivano via callback
  * DMA RX e vengono processati in un thread dedicato (non in ISR).
  *
- * Double-buffer DMA (128 byte = 2 × 64 byte):
- *   spi_tx_buf: [frame0 TX | frame1 TX]  — half0 = indice 0, half1 = indice 1
- *   spi_rx_buf: [frame0 RX | frame1 RX]
+ * Buffer circolare = 2 × SPI_FRAME_LEN (64, oppure 128 con
+ * CONFIG_J5_CANONICAL_PADDED_128_MODE: frame canonico 64 B + 64 B a zero):
+ *   spi_tx_buf: [half0 TX | half1 TX]
+ *   spi_rx_buf: [half0 RX | half1 RX]
+ * Master e slave devono usare la stessa lunghezza di trasferimento.
  *
- * Quando half N è pronto in RX, il thread:
- *   1. Commit RX half N al boundary layer.
- *   2. Costruisce la risposta TX nel half opposto (1-N) già trasmesso.
+ * Quando half N è pronto in RX, il thread cerca il frame J5 valido nella
+ * finestra (coda dell'half precedente + half N) e scrive la risposta
+ * nell'half opposto (1-N): la risposta al trasferimento k esce nel k+1.
  *
  * Perché NON usiamo i callback HAL SPI complete:
  *   HAL_SPI_TxRxCpltCallback/HalfCpltCallback vengono overridati con stub
  *   vuoti per evitare che la HAL disabiliti RXDMAEN/TXDMAEN, rompendo il
  *   circular mode.
- *
- * NOTE [Refactor-Phase1]:
- *   - Le funzioni sul critical path (ISR DMA, spi_service_thread_entry,
- *     process_spi_command_build_tx) NON devono essere modificate nei refactor.
- *   - Le funzioni marcate nei report come SUPERFLUA_LEGACY o TEST_ONLY
- *     (diagnostica NSS, thread GPIO di debug, getter legacy) sono mantenute
- *     per compatibilità e potranno essere raggruppate in blocchi commentati
- *     "LEGACY" senza cambiare il comportamento runtime.
  */
 
 #include "spi/hal_spi_slave.h"
-#include "spi/boundary_buffers.h"
 #include "spi/j5_protocol.h"
-#include "spi/assist_v2_raw.h"
 
 #include <zephyr/device.h>
 #include <zephyr/sys/util.h>
@@ -52,13 +44,11 @@
  * ========================================================= */
 
 #if IS_ENABLED(CONFIG_J5_CANONICAL_PADDED_128_MODE)
-#define SPI_FRAME_LEN          J5_ASSIST_V2_FRAME_SIZE /* 128 — WIRE REGISTER v1 */
+#define SPI_FRAME_LEN          128U                    /* 64 B canonici + 64 B a zero */
 #else
 #define SPI_FRAME_LEN          J5_PROTOCOL_FRAME_SIZE  /* 64 */
 #endif
 #define SPI_FRAMES_IN_CIRCULAR 2
-/* Il commit RX copia SPI_FRAME_LEN byte in uno slot boundary da J5_FRAME_SIZE. */
-BUILD_ASSERT(SPI_FRAME_LEN <= J5_FRAME_SIZE, "boundary RX slot smaller than SPI frame");
 #define SPI_BUF_LEN            (SPI_FRAME_LEN * SPI_FRAMES_IN_CIRCULAR)
 
 #define SPI_SERVICE_STACK_SIZE 1024
@@ -162,7 +152,6 @@ static void process_spi_command_build_tx(const uint8_t *rx, size_t len,
                                          uint8_t out_tx[SPI_FRAME_LEN]);
 static bool spi_is_valid_j5_frame_at(const uint8_t *buf, size_t len, size_t off, uint8_t *ft, uint8_t *d6);
 static const uint8_t *spi_pick_normalized_frame(const uint8_t *rx, size_t len, size_t *off_out);
-static uint32_t spi_fp32(const uint8_t *p, size_t n);
 static bool seq_is_newer_u16(uint16_t a, uint16_t b);
 static void spi_dma_rx_half_cb(DMA_HandleTypeDef *hdma);
 static void spi_dma_rx_full_cb(DMA_HandleTypeDef *hdma);
@@ -248,15 +237,7 @@ static void spi_service_thread_entry(void *a, void *b, void *c)
             const uint8_t *rx_ptr      = &spi_rx_buf[half * SPI_FRAME_LEN];
             uint8_t       *tx_ptr_next = &spi_tx_buf[(1 - half) * SPI_FRAME_LEN];
 
-            /* Commit RX al boundary layer (NO copy in ISR) */
-            uint8_t *rx_write_ptr = boundary_hal_rx_write_ptr();
-            if (rx_write_ptr != NULL)
-            {
-                memcpy(rx_write_ptr, rx_ptr, SPI_FRAME_LEN);
-                boundary_hal_rx_commit();
-            }
-
-            /* Finestra estesa tail + current_half per frame che attraversano il boundary DMA. */
+            /* Finestra estesa tail + current_half per frame che attraversano il confine tra le due half DMA. */
             size_t window_len;
             if (spi_ingest_tail_valid) {
                 memcpy(spi_rx_window, spi_ingest_tail, SPI_INGEST_TAIL_LEN);
@@ -717,22 +698,6 @@ static void process_spi_command_build_tx(const uint8_t *rx, size_t len,
     if (req_ver == (uint8_t)J5_PROTOCOL_VERSION_V2) {
         spi_track_v2_sequence(get_rx_sequence(rx_norm));
     }
-    {
-        static uint32_t n = 0U, last_fp = 0U;
-        static uint16_t last_seq = 0U;
-        static uint8_t last_ft = 0U, last_d6 = 0U;
-        static size_t last_off = (size_t)-1;
-        const uint32_t fp = spi_fp32(rx, len);
-        const uint16_t seq = get_rx_sequence(rx_norm);
-        const uint8_t ft = rx_norm[3];
-        const uint8_t d6 = rx_norm[6];
-        const bool changed = (fp != last_fp) || (seq != last_seq) || (ft != last_ft) || (d6 != last_d6) || (norm_off != last_off);
-        if (changed) {
-            last_fp = fp; last_seq = seq; last_ft = ft; last_d6 = d6; last_off = norm_off;
-        }
-        n++;
-    }
-    (void)0; /* SPI_RX_NORM diagnostic removed — use LOG_DBG if needed */
 
 
     if (rx_norm[0] == 'J' && rx_norm[1] == '5')
@@ -878,40 +843,13 @@ static const uint8_t *spi_pick_normalized_frame(const uint8_t *rx, size_t len, s
             }
         }
     }
-    if (best_off == (size_t)-1) {
-        static uint32_t n0 = 0U, last_fp0 = 0U;
-        const uint32_t fp0 = spi_fp32(rx, len);
-        if (fp0 != last_fp0) {
-            printk("[SPI_RX_TIMELINE] t=%u n=%u slot=%u valid=0 fp=%08X raw8=%02X%02X%02X%02X%02X%02X%02X%02X\n",
-                   (unsigned)k_uptime_get_32(), (unsigned)n0, (unsigned)len, (unsigned)fp0,
-                   (unsigned)(len > 0 ? rx[0] : 0U), (unsigned)(len > 1 ? rx[1] : 0U),
-                   (unsigned)(len > 2 ? rx[2] : 0U), (unsigned)(len > 3 ? rx[3] : 0U),
-                   (unsigned)(len > 4 ? rx[4] : 0U), (unsigned)(len > 5 ? rx[5] : 0U),
-                   (unsigned)(len > 6 ? rx[6] : 0U), (unsigned)(len > 7 ? rx[7] : 0U));
-            last_fp0 = fp0;
-        }
-        n0++;
-        return NULL;
-    }
-    if (ambiguous) {
-        printk("[SPI_RX_TIMELINE] t=%u n=0 slot=%u valid=0 amb=1 fp=%08X\n",
-               (unsigned)k_uptime_get_32(), (unsigned)len, (unsigned)spi_fp32(rx, len));
-        return NULL;
+    if (best_off == (size_t)-1 || ambiguous) {
+        return NULL;   /* no frame, or two frames with the same seq: answer STATUS 0xEE */
     }
     if (off_out != NULL) { *off_out = best_off; }
     return rx + best_off;
 }
 
-static uint32_t spi_fp32(const uint8_t *p, size_t n)
-{
-    uint32_t h = 2166136261u;
-    if (p == NULL) { return h; }
-    for (size_t i = 0; i < n; i++) {
-        h ^= (uint32_t)p[i];
-        h *= 16777619u;
-    }
-    return h;
-}
 
 static bool seq_is_newer_u16(uint16_t a, uint16_t b)
 {
