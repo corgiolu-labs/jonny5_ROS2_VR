@@ -735,6 +735,10 @@ class Server:
                 with self.lock:
                     self.core.resend_vr_params()
             await ws.send(json.dumps({"type": "ack", "set_vr_mode": msg.get("mode")}))
+        elif typ == "horizon_lock":                  # Quest panel "Orizzonte": ASSIST keeps the image level
+            with self.lock:
+                on = self.assist.set_horizon_lock(bool(msg.get("on"))) if self.assist else False
+            await self.broadcast({"type": "horizon_lock", "on": on, "available": self.assist is not None})
         elif typ == "time_sync":
             self.time_sync(msg.get("epoch_ms"))
         elif typ == "get_settings":
@@ -834,7 +838,8 @@ class Server:
         while True:
             await asyncio.sleep(0.05)
             with self.lock:
-                msgs = [{**self.core.telemetry_message(), **self.cams.telemetry(), "clients": len(self.clients)}] + \
+                msgs = [{**self.core.telemetry_message(), **self.cams.telemetry(), "clients": len(self.clients),
+                         "horizon_lock": bool(self.assist and self.assist.horizon_lock())}] + \
                     self.core.events
                 self.core.events = []
             self.write_telemetry_file(msgs[0])
@@ -869,6 +874,7 @@ class Assist:
                      for k, v in ASSIST_DEFAULTS.items()}
         self.uart = _UartBridge(core, lock)
         self.configure()
+        gimbal.set_horizon_lock(bool(a.get("horizon_lock", False)))
 
     @classmethod
     def create(cls, core, lock, cfg):
@@ -912,6 +918,12 @@ class Assist:
 
     def pop_goal_done(self):
         return self.g.pop_goal_done()
+
+    def set_horizon_lock(self, on: bool) -> bool:
+        return self.g.set_horizon_lock(on)
+
+    def horizon_lock(self) -> bool:
+        return self.g.horizon_lock()
 
     def headzero_external(self):
         self.g.notify_headzero_external()

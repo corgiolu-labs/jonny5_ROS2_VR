@@ -58,6 +58,12 @@ target is commanded as R_target . exp(-trim). The campaign measured 2.7 deg RMS 
 
 Selected with routing_config.json "assistMode": "gimbal" (other values: "rate" legacy, "dls").
 
+Horizon lock (26/10/2026, user): with set_horizon_lock(True) the target keeps the camera's optical axis where
+the head points but turns it about that axis until the image's horizontal axis is perpendicular to the vertical
+(base tilt from imu_ee_mount.json); the IMU trim then makes the real camera match it with the gravity measured by
+the wrist IMU. Blended in over LEVEL_RAMP_S (on toggle and at every engage), suspended when looking almost straight
+up or down (roll undefined).
+
 j5mini (26/10/2026): ported from raspberry/controller/web_services/head_assist_gimbal.py (branch
 feature/video-direct-rtp), the ASSIST the robot used ("assistMode": "gimbal"). Only the glue changed: offsets / dirs,
 the screw axes, the IMU sample and the HEADZERO sender come from j5mini (configure()), not from the old Pi modules.
@@ -187,6 +193,10 @@ TRIM_STILL_DEG = 1.5        # the telemetry reports whole servo degrees: any set
 TRIM_SERVO_LAG_S = 0.2      # the IMU is compared with the firmware pose this much earlier (servo lag, campaign)
 _MOUNT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "imu_ee_mount.json")
 _mount_cache = {"mtime": None, "M": None, "T": None}
+
+# horizon lock
+LEVEL_RAMP_S = 0.5          # blend in / out
+LEVEL_MIN_HORIZ = 0.3       # |up x optical axis| below this (within ~17 deg of vertical): no roll to level
 
 # XR (x right, y up, z back) -> robot base (x forward, y left, z up)
 _C = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
@@ -425,9 +435,43 @@ class GimbalState:
         self.trim = np.zeros(3)      # IMU trim (rotation vector, tool frame, rad)
         self.trim_hist = []          # (t, firmware virt[6], R_imu) for the stillness test
         self.trim_t = 0.0
+        self.horizon = False         # horizon lock requested
+        self.level_u = 0.0           # 0 = head roll, 1 = level (blended)
+        self.level_t = 0.0
 
 
 _state = GimbalState()
+
+
+def set_horizon_lock(on: bool) -> bool:
+    _state.horizon = bool(on)
+    logger.info("[GIMBAL] horizon lock %s", "on" if on else "off")
+    return _state.horizon
+
+
+def horizon_lock() -> bool:
+    return _state.horizon
+
+
+def _level(st, r, now):
+    """r turned about its optical axis (column 0) towards a level horizon by st.level_u (see the docstring)."""
+    want = 1.0 if st.horizon else 0.0
+    dt = min(0.1, max(0.0, now - st.level_t)) if st.level_t else 0.0
+    st.level_t = now
+    k = dt / LEVEL_RAMP_S
+    st.level_u += max(-k, min(k, want - st.level_u))
+    if st.level_u <= 1e-3:
+        return r
+    _, tilt = _imu_mount()
+    up = tilt.T @ np.array([0.0, 0.0, 1.0]) if tilt is not None else np.array([0.0, 0.0, 1.0])
+    x = r[:, 0]
+    y = np.cross(up, x)
+    n = float(np.linalg.norm(y))
+    if n < LEVEL_MIN_HORIZ:
+        return r
+    y = y / n
+    r_lvl = np.column_stack([x, y, np.cross(x, y)])
+    return r @ _exp_map(st.level_u * _log_map(r.T @ r_lvl))
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -746,6 +790,8 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
         st.base_est = None
         st.trim_hist = []
         st.trim_t = 0.0
+        st.level_u = 0.0             # the horizon lock blends in again from the engaged pose
+        st.level_t = 0.0
         logger.info("[GIMBAL] engage: HEADZERO, arm virt %s", [round(float(v), 1) for v in virt[:3]])
     if st.phase == "zeroing":
         send_quat(st.q_hold)
@@ -809,7 +855,7 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     r_target_raw = r_head @ st.r_head_ref.T @ st.r_cam_ref
     r_head_p = _predict_head(st, r_head, now_p, pred_cfg)
     virt_fw = settings_manager.physical_to_virtual(list(tel_raw), offsets, dirs) if tel_raw else list(virt)
-    r_target = r_head_p @ st.r_head_ref.T @ st.r_cam_ref @ _imu_trim(st, virt_fw, now_p, trim_cfg)
+    r_target = _level(st, r_head_p @ st.r_head_ref.T @ st.r_cam_ref, now_p) @ _imu_trim(st, virt_fw, now_p, trim_cfg)
     # wrist IK on the modelled REAL base position: the base (whole arm) lags its target more than the wrist
     tau_b = float((pred_cfg or {}).get("base_tau_s", BASE_TAU_S))
     if st.base_est is None or tau_b <= 0:

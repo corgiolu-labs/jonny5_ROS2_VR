@@ -661,3 +661,79 @@ def test_head_motion_is_smoothed_against_the_apps_irregular_intents(lib):
     smooth, span = jerkiness(lib, 30)
     assert span > 10 and span_raw > 10                  # the wrist really followed the head
     assert smooth < raw * 0.5, (raw, smooth)
+
+
+def assist_camera_roll(lib, horizon):
+    """ASSIST, head turned a bit and tilted sideways by 15 deg: roll of the commanded camera (deg from level)."""
+    import math
+    import numpy as np
+    import assist_gimbal
+    assist_gimbal._state = assist_gimbal.GimbalState()
+    r = Rig(lib)
+    lock, stop = threading.Lock(), threading.Event()
+    r.run(1000)
+    r.run(300, intent())
+    r.core.uart_send("HOME")
+    r.run(3000, intent())
+
+    def stepper():
+        while not stop.is_set():
+            with lock:
+                r.core.step()
+                r.sim.run(10)
+            time.sleep(0.01)
+
+    srv = j5mini.Server(r.core, lock, json.loads(json.dumps(CFG)), j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+
+    class Ws:
+        async def send(self, data):
+            pass
+
+    def head(yaw, roll):                        # XR frame: yaw about y (up), roll about z (back)
+        hy, hr = math.radians(yaw) / 2, math.radians(roll) / 2
+        qy = (math.cos(hy), 0.0, math.sin(hy), 0.0)
+        qr = (math.cos(hr), 0.0, 0.0, math.sin(hr))
+        a, b = qy, qr                           # q = qy * qr
+        q = (a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+             a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+             a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+             a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0])
+        return dict(zip(("quat_w", "quat_x", "quat_y", "quat_z"), q))
+
+    async def stream(seconds, yaw0, yaw1, roll0, roll1):
+        n = int(seconds * 60)
+        for i in range(n):
+            f = (i + 1) / n
+            r.hb += 1
+            await srv.on_message(Ws(), intent(mode=5, grip=1, buttons_left=GRIP, buttons_right=GRIP, heartbeat=r.hb,
+                                              timestamp=time.monotonic(),
+                                              **head(yaw0 + (yaw1 - yaw0) * f, roll0 + (roll1 - roll0) * f)))
+            await asyncio.sleep(1 / 60)
+
+    async def go():
+        await srv.on_message(Ws(), {"type": "horizon_lock", "on": horizon})
+        await stream(1.0, 0, 0, 0, 0)
+        await stream(1.5, 0, 10, 0, 15)
+        await stream(1.5, 10, 10, 15, 15)
+
+    th = threading.Thread(target=stepper, daemon=True)
+    th.start()
+    try:
+        asyncio.run(go())
+    finally:
+        stop.set()
+        th.join(1)
+    s = j5mini.settings_from_config(CFG)
+    virt = assist_gimbal.settings_manager.physical_to_virtual(r.sim.angles(), s["offsets"], s["dirs"])
+    rc = assist_gimbal.cam_rotation(np.radians(np.asarray(virt) - 90.0))
+    return math.degrees(math.asin(float(rc[2, 1])))      # image horizontal axis (y) against the vertical
+
+
+def test_horizon_lock_keeps_the_assist_image_level(lib):
+    """26/10/2026, user: a button that keeps the camera roll level. Head tilted 15 deg: without the lock the camera
+    tilts with it, with the lock it stays level."""
+    pytest.importorskip("numpy")
+    free = assist_camera_roll(lib, False)
+    locked = assist_camera_roll(lib, True)
+    assert abs(free) > 8, free
+    assert abs(locked) < 2, locked
