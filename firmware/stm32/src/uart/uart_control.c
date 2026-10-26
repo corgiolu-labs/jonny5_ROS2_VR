@@ -55,9 +55,6 @@
  * (priorita' 0) con 4 float -> puo' ritardare il RT loop di qualche ms quando
  * il Pi apre la sessione teleop. A 0 e' compilato fuori. NB: l'ack di protocollo
  * "OK SET_VR_PARAMS" (uart_send_response_with_seq, sotto) NON dipende da questo. */
-#ifndef UART_VR_PARAMS_DEBUG
-#define UART_VR_PARAMS_DEBUG 0
-#endif
 #include <zephyr/sys/ring_buffer.h>
 
 /* =========================================================
@@ -727,13 +724,6 @@ static void uart_process_command(uint32_t seq, const char *cmd)
                            (int)iargs[9], (int)iargs[10], (int)iargs[11], /* vel_yaw/pitch/roll */
                            (int)iargs[12], (int)iargs[13], (int)iargs[14], /* vel_yaw/pitch/roll head */
                            (int)iargs[15], (int)iargs[16], (int)iargs[17]); /* vel_base/spalla/gomito head */
-#if UART_VR_PARAMS_DEBUG
-        printk("[VR_PARAMS] SET_VR_PARAMS ok: gy=%.2f gp=%.2f gr=%.2f sens=%.2f "
-               "sign_ypr=%d %d %d src_rpy=%u %u %u (HEADZERO è solo calib, non tuning)\n",
-               (double)fargs[0], (double)fargs[1], (double)fargs[2], (double)fargs[12],
-               (int)fargs[13], (int)fargs[14], (int)fargs[15],
-               (unsigned)iargs[0], (unsigned)iargs[1], (unsigned)iargs[2]);
-#endif
         uart_send_response_with_seq(seq, "OK SET_VR_PARAMS");
     }
     /* --- SET_PWM_CONFIG <t8_hz> <t8_min_us> <t8_max_us> <t8_max_deg>

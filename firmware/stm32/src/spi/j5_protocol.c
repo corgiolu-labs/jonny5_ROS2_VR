@@ -27,9 +27,6 @@
 /* Dump per-frame [VR_RX]/[IK_RX] su console: printk SINCRONI nel thread SPI
  * service (rate-limited 1 ogni 50 frame). Pura diagnostica: a 0 sono compilati
  * fuori (console pulita, zero costo sul path SPI). Mettere a 1 per riabilitarli. */
-#ifndef J5_PROTO_RX_DEBUG
-#define J5_PROTO_RX_DEBUG 0
-#endif
 #include <string.h>
 
 /* =========================================================
@@ -216,30 +213,6 @@ void j5vr_parse_payload(const uint8_t *p)
     g_j5vr_latest = s;
     k_spin_unlock(&g_j5vr_lock, key);
 
-#if J5_PROTO_RX_DEBUG
-    /* Log rate-limited: conferma parse su STM32 (ogni 50 frame) */
-    static uint32_t vr_rx_log = 0;
-    if ((vr_rx_log++ % 50U) == 0U)
-    {
-        printk("[VR_RX] mode=%u buttons_L=%04X buttons_R=%04X"
-               " joy_x=%d joy_y=%d pitch=%d yaw=%d intensity=%u hb=%u"
-               " m5_valid=%u m5_id=%u m5_bsg=%d,%d,%d\n",
-               (unsigned)g_j5vr_latest.mode,
-               (unsigned)g_j5vr_latest.buttons_left,
-               (unsigned)g_j5vr_latest.buttons_right,
-               (int)g_j5vr_latest.joy_x,
-               (int)g_j5vr_latest.joy_y,
-               (int)g_j5vr_latest.pitch,
-               (int)g_j5vr_latest.yaw,
-               (unsigned)g_j5vr_latest.intensity,
-               (unsigned)g_j5vr_latest.vr_heartbeat,
-               (unsigned)g_j5vr_latest.mode5_arm_valid,
-               (unsigned)g_j5vr_latest.mode5_target_id,
-               (int)g_j5vr_latest.mode5_arm_target_cdeg[0],
-               (int)g_j5vr_latest.mode5_arm_target_cdeg[1],
-               (int)g_j5vr_latest.mode5_arm_target_cdeg[2]);
-    }
-#endif
 
 }
 
@@ -270,25 +243,6 @@ void j5ik_parse_payload(const uint8_t *p)
     g_j5ik_rx_counter++;
     atomic_set(&g_j5ik_last_rx_ms, (atomic_val_t)k_uptime_get_32());
 
-#if J5_PROTO_RX_DEBUG
-    static uint32_t ik_rx_log = 0;
-    if ((ik_rx_log++ % 50U) == 0U)
-    {
-        printk("[IK_RX] valid=%u flags=0x%02X id=%u hb=%u mode=%u"
-               " q(B,S,G,Y,P,R)cdeg=%d,%d,%d,%d,%d,%d\n",
-               (unsigned)g_j5ik_latest.valid,
-               (unsigned)g_j5ik_latest.control_flags,
-               (unsigned)g_j5ik_latest.target_id,
-               (unsigned)g_j5ik_latest.vr_heartbeat,
-               (unsigned)g_j5ik_latest.mode,
-               (int)g_j5ik_latest.target_cdeg[0],
-               (int)g_j5ik_latest.target_cdeg[1],
-               (int)g_j5ik_latest.target_cdeg[2],
-               (int)g_j5ik_latest.target_cdeg[3],
-               (int)g_j5ik_latest.target_cdeg[4],
-               (int)g_j5ik_latest.target_cdeg[5]);
-    }
-#endif
 }
 
 /* =========================================================

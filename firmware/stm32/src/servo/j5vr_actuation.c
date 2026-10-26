@@ -62,9 +62,6 @@ LOG_MODULE_REGISTER(j5vr_actuation, LOG_LEVEL_INF);
 #ifndef J5VR_DEBUG_MINIMAL
 #define J5VR_DEBUG_MINIMAL 1
 #endif
-#ifndef J5VR_DEBUG_VERBOSE
-#define J5VR_DEBUG_VERBOSE 0
-#endif
 
 /* =========================================================
  * COSTANTI
@@ -229,11 +226,6 @@ static inline float j5_clampf(float x, float min_val, float max_val)
  */
 static void safe_increment(servo_joint_t joint, float increment)
 {
-#if J5VR_DEBUG_VERBOSE
-    static uint32_t log_counter_safe = 0;
-    const char *joint_names[] = {"BASE", "SPALLA", "GOMITO", "YAW", "PITCH", "ROLL"};
-    float desired_before = desired_positions[joint];
-#endif
 
     const float lim_min = joint_min_deg[joint];
     const float lim_max = joint_max_deg[joint];
@@ -241,20 +233,10 @@ static void safe_increment(servo_joint_t joint, float increment)
     /* Guardie pre-incremento: blocca se già al limite nella direzione richiesta */
     if (increment > 0.0f && desired_positions[joint] >= lim_max - 0.1f)
     {
-#if J5VR_DEBUG_VERBOSE
-        if ((log_counter_safe++ % 500) == 0)
-            LOG_DBG("[SAFE] %s: BLOCKED (at max %.1f, inc=%.4f)",
-                    joint_names[joint], (double)desired_positions[joint], (double)increment);
-#endif
         return;
     }
     if (increment < 0.0f && desired_positions[joint] <= lim_min + 0.1f)
     {
-#if J5VR_DEBUG_VERBOSE
-        if ((log_counter_safe++ % 500) == 0)
-            LOG_DBG("[SAFE] %s: BLOCKED (at min %.1f, inc=%.4f)",
-                    joint_names[joint], (double)desired_positions[joint], (double)increment);
-#endif
         return;
     }
 
@@ -262,17 +244,7 @@ static void safe_increment(servo_joint_t joint, float increment)
 
     /* Clamp post-incremento */
     const float clamped = j5_clampf(desired_positions[joint], lim_min, lim_max);
-#if J5VR_DEBUG_VERBOSE
-    bool did_clamp = (clamped != desired_positions[joint]);
     desired_positions[joint] = clamped;
-    if ((log_counter_safe++ % 500) == 0)
-        LOG_DBG("[SAFE] %s: %.1f->%.1f (inc=%.4f%s)",
-                joint_names[joint], (double)desired_before,
-                (double)desired_positions[joint], (double)increment,
-                did_clamp ? " CLAMPED" : "");
-#else
-    desired_positions[joint] = clamped;
-#endif
 }
 
 /* =========================================================
@@ -652,18 +624,6 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
     const float max_step_per_cycle = current_max_velocity_deg_per_sec * RT_LOOP_PERIOD_SEC;
     const float base_increment     = max_step_per_cycle * 2.0f;
 
-#if J5VR_DEBUG_VERBOSE
-    {
-        static uint32_t log_counter_params = 0;
-        if ((log_counter_params++ % 500) == 0)
-        {
-            LOG_DBG("[CTRL] max_vel=%.1f deg/s max_step=%.4f base_inc=%.4f",
-                    (double)current_max_velocity_deg_per_sec,
-                    (double)max_step_per_cycle,
-                    (double)base_increment);
-        }
-    }
-#endif
 
     float intensity_scale = (float)j5vr->intensity / 255.0f;
     if (intensity_scale <= 0.0f) intensity_scale = 1.0f;
@@ -716,12 +676,6 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
     if (fabsf(joy_x_norm) > 0.01f)
     {
         const float inc = joy_x_norm * base_increment * intensity_scale;
-#if J5VR_DEBUG_VERBOSE
-        static uint32_t log_counter_yaw = 0;
-        if ((log_counter_yaw++ % 500) == 0)
-            LOG_DBG("[JOY] YAW (left X): raw=%d norm=%.3f inc=%.4f",
-                    j5vr->joy_x, (double)joy_x_norm, (double)inc);
-#endif
         safe_increment(SERVO_YAW, inc);
     }
 
@@ -730,12 +684,6 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
     if (fabsf(joy_y_norm) > 0.01f)
     {
         const float inc = joy_y_norm * base_increment * intensity_scale;
-#if J5VR_DEBUG_VERBOSE
-        static uint32_t log_counter_pitch = 0;
-        if ((log_counter_pitch++ % 500) == 0)
-            LOG_DBG("[JOY] PITCH (left Y): raw=%d norm=%.3f inc=%.4f",
-                    j5vr->joy_y, (double)joy_y_norm, (double)inc);
-#endif
         safe_increment(SERVO_PITCH, inc);
     }
 
@@ -745,21 +693,11 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
     if (trigger_left && !trigger_right)
     {
         const float inc = -base_increment * intensity_scale;
-#if J5VR_DEBUG_VERBOSE
-        static uint32_t log_counter_base = 0;
-        if ((log_counter_base++ % 500) == 0)
-            LOG_DBG("[JOY] BASE: trigger_L inc=%.4f", (double)inc);
-#endif
         safe_increment(SERVO_BASE, inc);
     }
     else if (trigger_right && !trigger_left)
     {
         const float inc = base_increment * intensity_scale;
-#if J5VR_DEBUG_VERBOSE
-        static uint32_t log_counter_base = 0;
-        if ((log_counter_base++ % 500) == 0)
-            LOG_DBG("[JOY] BASE: trigger_R inc=%.4f", (double)inc);
-#endif
         safe_increment(SERVO_BASE, inc);
     }
 
@@ -768,12 +706,6 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
     if (fabsf(yaw_norm) > 0.01f)
     {
         const float inc = yaw_norm * base_increment * intensity_scale;
-#if J5VR_DEBUG_VERBOSE
-        static uint32_t log_counter_spalla = 0;
-        if ((log_counter_spalla++ % 500) == 0)
-            LOG_DBG("[JOY] SPALLA (right X): raw=%d norm=%.3f inc=%.4f",
-                    j5vr->yaw, (double)yaw_norm, (double)inc);
-#endif
         safe_increment(SERVO_SPALLA, inc);
     }
 
@@ -782,12 +714,6 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
     if (fabsf(pitch_norm) > 0.01f)
     {
         const float inc = pitch_norm * base_increment * intensity_scale;
-#if J5VR_DEBUG_VERBOSE
-        static uint32_t log_counter_gomito = 0;
-        if ((log_counter_gomito++ % 500) == 0)
-            LOG_DBG("[JOY] GOMITO (right Y): raw=%d norm=%.3f inc=%.4f",
-                    j5vr->pitch, (double)pitch_norm, (double)inc);
-#endif
         safe_increment(SERVO_GOMITO, inc);
     }
 
@@ -797,21 +723,11 @@ bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movemen
     if (button_x && !button_y)
     {
         const float inc = base_increment * intensity_scale;
-#if J5VR_DEBUG_VERBOSE
-        static uint32_t log_counter_roll = 0;
-        if ((log_counter_roll++ % 500) == 0)
-            LOG_DBG("[JOY] ROLL: button_X inc=%.4f", (double)inc);
-#endif
         safe_increment(SERVO_ROLL, inc);
     }
     else if (button_y && !button_x)
     {
         const float inc = -base_increment * intensity_scale;
-#if J5VR_DEBUG_VERBOSE
-        static uint32_t log_counter_roll = 0;
-        if ((log_counter_roll++ % 500) == 0)
-            LOG_DBG("[JOY] ROLL: button_Y inc=%.4f", (double)inc);
-#endif
         safe_increment(SERVO_ROLL, inc);
     }
 

@@ -3,7 +3,7 @@
  *
  * Loop realtime a 1 kHz tramite workqueue Zephyr.
  * Gestione state machine, watchdog SPI, dispatch dei modi VR / SETPOSE / J5IK.
- * Step 5.2: port rev2 logic, scheduling neutro (periodo/prioritÃƒÆ’Ã‚Â  = rev1).
+ * Step 5.2: port rev2 logic, scheduling neutro (periodo/priorità = rev1).
  *
  * Architettura JONNY5 v1.0 - Sezione 5.1 - FASE 2
  *
@@ -89,7 +89,7 @@ static void rt_tick_isr_cb(const struct device *dev, void *user_data)
 #define RT_LOOP_PERIOD_MS 1
 #define RT_LOOP_PERIOD_US 1000
 
-/* Thread IMU dedicato 400 Hz (fuori dal RT loop; prioritÃƒÆ’Ã‚Â  < system workqueue 5) */
+/* Thread IMU dedicato 400 Hz (fuori dal RT loop; priorità < system workqueue 5) */
 /* Priorita' di scheduling (Zephyr: numero piu' basso = priorita' piu' alta;
  * tutte preemptible): RT(4) > system workqueue(5) > IMU(6) > SPI service(7).
  *
@@ -117,14 +117,14 @@ static struct k_thread imu_thread;
 static k_tid_t imu_tid;
 
 /* Quanti tick RT devono passare prima che il thread IMU tenti l'init.
- * A 1000 Hz: 2000 tick = 2 s ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â il RT loop ÃƒÆ’Ã‚Â¨ giÃƒÆ’Ã‚Â  a regime quando partiamo. */
+ * A 1000 Hz: 2000 tick = 2 s — il RT loop è già a regime quando partiamo. */
 #define IMU_INIT_AFTER_RT_TICKS 2000U
 
 static void imu_thread_fn(void *a, void *b, void *c)
 {
 	/* --- FASE 1: attesa RT loop a regime ---
 	 * Dormiamo a fette da 50 ms e contiamo i tick del RT thread.
-	 * Quando g_rt_loop_ticks supera la soglia, il RT ÃƒÆ’Ã‚Â¨ sicuramente
+	 * Quando g_rt_loop_ticks supera la soglia, il RT è sicuramente
 	 * a 1000 Hz e possiamo tentare l'init I2C senza rischiare
 	 * di bloccare il sistema durante il boot critico. */
 	g_imu_thread_stage = 8; /* stage=8: in attesa RT a regime */
@@ -134,7 +134,7 @@ static void imu_thread_fn(void *a, void *b, void *c)
 	}
 	/* --- FASE 1b: verifica flag IMU abilitata ---
 	 * g_imu_reads_enabled parte a 1 (ON di default).
-	 * Il comando IMUOFF puÃƒÆ’Ã‚Â² disabilitarla runtime; in quel caso aspettiamo
+	 * Il comando IMUOFF può disabilitarla runtime; in quel caso aspettiamo
 	 * che venga riabilitata prima di tentare l'init I2C. */
 	g_imu_thread_stage = 8; /* stage=8: verifica flag IMU */
 	while (!g_imu_reads_enabled) {
@@ -196,7 +196,7 @@ static void imu_thread_fn(void *a, void *b, void *c)
 }
 
 
-/* Flag legacy rimosso: j5vr_center_demo() eliminata, non piÃƒÆ’Ã‚Â¹ necessario. */
+/* Flag legacy rimosso: j5vr_center_demo() eliminata, non più necessario. */
 
 /* Diagnostica: tick counter del RT loop (1 incremento per handler) */
 volatile uint32_t g_rt_loop_ticks = 0;
@@ -224,16 +224,16 @@ volatile uint8_t g_j5ik_stream_active = 0;
 volatile uint32_t g_imu_thread_ticks = 0;
 volatile uint8_t g_imu_thread_stage = 0;
 /* IMU abilitata di default: il thread IMU avvia l'init I2C non appena il RT loop
- * ÃƒÆ’Ã‚Â¨ a regime (>2s). Il comando IMUOFF puÃƒÆ’Ã‚Â² disabilitarla runtime, IMUON la riabilita. */
+ * è a regime (>2s). Il comando IMUOFF può disabilitarla runtime, IMUON la riabilita. */
 volatile uint8_t g_imu_reads_enabled = 1;
 
 static inline int iabs_i32(int v) { return (v < 0) ? -v : v; }
 
 /* Guard/freeze tuning */
-#define VR_INPUT_CHANGE_EPS_I16  200    /* se cambia meno di cosÃƒÆ’Ã‚Â¬, consideriamo invariato */
+#define VR_INPUT_CHANGE_EPS_I16  200    /* se cambia meno di così, consideriamo invariato */
 /* |norm| dopo j5vr_int16_to_normalized_dz: allineato a j5vr_apply_setpoint_incremental (stessi > 0.01f). */
 #define VR_STICK_NORM_ACTIVE_EPS 0.01f
-#define VR_FREEZE_AFTER_MS       200    /* freeze PWM dopo stabilitÃƒÆ’Ã‚Â  input */
+#define VR_FREEZE_AFTER_MS       200    /* freeze PWM dopo stabilità input */
 
 /* Pulsante user Nucleo (B1 / PC13) - alias sw0 */
 #define CENTER_BUTTON_NODE DT_ALIAS(sw0)
@@ -251,7 +251,7 @@ static bool center_button_debounced_state = false;
 
 /* Tracciamento stato precedente per rilevare entry in STATE_SAFE */
 static system_state_t rt_prev_state = STATE_SAFE;
-/* Reset a ogni nuova entry in STATE_SAFE, cosÃƒÆ’Ã‚Â¬ SAFEÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢IDLE puÃƒÆ’Ã‚Â² avvenire piÃƒÆ’Ã‚Â¹ volte */
+/* Reset a ogni nuova entry in STATE_SAFE, così SAFE→IDLE può avvenire più volte */
 static bool auto_transition_done = false;
 /* vr_heartbeat latchato all'ingresso in STATE_SAFE. g_j5vr_latest non viene mai
  * azzerato: dopo un watchdog SPI conserva l'ultimo intent (mode/heartbeat != 0),
@@ -325,9 +325,9 @@ static void rt_loop_step(void)
         }
     }
 
-    /* BARRIERA DI SICUREZZA: in STOPPED nessun movimento ÃƒÆ’Ã‚Â¨ consentito.
-     * Questo check ha prioritÃƒÆ’Ã‚Â  assoluta su SETPOSE e pipeline VR.
-     * servo_disable_all() viene giÃƒÆ’Ã‚Â  chiamato nel case STATE_STOPPED del
+    /* BARRIERA DI SICUREZZA: in STOPPED nessun movimento è consentito.
+     * Questo check ha priorità assoluta su SETPOSE e pipeline VR.
+     * servo_disable_all() viene già chiamato nel case STATE_STOPPED del
      * switch sottostante, ma uscire prima garantisce che nessun tick di
      * traiettoria modifichi desired_positions[] prima dello stop. */
     if (state_machine_get_state() == STATE_STOPPED)
@@ -338,9 +338,9 @@ static void rt_loop_step(void)
         return;
     }
 
-    /* SETPOSE tick ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ha prioritÃƒÆ’Ã‚Â  su VR manual/head/hybrid quando attivo.
+    /* SETPOSE tick — ha priorità su VR manual/head/hybrid quando attivo.
      * Se j5vr_setpose_tick() ritorna true significa che un comando SETPOSE
-     * ÃƒÆ’Ã‚Â¨ in esecuzione: l'intero blocco STATE_IDLE viene saltato per questo
+     * è in esecuzione: l'intero blocco STATE_IDLE viene saltato per questo
      * ciclo, la pipeline VR resta intatta (desired_positions[] viene
      * aggiornato dalla traiettoria SETPOSE, non dagli stick VR). */
     /* SETPOSE (HOME/PARK/TELEOPPOSE) parte solo da IDLE: se nel frattempo lo
@@ -363,7 +363,7 @@ static void rt_loop_step(void)
 
     system_state_t cur_state = state_machine_get_state();
     /* Reset flag transizione automatica ogni volta che si entra in STATE_SAFE
-     * da uno stato diverso, cosÃƒÆ’Ã‚Â¬ SAFEÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢IDLE puÃƒÆ’Ã‚Â² avvenire piÃƒÆ’Ã‚Â¹ volte. */
+     * da uno stato diverso, così SAFE→IDLE può avvenire più volte. */
     if (cur_state == STATE_SAFE && rt_prev_state != STATE_SAFE)
     {
         auto_transition_done = false;
@@ -440,7 +440,7 @@ static void rt_loop_step(void)
                 }
                 g_rt_loop_stage = 32;
 
-                /* Input guard/freeze: valuta cambi e attivitÃƒÆ’Ã‚Â  stick */
+                /* Input guard/freeze: valuta cambi e attività stick */
                 static bool last_inited = false;
                 static int16_t last_jx = 0, last_jy = 0, last_p = 0, last_y = 0;
                 static uint32_t last_change_ms = 0;
@@ -592,7 +592,7 @@ static void rt_loop_step(void)
                 }
 
                 /* Log mode change only on edge (no per-tick spam).
-                 * Transizione 4 (POSE_VR) -> 1 (MANUAL_VR): resetta freeze e re-arm cosÃƒÆ’Ã‚Â¬ il robot
+                 * Transizione 4 (POSE_VR) -> 1 (MANUAL_VR): resetta freeze e re-arm così il robot
                  * risponde subito senza dover uscire/rientrare o muovere lo stick per riavere l'edge. */
                 {
                     static uint8_t last_mode = 0xFF;
@@ -636,7 +636,7 @@ static void rt_loop_step(void)
                         {
                             g_rt_loop_stage = 33;
                             /* Re-arm di riserva: in Manual VR con deadman e heartbeat ma non armato
-                             * (es. dopo Pose VR se il frame 4->1 ÃƒÆ’Ã‚Â¨ andato perso o cÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã‚Â¨ stato un mode 0 in mezzo). */
+                             * (es. dopo Pose VR se il frame 4->1 è andato perso o c’è stato un mode 0 in mezzo). */
                             if (!g_vr_armed && deadman_active && movement_allowed && (j5vr_current.vr_heartbeat > 0U))
                             {
                                 g_vr_armed = 1;
@@ -644,7 +644,7 @@ static void rt_loop_step(void)
                                 last_active_ms = now_ms;
                             }
                             /* In Manual VR blocchiamo solo per freeze (200ms senza input).
-                             * Non usiamo g_vr_armed qui cosÃƒÆ’Ã‚Â¬ dopo Pose VR il robot risponde subito (deadman giÃƒÆ’Ã‚Â  richiesto per entrare nel switch). */
+                             * Non usiamo g_vr_armed qui così dopo Pose VR il robot risponde subito (deadman già richiesto per entrare nel switch). */
                             bool freeze = false;
                             bool guard_block = false;
                             if (!inputs_active && (now_ms - last_active_ms) > VR_FREEZE_AFTER_MS)
@@ -714,7 +714,7 @@ static void rt_loop_step(void)
             break;
 
         case STATE_STOPPED:
-            /* Raggiunto solo se lo stato cambia nel mezzo del ciclo ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
+            /* Raggiunto solo se lo stato cambia nel mezzo del ciclo —
              * il return anticipato in cima a rt_loop_step() gestisce il caso normale. */
             servo_disable_all();
             break;
@@ -846,7 +846,7 @@ void rt_loop_init(void)
 
     /* IMPORTANT:
      * Non scrivere PWM non-zero al boot: i servo restano disabilitati (pulse=0)
-     * finchÃƒÆ’Ã‚Â© non arriva un intent VR valido con deadman=1 e input attivo. */
+     * finché non arriva un intent VR valido con deadman=1 e input attivo. */
     LOG_INF("[RT] Servo PWM kept disabled at boot (await VR arm)");
 
 
