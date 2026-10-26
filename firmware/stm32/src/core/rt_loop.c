@@ -64,7 +64,7 @@ K_THREAD_STACK_DEFINE(rt_thread_stack, 4096);
  * come counter: genera un IRQ di UPDATE ogni 1000 us ESATTI, la cui ISR sblocca
  * il thread RT tramite questo semaforo. Periodo deterministico e indipendente
  * dalla granularita' dello scheduler; il thread dorme fra un tick e l'altro
- * (0% CPU sprecata). Vedi zephyr/overlays/rt_timer.overlay e prj.conf. */
+ * (0% CPU sprecata). Vedi zephyr/overlays_g474/rt_timer.overlay e prj.conf. */
 static const struct device *const rt_tick_dev =
     DEVICE_DT_GET(DT_NODELABEL(rt_tick_counter));
 K_SEM_DEFINE(rt_tick_sem, 0, 1);

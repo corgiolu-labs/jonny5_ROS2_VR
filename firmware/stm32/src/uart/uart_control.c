@@ -82,10 +82,8 @@ static void uart_rx_cb(const struct device *dev, void *user_data)
  * STATE
  * ========================================================= */
 
-/** UART device: USART1 (PA9 TX, PA10 RX) */
+/** UART device: USART3 (PB10 TX, PB11 RX) */
 static const struct device *uart_dev = NULL;
-
-/** Flag di configurazione: abilita/disabilita la modalità HYBRID (mode 3). */
 
 #define UART_RX_BUF_SIZE 256
 static char uart_rx_buffer[UART_RX_BUF_SIZE];   /* accumulo byte per riga */
@@ -761,7 +759,7 @@ void uart_control_init(void)
     uart_dev = DEVICE_DT_GET(J5_UART_NODE);
     if (!device_is_ready(uart_dev))
     {
-        printk("[UART] UART1 (control plane) non pronto\n");
+        printk("[UART] USART3 (control plane) non pronto\n");
         uart_dev = NULL;
         return;
     }
@@ -770,7 +768,7 @@ void uart_control_init(void)
     uart_irq_rx_enable(uart_dev);
     memset(uart_rx_buffer, 0, UART_RX_BUF_SIZE);
     uart_rx_idx = 0;
-    printk("[UART] UART1 (PA9/PA10) control plane ok\n");
+    printk("[UART] USART3 (PB10/PB11) control plane ok\n");
 }
 
 /** uart_control_process — legge il ring buffer e dispatcha i comandi completi (riga per riga). */

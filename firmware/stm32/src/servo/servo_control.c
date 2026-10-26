@@ -23,8 +23,8 @@ static const struct pwm_dt_spec servo_pwms[SERVO_COUNT] = {
 	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo1)), /* SPALLA = PB9  TIM17_CH1 */
 	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo2)), /* GOMITO = PB5  TIM3_CH2 */
 	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo3)), /* YAW    = PB6  TIM4_CH1 */
-	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo4)), /* PITCH  = TIM1_CH1 (PA8) */
-	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo5)), /* ROLL   = TIM1_CH4 (PA11) */
+	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo4)), /* PITCH  = PA3  TIM5_CH4 */
+	PWM_DT_SPEC_GET(DT_ALIAS(pwm_servo5)), /* ROLL   = PA2  TIM5_CH3 */
 };
 
 /* Limiti assoluti di sicurezza hardware (mai superabili a runtime). */
