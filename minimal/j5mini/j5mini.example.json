@@ -1,0 +1,32 @@
+{
+ "boot_commands": [
+  "SET_OFFSETS 88 85 83 90 90 98",
+  "SET_VR_PARAMS 2 3 1 0.05 0.35 3 60 60 35 1 1 0.1 1 -1 1 1 0 2 1 1 1 1 54 54 54 20 20 20 400 200 200 600 90 90",
+  "SET_JOINT_LIMITS 0 45 135",
+  "SET_JOINT_LIMITS 1 30 145",
+  "SET_JOINT_LIMITS 2 30 145",
+  "SET_JOINT_LIMITS 3 45 135",
+  "SET_JOINT_LIMITS 4 50 145",
+  "SET_JOINT_LIMITS 5 68 128",
+  "SET_PWM_CONFIG 50 500 2500 180 50 500 2500 180",
+  "IMUON"
+ ],
+ "spi": {
+  "device": "/dev/spidev0.0",
+  "speed_hz": 1000000,
+  "transfer_len": 128
+ },
+ "uart": {
+  "device": "/dev/serial0",
+  "baud": 115200
+ },
+ "ws": {
+  "host": "0.0.0.0",
+  "port": 8557,
+  "cert": "/home/jonny5/raspberry5/config_runtime/tls/webrtc.crt",
+  "key": "/home/jonny5/raspberry5/config_runtime/tls/webrtc.key"
+ },
+ "link_timeout_ms": 150,
+ "set_clock": true,
+ "_comment": "Example generated from the repo copy of config_runtime (26/10/2026). On the robot regenerate it ON THE PI: export_config.py ~/raspberry5 > j5mini.json"
+}
