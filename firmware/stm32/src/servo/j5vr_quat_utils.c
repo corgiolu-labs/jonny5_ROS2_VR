@@ -31,19 +31,6 @@ quat_t quat_from_j5vr(const struct j5vr_state *s)
     return q;
 }
 
-quat_t quat_from_imu(const struct imu_quat *iq)
-{
-    quat_t q = { 1.0f, 0.0f, 0.0f, 0.0f };
-    if (iq)
-    {
-        q.w = iq->w;
-        q.x = iq->x;
-        q.y = iq->y;
-        q.z = iq->z;
-    }
-    return q;
-}
-
 /* -----------------------------------------------------------------------
  * Operazioni algebriche
  * ----------------------------------------------------------------------- */
@@ -86,73 +73,6 @@ quat_t quat_conjugate(quat_t q)
     r.y = -q.y;
     r.z = -q.z;
     return r;
-}
-
-/* -----------------------------------------------------------------------
- * Conversione a angoli di Eulero
- * ----------------------------------------------------------------------- */
-
-void quat_to_ypr_deg(float w, float x, float y, float z,
-                     float *yaw_deg, float *pitch_deg, float *roll_deg)
-{
-    float sinr_cosp = 2.0f * (w * x + y * z);
-    float cosr_cosp = 1.0f - 2.0f * (x * x + y * y);
-    float roll = atan2f(sinr_cosp, cosr_cosp);
-
-    float sinp = 2.0f * (w * y - z * x);
-    float pitch;
-    if (fabsf(sinp) >= 1.0f)
-        pitch = copysignf(1.57079632679f, sinp);
-    else
-        pitch = asinf(sinp);
-
-    float siny_cosp = 2.0f * (w * z + x * y);
-    float cosy_cosp = 1.0f - 2.0f * (y * y + z * z);
-    float yaw = atan2f(siny_cosp, cosy_cosp);
-
-    const float rad2deg = 57.2957795f;
-    if (yaw_deg)   { *yaw_deg   = yaw   * rad2deg; }
-    if (pitch_deg) { *pitch_deg = pitch * rad2deg; }
-    if (roll_deg)  { *roll_deg  = roll  * rad2deg; }
-}
-
-void quat_to_rotvec_ypr_deg(float w, float x, float y, float z,
-                            float *yaw_deg, float *pitch_deg, float *roll_deg)
-{
-    quat_t q = quat_normalize((quat_t){ w, x, y, z });
-
-    /* q e -q rappresentano la stessa rotazione: scegliamo l'arco piu' corto. */
-    if (q.w < 0.0f)
-    {
-        q.w = -q.w;
-        q.x = -q.x;
-        q.y = -q.y;
-        q.z = -q.z;
-    }
-
-    const float vnorm = sqrtf(q.x * q.x + q.y * q.y + q.z * q.z);
-    float rx = 0.0f, ry = 0.0f, rz = 0.0f;
-
-    if (vnorm > 1e-6f)
-    {
-        const float angle = 2.0f * atan2f(vnorm, q.w);
-        const float scale = angle / vnorm;
-        rx = q.x * scale;
-        ry = q.y * scale;
-        rz = q.z * scale;
-    }
-    else
-    {
-        /* Approssimazione small-angle: rotvec ~= 2 * v. */
-        rx = 2.0f * q.x;
-        ry = 2.0f * q.y;
-        rz = 2.0f * q.z;
-    }
-
-    const float rad2deg = 57.2957795f;
-    if (yaw_deg)   { *yaw_deg   = rz * rad2deg; }
-    if (pitch_deg) { *pitch_deg = ry * rad2deg; }
-    if (roll_deg)  { *roll_deg  = rx * rad2deg; }
 }
 
 void quat_to_twist_ypr_deg(float w, float x, float y, float z,

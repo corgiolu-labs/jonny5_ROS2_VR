@@ -75,11 +75,6 @@ void j5vr_go_teleop_pose(void);
 /** Aggiorna i limiti per-giunto a runtime. Clamp automatico ai limiti fisici. */
 void j5vr_set_joint_limits(int joint, float lim_min, float lim_max);
 
-/**
- * Converte stato J5VR in setpoint servo.
- * Usato dal RT loop come guard di validazione input prima di MANUAL.
- */
-bool j5vr_to_servo_setpoint(const struct j5vr_state *j5vr, servo_setpoint_t *setpoint);
 
 /* =========================================================
  * API — modalità di teleop (chiamate da rt_loop.c)

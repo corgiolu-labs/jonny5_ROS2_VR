@@ -35,10 +35,3 @@ float j5vr_int16_to_normalized_dz(int16_t val, float deadzone)
     return sign * ((abs_val - deadzone) / (1.0f - deadzone));
 }
 
-uint8_t j5vr_normalized_to_angle(float normalized, uint8_t center, uint8_t range)
-{
-    float angle_float = center + (normalized * range);
-    if (angle_float < 0.0f) angle_float = 0.0f;
-    if (angle_float > 180.0f) angle_float = 180.0f;
-    return (uint8_t)roundf(angle_float);
-}

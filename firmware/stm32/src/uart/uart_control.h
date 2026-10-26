@@ -31,7 +31,5 @@ void uart_control_process(void);
  */
 void uart_send_unsolicited(const char *msg);
 
-/** Restituisce true se la modalità HYBRID (mode 3) è abilitata via UART. */
-bool uart_is_hybrid_enabled(void);
 
 #endif /* UART_CONTROL_H */

@@ -32,17 +32,6 @@
 extern float joint_min_deg[SERVO_COUNT];
 extern float joint_max_deg[SERVO_COUNT];
 
-/* -----------------------------------------------------------------------
- * Helper: angolo fisico polso (clamp 0-180, arrotondamento)
- * Duplicato static da j5vr_actuation.c (3 righe, nessuno stato).
- * ----------------------------------------------------------------------- */
-static uint8_t sp_wrist_physical_angle(float logical_deg)
-{
-    if (logical_deg < 0.0f)   logical_deg = 0.0f;
-    if (logical_deg > 180.0f) logical_deg = 180.0f;
-    return (uint8_t)(int)(logical_deg + 0.5f);
-}
-
 /* Versione float — clamp [0, 180] ma senza arrotondamento. Usata dal tick a 1 kHz. */
 static float sp_wrist_physical_angle_f(float logical_deg)
 {
@@ -140,15 +129,6 @@ typedef struct {
      * finisce. Usato dal comando HOME per evitare surriscaldamento dei due
      * servo più stressati al termine del centraggio. */
     bool     relax_digital_on_finish;
-    /* Wake-up tap pre-trajectory per servo SDS1601 su PITCH/ROLL.
-     * Compensa la deadband + stiction: prima dell'interpolazione vera,
-     * applichiamo per ~100 ms un setpoint preload spostato di 0.8° verso
-     * il target → vince l'attrito statico. Quando inizia il trajectory
-     * vero, il servo è già "agganciato" e segue il profilo smooth. */
-    bool     warming_up;
-    uint32_t warm_until_tick;
-    float    warm_preload[SERVO_COUNT];   /* setpoint preload (solo PITCH/ROLL usati) */
-    bool     warm_pending[SERVO_COUNT];   /* true se quel giunto deve fare wake-up */
 } j5_setpose_state_t;
 
 static j5_setpose_state_t g_setpose_state = { .active = false };
@@ -164,63 +144,6 @@ static volatile bool     sp_done_pending;
 /* Latch: primo SETPOSE completato dal boot (vedi j5vr_setpose_pose_known). */
 static volatile bool     sp_pose_known;
 
-/* Wake-up tap config — DISABILITATO (peggiora reattività globale e
- * non risolve il problema PITCH SDS1601). Codice mantenuto inattivo
- * tramite J5SP_WAKEUP_ENABLED=0 per facile riattivazione futura. */
-#define J5SP_WAKEUP_ENABLED          0       /* 0 = OFF (ripristino comportamento originale) */
-#define J5SP_WAKEUP_DURATION_TICKS  100U
-#define J5SP_WAKEUP_DELTA_DEG        0.8f
-#define J5SP_WAKEUP_MIN_TARGET_DEG   1.5f
-#define J5SP_WAKEUP_DEBUG            0
-
-/* Imposta lo stato di wake-up tap per i servo digitali del polso (PITCH+ROLL).
- * Da chiamare PRIMA di settare q_target nello state. La logica:
- *   - Solo per giunti SERVO_PITCH e SERVO_ROLL (servo SDS1601 con deadband).
- *   - Solo se |q_target - q_start_pre| > J5SP_WAKEUP_MIN_TARGET_DEG.
- *   - Genera un preload = q_start + sign(delta) × J5SP_WAKEUP_DELTA_DEG,
- *     clampato ai limiti runtime.
- * Restituisce true se almeno un giunto richiede warmup. */
-static bool sp_setup_wakeup_tap(const float *q_target_real)
-{
-#if J5SP_WAKEUP_ENABLED == 0
-    (void)q_target_real;
-    return false;
-#else
-    bool need = false;
-    for (int i = 0; i < SERVO_COUNT; i++) {
-        g_setpose_state.warm_pending[i] = false;
-        g_setpose_state.warm_preload[i] = desired_positions[i];
-    }
-    /* Wake-up solo per i giunti del polso con servo SDS1601 (PITCH e ROLL).
-     * BASE/SPALLA/GOMITO/YAW sono servo analogici/digitali con deadband
-     * trascurabile in modalità PWM standard. */
-    const int wrist_joints[2] = { SERVO_PITCH, SERVO_ROLL };
-    for (int k = 0; k < 2; k++) {
-        const int i = wrist_joints[k];
-        const float dq = q_target_real[i] - desired_positions[i];
-        const float dq_abs = (dq < 0.0f) ? -dq : dq;
-        if (dq_abs < J5SP_WAKEUP_MIN_TARGET_DEG) { continue; }
-        const float sign = (dq > 0.0f) ? 1.0f : -1.0f;
-        float preload = desired_positions[i] + sign * J5SP_WAKEUP_DELTA_DEG;
-        preload = sp_clamp_joint_runtime_deg(i, preload);
-        g_setpose_state.warm_preload[i] = preload;
-        g_setpose_state.warm_pending[i] = true;
-        need = true;
-#if J5SP_WAKEUP_DEBUG
-        printk("[WAKE] joint=%d cur=%d.%02d tgt=%d.%02d dq=%d.%02d preload=%d.%02d\n",
-               i,
-               (int)desired_positions[i], (int)((desired_positions[i] - (int)desired_positions[i]) * 100.0f),
-               (int)q_target_real[i],     (int)((q_target_real[i] - (int)q_target_real[i]) * 100.0f),
-               (int)dq,                   (int)((dq - (int)dq) * 100.0f),
-               (int)preload,              (int)((preload - (int)preload) * 100.0f));
-#endif
-    }
-#if J5SP_WAKEUP_DEBUG
-    if (need) printk("[WAKE] active for %u ms\n", (unsigned)J5SP_WAKEUP_DURATION_TICKS);
-#endif
-    return need;
-#endif
-}
 
 /* -----------------------------------------------------------------------
  * j5vr_setpose_abort — annulla la traiettoria in corso (E-STOP / STOP / SAFE)
@@ -234,7 +157,6 @@ void j5vr_setpose_abort(void)
 {
     volatile bool *pactive = &g_setpose_state.active;
     *pactive = false;
-    g_setpose_state.warming_up = false;
     g_setpose_state.relax_digital_on_finish = false;
 }
 
@@ -256,35 +178,6 @@ bool j5vr_setpose_tick(uint32_t rt_tick)
     if (!g_setpose_state.active)
     {
         return false;
-    }
-
-    /* Fase WAKE-UP TAP — applichiamo il preload sui servo PITCH/ROLL per
-     * vincere stiction + deadband del SDS1601. Dura J5SP_WAKEUP_DURATION_TICKS
-     * ms, dopo i quali resettiamo q_start alle desired_positions correnti
-     * (= dove il servo è arrivato grazie al preload) e iniziamo trajectory. */
-    if (g_setpose_state.warming_up)
-    {
-        if (rt_tick < g_setpose_state.warm_until_tick)
-        {
-            for (int i = 0; i < SERVO_COUNT; i++) {
-                if (!g_setpose_state.warm_pending[i]) { continue; }
-                const float pl = g_setpose_state.warm_preload[i];
-                desired_positions[i] = pl;
-                servo_set_angle_f((servo_joint_t)i, pl);
-                step_accumulator[i] = 0.0f;
-            }
-            return true;   /* trajectory non parte finché warm-up non finisce */
-        }
-        /* Warmup terminato: aggiorno q_start e prev_angle ai valori correnti
-         * (il PITCH/ROLL si è spostato di ~0.8°). start_tick = ora. */
-        g_setpose_state.warming_up = false;
-        g_setpose_state.start_tick = rt_tick;
-        for (int i = 0; i < SERVO_COUNT; i++) {
-            const float now_q = sp_clamp_joint_runtime_deg(i, desired_positions[i]);
-            g_setpose_state.q_start[i]    = now_q;
-            g_setpose_state.prev_angle[i] = now_q;
-            g_setpose_state.prev_vel[i]   = 0.0f;
-        }
     }
 
     uint32_t dt = rt_tick - g_setpose_state.start_tick;
@@ -444,15 +337,7 @@ void j5vr_go_setpose(
     g_setpose_state.profile        = profile;
     g_setpose_state.duration_ticks = dur;
 
-    /* Setup wake-up tap per PITCH/ROLL prima di avviare il trajectory.
-     * Se serve warm-up, lo start del trajectory viene posticipato di 100 ms;
-     * durante quel tempo il tick mantiene preload sui servo del polso. */
-    bool need_warmup = sp_setup_wakeup_tap(q_target);
-    g_setpose_state.warming_up = need_warmup;
-    g_setpose_state.warm_until_tick = g_rt_loop_ticks + J5SP_WAKEUP_DURATION_TICKS;
-    g_setpose_state.start_tick = need_warmup
-        ? (g_rt_loop_ticks + J5SP_WAKEUP_DURATION_TICKS)
-        : g_rt_loop_ticks;
+    g_setpose_state.start_tick = g_rt_loop_ticks;
 
     for (int i = 0; i < SERVO_COUNT; i++)
     {
@@ -503,17 +388,12 @@ void j5vr_go_setpose_time(
     g_setpose_state.profile        = prof;
     g_setpose_state.duration_ticks = time_ms;
 
-    /* Pre-clamp dei target per il setup wake-up */
+    /* Pre-clamp dei target */
     float q_target_clamped[SERVO_COUNT];
     for (int i = 0; i < SERVO_COUNT; i++) {
         q_target_clamped[i] = sp_clamp_joint_runtime_deg(i, (float)q_target_deg[i]);
     }
-    bool need_warmup = sp_setup_wakeup_tap(q_target_clamped);
-    g_setpose_state.warming_up = need_warmup;
-    g_setpose_state.warm_until_tick = g_rt_loop_ticks + J5SP_WAKEUP_DURATION_TICKS;
-    g_setpose_state.start_tick = need_warmup
-        ? (g_rt_loop_ticks + J5SP_WAKEUP_DURATION_TICKS)
-        : g_rt_loop_ticks;
+    g_setpose_state.start_tick = g_rt_loop_ticks;
 
     for (int i = 0; i < SERVO_COUNT; i++)
     {
@@ -555,17 +435,12 @@ void j5vr_go_setpose_time_f(
     g_setpose_state.profile        = prof;
     g_setpose_state.duration_ticks = time_ms;
 
-    /* Wake-up tap setup (vedi commenti in j5vr_go_setpose_time) */
+    /* Pre-clamp dei target */
     float q_target_clamped[SERVO_COUNT];
     for (int i = 0; i < SERVO_COUNT; i++) {
         q_target_clamped[i] = sp_clamp_joint_runtime_deg(i, q_target_deg[i]);
     }
-    bool need_warmup = sp_setup_wakeup_tap(q_target_clamped);
-    g_setpose_state.warming_up = need_warmup;
-    g_setpose_state.warm_until_tick = g_rt_loop_ticks + J5SP_WAKEUP_DURATION_TICKS;
-    g_setpose_state.start_tick = need_warmup
-        ? (g_rt_loop_ticks + J5SP_WAKEUP_DURATION_TICKS)
-        : g_rt_loop_ticks;
+    g_setpose_state.start_tick = g_rt_loop_ticks;
 
     for (int i = 0; i < SERVO_COUNT; i++)
     {

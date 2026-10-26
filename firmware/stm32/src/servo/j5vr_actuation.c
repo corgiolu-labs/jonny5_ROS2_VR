@@ -71,20 +71,6 @@ LOG_MODULE_REGISTER(j5vr_actuation, LOG_LEVEL_INF);
  * ========================================================= */
 
 /* Angoli centrali default (posizione neutra) */
-#define CENTER_BASE    90
-#define CENTER_SPALLA  90
-#define CENTER_GOMITO  90
-#define CENTER_ROLL    90
-#define CENTER_PITCH   90
-#define CENTER_YAW     90
-
-/* Range movimento per ogni giunto (gradi da centro) */
-#define RANGE_BASE     45
-#define RANGE_SPALLA   60
-#define RANGE_GOMITO   60
-#define RANGE_ROLL     30
-#define RANGE_PITCH    30
-#define RANGE_YAW      45
 
 /* Maschere bit pulsanti VR */
 #define BUTTON_TRIGGER   (1U << 0)
@@ -235,30 +221,6 @@ static inline float j5_clampf(float x, float min_val, float max_val)
     if (x < min_val) return min_val;
     if (x > max_val) return max_val;
     return x;
-}
-
-/**
- * j5_angle_to_u8 — converte angolo logico float in uint8 con clamp [0, 180].
- * Usato per la conversione finale prima dell'invio hardware.
- * Formula identica alla precedente wrist_physical_angle (arrotondamento +0.5).
- */
-static inline uint8_t j5_angle_to_u8(float angle_deg)
-{
-    angle_deg = j5_clampf(angle_deg, 0.0f, 180.0f);
-    return (uint8_t)(int)(angle_deg + 0.5f);
-}
-
-/**
- * manual_discharge_axis_target — riallinea il target dell'asse alla posa reale
- * e azzera il residuo, evitando che apply_desired continui a inseguire un vecchio
- * desired latched quando in MANUAL l'input utile dell'asse e' rilasciato.
- */
-static inline void manual_discharge_axis_target(servo_joint_t joint)
-{
-    const float servo_now = servo_get_angle_f(joint);
-    desired_positions[joint] = servo_now;
-    step_accumulator[joint] = 0.0f;
-    desired_positions_filtered[joint] = servo_now;
 }
 
 /**
@@ -582,56 +544,6 @@ void j5vr_set_joint_limits(int joint, float lim_min, float lim_max)
     if (lim_min > lim_max)                   { return; }
     joint_min_deg[joint] = lim_min;
     joint_max_deg[joint] = lim_max;
-}
-
-/**
- * j5vr_to_servo_setpoint — converte stato J5VR in setpoint servo.
- * Usato dal RT loop come guard di validazione input prima di MANUAL.
- * La struct popolata è riservata per uso futuro (planner avanzato).
- */
-bool j5vr_to_servo_setpoint(const struct j5vr_state *j5vr, servo_setpoint_t *setpoint)
-{
-    if (j5vr == NULL || setpoint == NULL) { return false; }
-
-    setpoint->base   = CENTER_BASE;
-    setpoint->spalla = CENTER_SPALLA;
-    setpoint->gomito = CENTER_GOMITO;
-    setpoint->roll   = CENTER_ROLL;
-    setpoint->pitch  = CENTER_PITCH;
-    setpoint->yaw    = CENTER_YAW;
-
-    float intensity_scale = (float)j5vr->intensity / 255.0f;
-    if (intensity_scale <= 0.0f) intensity_scale = 1.0f;
-
-    /* Stick sinistro: X → GOMITO, Y → SPALLA */
-    const float joy_x_norm = j5vr_int16_to_normalized(j5vr->joy_x);
-    const float joy_y_norm = j5vr_int16_to_normalized(j5vr->joy_y);
-    setpoint->gomito = j5vr_normalized_to_angle(joy_x_norm * intensity_scale, CENTER_GOMITO, RANGE_GOMITO);
-    setpoint->spalla = j5vr_normalized_to_angle(joy_y_norm * intensity_scale, CENTER_SPALLA, RANGE_SPALLA);
-
-    /* Trigger: BASE */
-    const bool trigger_left  = (j5vr->buttons_left  & BUTTON_TRIGGER) != 0;
-    const bool trigger_right = (j5vr->buttons_right & BUTTON_TRIGGER) != 0;
-    float base_offset = 0.0f;
-    if      (trigger_left  && !trigger_right) base_offset = -1.0f;
-    else if (trigger_right && !trigger_left)  base_offset =  1.0f;
-    setpoint->base = j5vr_normalized_to_angle(base_offset * intensity_scale, CENTER_BASE, RANGE_BASE);
-
-    /* Visore (pitch/yaw canali): PITCH e ROLL */
-    const float pitch_norm = j5vr_int16_to_normalized(j5vr->pitch);
-    const float yaw_norm   = j5vr_int16_to_normalized(j5vr->yaw);
-    setpoint->pitch = j5vr_normalized_to_angle(pitch_norm * intensity_scale, CENTER_PITCH, RANGE_PITCH);
-    setpoint->roll  = j5vr_normalized_to_angle(yaw_norm   * intensity_scale, CENTER_ROLL,  RANGE_ROLL);
-
-    /* Pulsanti A/X: YAW */
-    const bool button_a = (j5vr->buttons_right & BUTTON_X) != 0;
-    const bool button_x = (j5vr->buttons_left  & BUTTON_X) != 0;
-    float yaw_offset = 0.0f;
-    if      (button_a && !button_x) yaw_offset =  1.0f;
-    else if (button_x && !button_a) yaw_offset = -1.0f;
-    setpoint->yaw = j5vr_normalized_to_angle(yaw_offset * intensity_scale, CENTER_YAW, RANGE_YAW);
-
-    return true;
 }
 
 /* =========================================================

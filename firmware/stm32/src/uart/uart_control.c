@@ -89,7 +89,6 @@ static void uart_rx_cb(const struct device *dev, void *user_data)
 static const struct device *uart_dev = NULL;
 
 /** Flag di configurazione: abilita/disabilita la modalità HYBRID (mode 3). */
-static bool hybrid_enabled = false;
 
 #define UART_RX_BUF_SIZE 256
 static char uart_rx_buffer[UART_RX_BUF_SIZE];   /* accumulo byte per riga */
@@ -127,11 +126,6 @@ void uart_send_unsolicited(const char *msg)
     for (const char *p = msg; *p != '\0'; p++)
         uart_poll_out(uart_dev, *p);
     uart_poll_out(uart_dev, '\n');
-}
-
-bool uart_is_hybrid_enabled(void)
-{
-    return hybrid_enabled;
 }
 
 /* =========================================================
@@ -381,12 +375,10 @@ static void uart_process_command(uint32_t seq, const char *cmd)
     /* --- HYBRID mode control --- */
     else if (strcmp(cmd, "HYBRID ENABLE") == 0)
     {
-        hybrid_enabled = true;
         uart_send_response_with_seq(seq, "OK HYBRID ENABLED");
     }
     else if (strcmp(cmd, "HYBRID DISABLE") == 0)
     {
-        hybrid_enabled = false;
         uart_send_response_with_seq(seq, "OK HYBRID DISABLED");
     }
     /* --- IMU --- */

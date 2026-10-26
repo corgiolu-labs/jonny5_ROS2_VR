@@ -643,10 +643,6 @@ static void rt_loop_step(void)
                                 servos_disabled_latched = false;
                                 last_active_ms = now_ms;
                             }
-                            /* setpoint non viene letto dopo la chiamata; ok viene usato
-                             * piÃƒÆ’Ã‚Â¹ in basso per condizionare j5vr_apply_setpoint_incremental. */
-                            servo_setpoint_t setpoint;
-                            bool ok = j5vr_to_servo_setpoint(&j5vr_current, &setpoint);
                             /* In Manual VR blocchiamo solo per freeze (200ms senza input).
                              * Non usiamo g_vr_armed qui cosÃƒÆ’Ã‚Â¬ dopo Pose VR il robot risponde subito (deadman giÃƒÆ’Ã‚Â  richiesto per entrare nel switch). */
                             bool freeze = false;
@@ -690,10 +686,7 @@ static void rt_loop_step(void)
                             {
                                 last_guarded = false;
                                 last_freeze = false;
-                                if (ok)
-                                {
-                                    j5vr_apply_setpoint_incremental(&j5vr_current, movement_allowed);
-                                }
+                                j5vr_apply_setpoint_incremental(&j5vr_current, movement_allowed);
                             }
                             g_rt_loop_stage = 34;
                         }
@@ -713,13 +706,7 @@ static void rt_loop_step(void)
                         break;
                     default:
                         /* Unknown mode: safe fallback to MANUAL */
-                        {
-                            /* setpoint non viene usato direttamente; la chiamata
-                             * valida l'input prima di procedere con l'incrementale. */
-                            servo_setpoint_t setpoint;
-                            if (j5vr_to_servo_setpoint(&j5vr_current, &setpoint))
-                                j5vr_apply_setpoint_incremental(&j5vr_current, movement_allowed);
-                        }
+                        j5vr_apply_setpoint_incremental(&j5vr_current, movement_allowed);
                         break;
                     }
                 }

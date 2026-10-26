@@ -36,10 +36,5 @@ float j5vr_int16_to_normalized(int16_t val);
  */
 float j5vr_int16_to_normalized_dz(int16_t val, float deadzone);
 
-/**
- * Converte float normalizzato [-1.0, 1.0] in angolo uint8
- * nell'intervallo [center-range, center+range], clampato a [0, 180].
- */
-uint8_t j5vr_normalized_to_angle(float normalized, uint8_t center, uint8_t range);
 
 #endif /* J5VR_MANUAL_H */
