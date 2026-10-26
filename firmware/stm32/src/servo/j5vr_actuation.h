@@ -92,9 +92,6 @@ void j5vr_apply_hybrid(const struct j5vr_state *s);
  */
 void j5vr_apply_mode5_arm_head(const struct j5vr_state *s);
 
-/** Target 6-DOF via frame SPI J5IK (mode JOINT_STREAM, chiamata dal RT loop). */
-void j5ik_apply_direct_target(const struct j5ik_state *ik);
-
 /* HEAD mode (2): j5vr_apply_head_closed_loop, j5vr_reset_head_calib,
  * j5vr_set_vr_params — dichiarate in servo/j5vr_head.h.
  * Incluso qui per retrocompatibilità di uart_control.c e rt_loop.c. */

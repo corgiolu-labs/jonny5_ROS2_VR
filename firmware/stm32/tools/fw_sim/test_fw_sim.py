@@ -52,7 +52,7 @@ def lib_orig():
                 padded128=padded128, out=fw_sim.BUILD / name, src=pathlib.Path(src),
                 extra_sources=["servo/pickplace.c", "servo/motion_planner.c", "core/hw_watchdog.c",
                                "spi/boundary_buffers.c", "spi/assist_v2_raw.c"],
-                spi_frames_from=fw_sim.SRC)
+                spi_frames_from=pathlib.Path(fw_sim.__file__).parent / "orig")   # frozen, with v2/J5IK
         return libs[padded128]
     return get
 
@@ -170,14 +170,6 @@ def scenario(sim):
     # deadman released, neutral payload (what the board sends when the Quest is silent)
     pi.j5vr(300, mode=5, advance_hb=False)
     snap("neutral")
-    # protocol v2 with CRC, then a corrupt CRC
-    pi.ver = 2
-    pi.j5vr(200, mode=2, btn_l=GRIP, btn_r=GRIP, joy_x=-15000)
-    bad = bytearray(j5_frame(0x04, pi.seq + 1, j5vr_payload(hb=pi.hb + 1), 2)); bad[20] ^= 0xFF
-    pi.transfer(0, raw=bytes(bad))
-    pi.status()
-    pi.ver = 1
-    snap("v2")
     # SETPOSE forms
     for line in ["SETPOSE 100 95 90 90 100 95 60 RTR3", "SETPOSE_T 95 90 95 92 98 96 800 BB",
                  "SETPOSE_T_HR 1005 905 955 905 1105 955 600 B-C-B", "SETPOSE_T_HR 1000 900 950 900 1100 950 10 RTR5",
@@ -207,12 +199,12 @@ def scenario(sim):
         cmd(line)
     sim.estop(False); sim.run(30)
     cmd("SAFE")
-    # J5IK joint stream (mode 6): no automatic re-arm, needs ENABLE
-    pi.transfer(0x05, j5ik_payload([9000, 9500, 10000, 9000, 9000, 9000], hb=1))
+    # mode 6 in a J5VR (the ROS 2 joint stream, removed): no automatic re-arm, outputs off even after ENABLE
+    pi.j5vr(200, mode=6)
+    snap("mode6-safe")
     cmd("ENABLE")
-    for k in range(80):
-        pi.transfer(0x05, j5ik_payload([9000 + 20 * k, 9500, 10000 - 10 * k, 9000, 9500, 9000], hb=k + 2))
-    snap("j5ik")
+    pi.j5vr(300, mode=6, btn_l=GRIP, btn_r=GRIP, joy_x=20000)
+    snap("mode6")
     pi.j5vr(200, mode=2)
     snap("leave-mode6")
     cmd("STOP")
@@ -332,30 +324,33 @@ def test_estop_latches_stopped_and_blocks_motion_commands(lib):
     assert s.state() == "IDLE"
 
 
-def test_protocol_v2_crc(lib):
-    s = booted(lib)
-    pi = Pi(s, version=2)
-    pi.j5vr(20, mode=2)
-    r = pi.status()
-    assert r[2] == 2 and r[3] == 0x08 and r[7] == 0x01           # TELEMETRY_V2 sealed
-    assert struct.unpack_from(">H", r, 62)[0] == fw_sim.crc16_ccitt_false(r[:62])
-    bad = bytearray(j5_frame(0x04, 50, j5vr_payload(hb=50), 2)); bad[30] ^= 1
-    pi.transfer(0, raw=bytes(bad))
-    r = pi.status()
-    assert r[3] == 0x03 and r[8] == 0xEC                         # STATUS error: CRC
-
-
-def test_mode6_j5ik_needs_enable_and_moves_at_60_deg_s(lib):
+def test_ros2_frames_are_rejected(lib):
+    """Protocol v2 (CRC) and J5IK were ROS 2 only and are gone: such frames are not valid frames
+    (STATUS 0xEE in reply, they do not feed the SPI watchdog)."""
     s = booted(lib)
     pi = Pi(s)
-    for k in range(30):
-        pi.transfer(0x05, j5ik_payload([12000, 9000, 9000, 9000, 9000, 9000], hb=k + 1))
+    pi.j5vr(200, mode=2)
+    assert s.state() == "IDLE"
+    pi.ver = 2
+    for _ in range(70):                                          # 700 ms of v2 frames only
+        pi.transfer(0x04, j5vr_payload(mode=2, hb=pi.hb))
+    assert s.state() == "SAFE"                                   # watchdog: no valid frame
+    r = pi.replies[-1]
+    assert r[3] == 0x03 and r[8] == 0xEE
+    pi.ver = 1
+    pi.transfer(0x05, j5ik_payload([12000, 9000, 9000, 9000, 9000, 9000]))
+    r = pi.transfer(0x03)
+    assert r[3] == 0x03 and r[8] == 0xEE                         # reply to the J5IK frame
+
+
+def test_mode6_keeps_outputs_off_even_after_enable(lib):
+    s = booted(lib)
+    pi = Pi(s)
+    pi.j5vr(300, mode=6)
     assert s.state() == "SAFE"                                   # mode 6 never re-arms by itself
     assert s.command("ENABLE") == ["OK ENABLE"]
-    b0 = s.angles()[0]
-    for k in range(50):                                          # 0.5 s
-        pi.transfer(0x05, j5ik_payload([12000, 9000, 9000, 9000, 9000, 9000], hb=k + 40))
-    assert 25 <= s.angles()[0] - b0 <= 31                        # 60 deg/s
+    pi.j5vr(500, mode=6, btn_l=GRIP, btn_r=GRIP, joy_x=20000)
+    assert list(s.pwm()[0]) == [0] * 6                           # servo outputs off
 
 
 # ------------------------------------------------------------------ SPI transfer length

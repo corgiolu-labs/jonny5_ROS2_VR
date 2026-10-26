@@ -11,7 +11,7 @@ sono rimasti parola per parola, è stato tolto solo ciò che è morto, speriment
 |---|---|
 | Firmware sul robot oggi | `feature/video-direct-rtp` @ `6e8694e` (flash del 19/10 11:46): fix di `main` + bypass E-STOP, **senza** servo sub-grado |
 | Base del minimale | merge `22b6a46` = quello + `fw/servo-subdegree` (`61d792c`, flashato il 18/10 e perso il 19/10) |
-| Differenze di comportamento volute | uscita servo sub-grado (risoluzione 1 µs ≈ 0,09° invece di 1°), come il 18/10; SPI a **64 byte** invece di 128 (sotto) |
+| Differenze di comportamento volute | uscita servo sub-grado (risoluzione 1 µs ≈ 0,09° invece di 1°), come il 18/10; SPI a **64 byte** invece di 128 (sotto); niente protocollo v2 né J5IK (ROS 2, sotto) |
 
 ## Cosa è stato tolto
 
@@ -28,8 +28,9 @@ sono rimasti parola per parola, è stato tolto solo ciò che è morto, speriment
 | blocchi di debug a 0 (`J5VR_DEBUG_VERBOSE`, `J5_PROTO_RX_DEBUG`, `UART_VR_PARAMS_DEBUG`), diagnostica fp32 | compilati fuori |
 | commenti sbagliati (TIM8/TIM1, I2C1, USART1/2, numeri dei modi, testo corrotto in `rt_loop.c`) | corretti con l'hardware reale: TIM4/TIM17/TIM3/TIM5, I2C2, USART3 controllo / USART1 console |
 
-Rimasti, anche se poco usati: protocollo v2 con CRC (lo stack ROS 2 lo usa), J5IK / modo 6,
-IMU BNO085 (solo telemetria), `HYBRID ENABLE/DISABLE` (rispondono OK, il Pi li manda), `VR?`,
+| protocollo v2 con CRC (`TELEMETRY_V2` 0x08, contatori gap/CRC) e frame J5IK (0x05, modo 6 JOINT_STREAM, `pose_known`) | li usava solo lo stack ROS 2, tolto il 26/10 (j5mini parla v1). Un frame v2 o J5IK ora è un frame non valido: risposta STATUS 0xEE e nessun "rinfresco" del watchdog SPI. Un J5VR con modo 6 resta come prima: servo spenti in IDLE, nessun riarmo automatico |
+
+Rimasti, anche se poco usati: IMU BNO085 (solo telemetria), `HYBRID ENABLE/DISABLE` (rispondono OK, il Pi li manda), `VR?`,
 pulsante centrale PC13, log `J5VR_DEBUG_MINIMAL` (attivo).
 
 Spostato senza modifiche: la logica dei frame SPI (finestra, scelta del frame, risposte, contatori) da
@@ -38,8 +39,8 @@ restano HAL, DMA e thread.
 
 | | Originale | Minimale |
 |---|---|---|
-| righe in `src/` | 9.675 (41 file) | 7.995 (33 file) |
-| flash / RAM | 96.908 / 28.292 B | 95.224 / 27.515 B (a 64 byte) |
+| righe in `src/` | 9.675 (41 file) | 7.486 (33 file) |
+| flash / RAM | 96.908 / 28.292 B | 93.096 / 27.471 B (a 64 byte, senza v2/J5IK) |
 
 ## Come è stata verificata l'equivalenza (senza hardware)
 
@@ -49,10 +50,12 @@ restano HAL, DMA e thread.
    loop, protocollo e frame SPI, UART, attuazione, HEAD, SETPOSE, `servo_control.c` con PWM a 1 MHz)
    compilati sul PC con stub di Zephyr; SPI emulato byte per byte come il DMA circolare.
 3. **Test differenziale**: lo stesso scenario (configurazione come il Pi, armo automatico, HOME,
-   manuale su tutti gli assi, HEAD/HYBRID/ASSIST, payload neutro, v1/v2, richieste STATUS, tutte le
-   SETPOSE, PARK/TELEOPPOSE, RELAX, timeout SPI, E-STOP e bypass, J5IK; 2.039 trasferimenti SPI,
-   48 comandi UART) gira sul minimale e sull'originale estratto da `22b6a46`: **risposte UART, frame
-   SPI e impulsi PWM identici**. `python -m pytest tools/fw_sim -q` (14 test).
+   manuale su tutti gli assi, HEAD/HYBRID/ASSIST, payload neutro, richieste STATUS, tutte le
+   SETPOSE, PARK/TELEOPPOSE, RELAX, timeout SPI, E-STOP e bypass, J5VR in modo 6; circa 2.000
+   trasferimenti SPI, 48 comandi UART) gira sul minimale e sull'originale estratto da `22b6a46`, a 64 e
+   a 128 byte: **risposte UART, frame SPI e impulsi PWM identici**. Fino al 26/10 lo scenario copriva
+   anche v2 e J5IK (identici anche quelli); tolti dal firmware, sono usciti dallo scenario e due test
+   controllano che ora vengano rifiutati. `python -m pytest tools/fw_sim -q` (14 test).
 
 Non coperti dal simulatore (solo hardware): inizializzazione HAL/DMA/IRQ di SPI1, driver BNO085,
 timer TIM6, PWM reali. Questi file non sono stati toccati se non nei commenti.
@@ -70,14 +73,12 @@ STM32 lavora a metà da `SPI_FRAME_LEN` e non si risincronizza sul fronte di CS.
 | **64 (`fw/minimal`, `CONFIG_J5_CANONICAL_PADDED_128_MODE=n`)** | **64** | ok |
 | 128 | 64 | i comandi passano, ma risposta valida solo un trasferimento su due |
 
-**Dal 26/10 `fw/minimal` è a 64 su tutti i lati**: `prj.conf` con `=n`; Pi con
-`J5_SPI_CANONICAL_128=0` (`raspberry/systemd/jonny5-spi-j5vr.service`, `ros2_ws/deploy/docker-compose.yml`)
-e `transfer_len` 64 nel driver ROS 2 (default di xacro, launch e `jonny5_system.cpp`); `j5mini` e il
-sender della testa stereo a 64 di default. Il test differenziale gira a entrambe le lunghezze: alla
+**Dal 26/10 `fw/minimal` è a 64 su tutti i lati**: `prj.conf` con `=n`; `j5mini` (unico master
+SPI sul Pi in questo branch) e il sender della testa stereo a 64 di default. Il test differenziale gira a entrambe le lunghezze: alla
 stessa lunghezza minimale e originale sono identici.
 
-**Da fare insieme**: chi flasha `fw/minimal` deve aggiornare anche il Pi (overlay di
-`jonny5-spi-j5vr.service` e `docker-compose.yml`, o `j5mini`). Con il firmware del 19/10 il Pi resta a
+**Da fare insieme**: chi flasha `fw/minimal` deve installare anche lo stack minimale sul Pi
+(`raspberry/setup_pi.sh`, README del repo). Con il firmware del 19/10 il Pi resta a
 128. L'opzione `=y` resta nel codice per tornare indietro senza modifiche.
 
 ## Comportamenti strani mantenuti apposta (da decidere, non cambiati)
@@ -98,7 +99,7 @@ Il minimale si comporta **come l'originale**, quindi anche questi restano. Ognun
 8. `SET_JOINT_LIMITS` con min > max risponde OK ma non applica nulla.
 9. `SET_VR_PARAMS` senza la parte intera cambia l'instradamento del polso (default diversi dal boot).
 10. La prima SETPOSE dopo il boot parte dalle `desired_positions` (offset), non dalla posa reale:
-    possibile scatto. `pose_known` significa solo "una SETPOSE completata".
+    possibile scatto.
 11. Pulsante PC13: la doppia inversione fa scattare HOME probabilmente al **rilascio** (cablaggio ignoto).
 12. Il DMA SPI si riavvia ogni 3 s quando il master tace (riga di log ogni volta).
 13. Il bit 4 di diag (`guard`) resta a 1 per sempre dopo il primo freeze.
