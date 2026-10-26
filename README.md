@@ -1,143 +1,70 @@
-# JONNY5 ROS 2 VR
+# JONNY5 — minimal stack (branch `fw/minimal`)
 
-Experimental ROS 2 integration layer for [JONNY5](https://github.com/corgiolu-labs/jonny5), a physical VR-teleoperated 6-DoF robot arm.
+VR-teleoperated 6-DoF robot arm: STM32G474 firmware on the JONNY5 SHIELD rev3, a Raspberry Pi 5 with two
+Camera Module 3, and the native Quest app ([jonny5-quest-viewer](https://github.com/corgiolu-labs/jonny5-quest-viewer)).
 
-This repository places typed ROS 2 control and observation interfaces around the proven STM32/Zephyr, Raspberry Pi and WebXR/WebRTC core. It is deliberately incremental: the original low-latency firmware and video path remain intact while ROS 2 standardizes robot description, telemetry, teleoperation and bring-up.
+This branch keeps only what teleoperation needs. The ROS 2 layer (ros2_control, MoveIt, URDF, rosbag),
+the web dashboards and WebXR viewer, the old Pi controller (ws-teleop, SPI bridge, IK/FK, ASSIST gimbal),
+vision, stereo collimator and captive portal were removed on 26/10/2026; they remain in the git history
+(`main`, `feature/video-direct-rtp`) and ROS 2 can be added back on top of j5mini when needed.
 
-## Engineering status
+```
+Quest app ──wss 8557 / https 443──► j5mini (Pi) ──SPI 64 B @100 Hz + UART──► STM32 (1 kHz RT loop, servos, E-STOP)
+          ◄──RTSP 8554 (RTP/UDP)── MediaMTX ◄── cam_stream.py ×2 (frame sync, matched exposure, sensor zoom)
+```
 
-| Capability | Status |
+## Layout
+
+| Path | What |
 |---|---|
-| Package build and launch | Implemented |
-| Custom messages and typed topics | Implemented |
-| URDF/Xacro, joint limits and RViz configuration | Implemented |
-| Mock SPI telemetry and simulated VR intent | Implemented and smoke-tested |
-| WebSocket-to-ROS 2 teleoperation bridge | Implemented and smoke-tested |
-| Docker/Compose deployment for Raspberry Pi | Implemented |
-| Native JONNY5 SPI codec integration | Implemented; hardware verification required after changes |
-| ROS 2 actuation on the physical robot | Experimental; not presented as production-ready |
-| rosbag2 dataset capture | Reproducible recording workflow provided; dataset quality remains experiment-dependent |
+| `firmware/stm32/` | Zephyr firmware for the G474 shield. `MINIMAL.md`: what was pruned, how equivalence with the flashed firmware was proven, the 64-byte SPI transfer, 13 known quirks |
+| `firmware/stm32/tools/fw_sim/` | The real firmware sources compiled for the PC (Zephyr stubs, byte-wise SPI DMA): behaviour tests and a differential test against the original firmware |
+| `minimal/j5mini/` | The Pi controller: one Python process (SPI, UART, WebSocket for the app, camera controls, HTTPS API) |
+| `raspberry/tools/cam_stream.py`, `scripts/` | Video: capture to MediaMTX (`video_capture.sh`, `start_mediamtx.sh`) or direct RTP to the app (`video_direct.sh`) |
+| `raspberry/network/`, `raspberry/systemd/` | Headset hotspot + firewall, eth0 autoswitch, service units |
+| `raspberry/setup_pi.sh` | One-shot install on the Pi (hardware config, network, services; disables the old stack) |
 
-This is hands-on ROS 2 integration work, but it is **not a claim of deep production ROS 2 or fleet experience**. AI tools assisted parts of the migration; architecture, review and hardware sign-off remain human-owned.
-
-## Firmware hardware targets
-
-The firmware under `firmware/stm32/` builds for two boards from the same source tree; the platform is selected from the devicetree (`src/core/j5_board.h`).
-
-| PlatformIO env | Board | Status |
-|---|---|---|
-| `nucleo_f446re` | STM32 Nucleo-F446RE — the original thesis build | Build unchanged by the port |
-| `weact_g474_shield` | STM32G474 on the **JONNY5 SHIELD rev3** (custom 4-layer carrier: Raspberry Pi 5 + STM32G474) | Verified on hardware: boot, UART and SPI bridges (SPI ≈ 96 Hz), IMU quaternions, servos armed-idle |
-
-**Hardware E-STOP (G474 shield only).** A normally-closed mushroom button on PC6 is polled and debounced inside the 1 kHz real-time tick. The input is read fail-safe: button pressed, cut wire, read error or init failure all mean STOP. On engage the firmware disables all servos, aborts any in-flight trajectory and latches `STOPPED`; motion commands answer `ERR ESTOP_ACTIVE`. Releasing the button only clears the latch — there is no auto-resume, the operator has to re-enable explicitly.
-
-**SPI frame watchdog (both boards).** Checked every 100 ms; if no valid frame has arrived from the Raspberry Pi for more than 500 ms (`SPI_FRAME_TIMEOUT_MS`), the state machine is forced to `SAFE` and the servos are disabled. Any HOME/PARK/SETPOSE trajectory in flight is aborted. Leaving `SAFE` automatically requires fresh SPI frames *and* a VR heartbeat that has advanced since `SAFE` was entered, so a stale last intent cannot re-arm the arm.
-
-**SPI protocol v2 (both boards).** Same 64-byte frame plus a CRC-16 on every frame. Every reply is a complete state report: FSM state, E-STOP, joint positions, RT-loop health, sequence gaps and CRC counters. It also adds J5IK joint streaming for ROS 2, rate-limited on the MCU and held if frames stop. v1 stays the default and works unchanged; select v2 with `protocol_version:=2` after flashing. See [SPI_PROTOCOL_V2.md](ros2_ws/docs/SPI_PROTOCOL_V2.md).
-
-**ros2_control.** `ros2 launch jonny5_bringup control.launch.py` runs `jonny5_control/Jonny5System` with `joint_trajectory_controller` (or `forward_position_controller`), `joint_state_broadcaster` and `imu_sensor_broadcaster`. It uses mock firmware by default; pass `mock_hardware:=false` on the robot. It is exclusive with `bringup.launch.py`, because only one process may own SPI. See [ROS2_CONTROL.md](ros2_ws/docs/ROS2_CONTROL.md).
-
-**MoveIt 2.**
-- `ros2 launch jonny5_moveit_config move_group.launch.py` starts motion planning on top of ros2_control.
-- `servo.launch.py` runs VR teleoperation through MoveIt Servo: the sticks drive the tool in Cartesian space while the deadman is held.
-
-See [MOVEIT.md](ros2_ws/docs/MOVEIT.md).
-
-**Validation tooling.**
-- `firmware/stm32/tools/build_zephyr.sh` builds both boards with plain Zephyr 4.2.1 (no PlatformIO).
-- `ros2_ws/tools/sim_e2e.py` runs the mock end-to-end scenarios.
-- `raspberry/tools/spi_v2_probe.py` checks SPI link quality on the Pi.
-- `raspberry/tools/j5_uart.py` sends UART commands without the web stack.
-- CI (`.github/workflows/ci.yml`) runs all of the above on every PR.
-
-The step-by-step procedure for the real robot is [HW_TEST_PLAN.md](ros2_ws/docs/HW_TEST_PLAN.md) (Italian).
-
-**Stale-intent watchdog (ROS 2 driver).** `jonny5_spi_driver` streams IDLE frames (no buttons, so the firmware deadman drops) when no `TeleopIntent` has arrived for `intent_timeout_s` (default 0.25 s).
-
-## ROS graph
-
-```text
-WebXR / WebSocket
-        |
-        v
-jonny5_vr_bridge ---> /jonny5/teleop/intent
-                              |
-                              v
-                      jonny5_spi_driver <--> STM32 / mock SPI
-                         |       |       |
-                         v       v       v
-                  /joint_states /imu/data /jonny5/status
-                                      \
-                                       -> /jonny5/spi/telemetry
-
-robot_state_publisher <--- URDF/Xacro + /joint_states
-```
-
-## Packages
-
-```text
-ros2_ws/src/
-  jonny5_msgs/          Custom TeleopIntent, SpiTelemetry and RobotStatus messages
-  jonny5_description/   URDF/Xacro, camera/IMU frames, joint limits and RViz config
-  jonny5_hardware/      Native/mock SPI driver and ROS 2 telemetry publishers
-  jonny5_control/       ros2_control hardware interface (C++, SPI protocol v2) + controllers
-  jonny5_moveit_config/ MoveIt 2 (move_group, OMPL + Pilz) and MoveIt Servo for VR teleop
-  jonny5_teleop_vr/     WebXR/WebSocket to TeleopIntent bridge
-  jonny5_sim/           Hardware-free teleoperation intent simulator
-  jonny5_bringup/       Launch files and runtime parameter composition
-```
-
-## Hardware-free verification
-
-Target environment: ROS 2 Jazzy on Ubuntu/WSL or the supplied Jazzy container.
+## Firmware
 
 ```bash
-cd ros2_ws
-source /opt/ros/jazzy/setup.bash
-bash tools/smoke_ros2_dryrun.sh
+cd firmware/stm32 && pio run -e weact_g474_shield            # build (from a path without spaces, see MINIMAL.md)
+pio run -e weact_g474_shield -t upload                        # flash over ST-Link
 ```
 
-The smoke test builds with `colcon`, launches mock bring-up, verifies nodes and topics, receives joint/status/intent messages, and injects a WebSocket command. Expected result:
+**Hardware E-STOP.** A normally-closed mushroom button on PC6 is polled and debounced inside the 1 kHz
+real-time tick, read fail-safe (pressed, cut wire, read error or init failure all mean STOP). On engage the
+firmware disables all servos, aborts any trajectory and latches `STOPPED`; motion commands answer
+`ERR ESTOP_ACTIVE`. Releasing the button only clears the latch: the operator has to re-enable.
 
-```text
-[PASS] JONNY5 ROS2 dry-run smoke test completed
-```
+**SPI frame watchdog.** If no valid frame arrives for more than 500 ms the state machine goes to `SAFE`
+and the servos are disabled. Leaving `SAFE` automatically requires fresh frames *and* an advanced VR
+heartbeat, so a stale last intent cannot re-arm the arm.
 
-See [SMOKE_TEST.md](ros2_ws/SMOKE_TEST.md) for manual inspection commands.
+**SPI link.** 64-byte J5 frames (protocol v1), one full-duplex transfer every 10 ms. The reply type follows
+the request (J5VR → TELEMETRY, STATUS → STATUS with diagnostics) and arrives one transfer later.
+Master and firmware must use the same transfer length (`CONFIG_J5_CANONICAL_PADDED_128_MODE`).
 
-## Containerized Raspberry Pi deployment
-
-The ROS 2 control plane runs in `ros:jazzy`; cameras, libcamera and MediaMTX remain native so the validated video path is not disturbed.
+## Raspberry Pi
 
 ```bash
-cd ros2_ws/deploy
-docker compose build
-docker compose -f docker-compose.yml -f docker-compose.mock.yml up
+git clone -b fw/minimal https://github.com/corgiolu-labs/jonny5_ROS2_VR.git ~/JONNY5_ROS2
+~/JONNY5_ROS2/raspberry/setup_pi.sh          # then reboot the first time
 ```
 
-Real-hardware bring-up passes `/dev/spidev0.0` into the container and must follow the checklist in [README_PI.md](ros2_ws/deploy/README_PI.md).
+Calibrated offsets and limits: export them from the old install before removing it
+(`minimal/j5mini/README.md`). MediaMTX is expected as a binary in `~/mediamtx` or on the `PATH`.
 
-## Dataset recording
-
-After bring-up, record the synchronized ROS-facing telemetry with:
+## Tests without hardware
 
 ```bash
-cd ros2_ws
-bash tools/record_dataset.sh
+cd firmware/stm32
+python -m pytest tools/fw_sim ../../minimal/j5mini -q        # firmware simulator + j5mini (23 tests)
 ```
 
-The script records robot status, SPI telemetry, joint states, IMU and teleoperation intent into a timestamped rosbag2 directory. See [DATA_CAPTURE.md](ros2_ws/docs/DATA_CAPTURE.md) for topic semantics, metadata and limitations.
-
-## Repository layout
-
-- `firmware/` — unchanged STM32/Zephyr real-time core
-- `raspberry/` — existing controller and SPI codec reused by the bridge
-- `web/` — existing dashboard and WebXR/WebRTC frontend
-- `ros2_ws/src/` — ROS 2 packages
-- `ros2_ws/deploy/` — Docker, Compose and Raspberry Pi services
-- `ros2_ws/tools/` — smoke testing, bridging and recording utilities
-- `ros2_ws/docs/` — architecture decisions and data-capture documentation
+The differential test needs the original firmware sources (`tools/fw_sim/README.md`); CI runs it.
 
 ## Relationship to the main project
 
-Use [corgiolu-labs/jonny5](https://github.com/corgiolu-labs/jonny5) for the physical build, measured performance, media and proven real-time architecture. This repository documents the ROS 2 migration and keeps experimental claims separate from hardware-validated results.
+[JONNY5](https://github.com/corgiolu-labs/jonny5) is the original thesis project. The stereo head on a
+Luckfox Aura ([jonny5-stereo-head](https://github.com/corgiolu-labs/jonny5-stereo-head)) talks to the same
+firmware over the same SPI link.

@@ -1,5 +1,5 @@
-# JONNY5 — production camera capture: rpicam-vid x2 (frame sync, matched exposure, x264 low-latency CBR)
-# publishing cam0/cam1 to the local MediaMTX (profile "relay"). Installed by ros2_ws/deploy/setup_hotspot.sh.
+# The two cameras (raspberry/tools/cam_stream.py, frame sync + matched exposure) publishing cam0/cam1 to the
+# local MediaMTX (profile "relay"). Installed by raspberry/setup_pi.sh.
 [Unit]
 Description=JONNY5 camera capture -> MediaMTX relay (sync + matched exposure)
 After=jonny5-mediamtx.service jonny5-sync-route.service
@@ -8,13 +8,11 @@ PartOf=jonny5-mediamtx.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/jonny5ros2/JONNY5_ROS2
-ExecStart=/bin/bash /home/jonny5ros2/JONNY5_ROS2/scripts/video_capture.sh
-User=jonny5ros2
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=/bin/bash @REPO@/scripts/video_capture.sh
 Restart=always
 RestartSec=3
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

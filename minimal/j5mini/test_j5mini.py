@@ -189,6 +189,7 @@ def test_websocket_end_to_end(lib):
                 seen = {}
                 t_end = time.time() + 3.0
                 await ws.send(json.dumps({"type": "uart", "cmd": "STATUS?"}))
+                await ws.send(json.dumps({"type": "get_settings"}))
                 while time.time() < t_end:
                     hb += 1
                     await ws.send(json.dumps(intent(heartbeat=hb)))
@@ -214,3 +215,66 @@ def test_websocket_end_to_end(lib):
     assert "servo_deg_B" in seen["telemetry"]
     assert seen["resp:STATUS?"]["response"].startswith("STATUS:")
     assert r.sim.state() == "IDLE"                          # the intents armed the firmware
+    assert seen["settings"]["offsets"] == CFG["settings"]["offsets"] and len(seen["settings"]["dirs"]) == 6
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 100.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_camera_controls_like_ws_teleop(tmp_path):
+    sent, clk = [], FakeClock()
+    state = tmp_path / "cam0.json"
+    cams = j5mini.Cameras(str(state), clock=clk, sendto=lambda data, port: sent.append((port, json.loads(data))))
+    assert cams.on_message({"type": "vr_zoom_state", "zoom0": 3.0, "zoom1": 3.0, "camera": True})
+    assert sent == [(5600, {"zoom": 3.0}), (5601, {"zoom": 3.0})]
+    sent.clear()
+    cams.on_message({"type": "cam_exposure", "ev": 5})                 # clamped like ws-teleop
+    cams.on_message({"type": "cam_focus", "dioptres": 2.5})            # cam0 only, cam1 follows
+    cams.on_message({"type": "cam_focus", "auto": True})
+    cams.on_message({"type": "cam_mode", "mode": "wide"})
+    cams.on_message({"type": "cam_mode", "mode": "bogus"})
+    assert sent == [(5600, {"ev": 2.0}), (5601, {"ev": 2.0}), (5600, {"focus": 2.5}), (5600, {"focus": "auto"}),
+                    (5600, {"mode": "wide"}), (5601, {"mode": "wide"})]
+    assert not cams.on_message({"type": "uart"})
+    # cam0 reports 2x applied in tele: residual digital zoom 1.5, nothing re-sent within 1 s
+    state.write_text(json.dumps({"zoom": 2.0, "mode": "tele", "hfov": 46.8, "fps": 90, "ts": time.time()}))
+    sent.clear()
+    tm = cams.telemetry()
+    assert tm["cam_zoom"] == 2.0 and tm["vr_zoom0"] == 1.5 and tm["cam_ev"] == 2.0 and tm["cam_mode"] == "tele"
+    assert sent == []
+    clk.t += 3.5                                                        # zoom/ev every 1 s, mode after 3 s
+    cams.telemetry()
+    assert {(p, tuple(m)) for p, m in sent} == {(c, k) for c in (5600, 5601) for k in (("zoom",), ("ev",), ("mode",))}
+    # autofocus: both cameras, 1 s cooldown
+    sent.clear()
+    assert cams.autofocus() and not cams.autofocus()
+    assert sent == [(5600, {"af": {"src": "button"}}), (5601, {"af": {"src": "button"}})]
+    clk.t += 1.1
+    assert cams.autofocus()
+
+
+def test_https_api_of_the_app():
+    import urllib.request
+    sent = []
+    cams = j5mini.Cameras("/nonexistent", sendto=lambda data, port: sent.append(port))
+    cfg = {"https": {"host": "127.0.0.1", "port": 28443, "controller_mappings": str(HERE / "controller_mappings.json")}}
+    threading.Thread(target=j5mini.https_thread, args=(cfg, cams, threading.Lock()), daemon=True).start()
+    base = "http://127.0.0.1:28443"
+    for _ in range(50):
+        try:
+            body = urllib.request.urlopen(base + "/api/controller-mappings", timeout=1).read()
+            break
+        except OSError:
+            time.sleep(0.05)
+    assert json.loads(body) == json.loads((HERE / "controller_mappings.json").read_text(encoding="utf-8"))
+    req = urllib.request.Request(base + "/api/refocus-cameras", data=b"", method="POST")
+    assert json.loads(urllib.request.urlopen(req, timeout=2).read())["ok"] is True
+    assert sent == [5600, 5601]
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(urllib.request.Request(base + "/api/refocus-cameras", data=b"", method="POST"), timeout=2)
+    assert e.value.code == 429

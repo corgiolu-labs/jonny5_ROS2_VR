@@ -2,7 +2,7 @@
 # Build the JONNY5 firmware with plain Zephyr + CMake (no PlatformIO), on Linux.
 # Used by CI and handy as a cross-check of the PlatformIO build.
 #
-#   firmware/stm32/tools/build_zephyr.sh [board ...]      (default: nucleo_g474re nucleo_f446re)
+#   firmware/stm32/tools/build_zephyr.sh [board ...]      (default: nucleo_g474re)
 #
 # Needs: cmake, ninja, gcc-arm-none-eabi, python3 with pyelftools pyyaml
 # jsonschema pykwalify packaging. Zephyr + the needed modules are fetched
@@ -14,8 +14,8 @@ ZEPHYR_VERSION="${J5_ZEPHYR_VERSION:-v4.2.1}"   # PlatformIO framework-zephyr 3.
 CACHE="${J5_ZEPHYR_CACHE:-$HOME/.cache/j5-zephyr}/$ZEPHYR_VERSION"
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${J5_BUILD_DIR:-$APP/build-zephyr}"
-BOARDS=("${@:-nucleo_g474re nucleo_f446re}")
-[ $# -eq 0 ] && BOARDS=(nucleo_g474re nucleo_f446re)
+BOARDS=("${@:-nucleo_g474re}")
+[ $# -eq 0 ] && BOARDS=(nucleo_g474re)
 
 fetch() {  # url dir revision
   [ -d "$2/.git" ] && return 0

@@ -75,3 +75,5 @@ mediamtx-*.tar.gz
 /TESI/
 raspberry/tools/rtp_push
 firmware/stm32/build-zephyr/
+# j5mini: the robot's own config (generated on the Pi from j5mini.example.json or export_config.py)
+minimal/j5mini/j5mini.json

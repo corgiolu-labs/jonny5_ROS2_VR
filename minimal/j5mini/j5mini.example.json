@@ -23,8 +23,31 @@
  "ws": {
   "host": "0.0.0.0",
   "port": 8557,
-  "cert": "/home/jonny5/raspberry5/config_runtime/tls/webrtc.crt",
-  "key": "/home/jonny5/raspberry5/config_runtime/tls/webrtc.key"
+  "cert": "../../raspberry/config_runtime/tls/webrtc.crt",
+  "key": "../../raspberry/config_runtime/tls/webrtc.key"
+ },
+ "https": {
+  "host": "::",
+  "port": 443,
+  "controller_mappings": "controller_mappings.json"
+ },
+ "settings": {
+  "offsets": [
+   88,
+   85,
+   83,
+   90,
+   90,
+   98
+  ],
+  "dirs": [
+   1,
+   -1,
+   1,
+   1,
+   -1,
+   1
+  ]
  },
  "link_timeout_ms": 150,
  "set_clock": true,

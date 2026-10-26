@@ -21,7 +21,7 @@ INTRA="${INTRA:-15}"   # 6 keyframes/s per camera = stereo collimation rate (was
 MTX="${MTX:-rtsp://127.0.0.1:8554}"
 SYNC="${SYNC:-1}"
 # CAPTURE=picamera2 (default): raspberry/tools/cam_stream.py, same stream + LIVE sensor zoom (ScalerCrop) driven
-# by ws-teleop over UDP (the Quest app's zoom). CAPTURE=rpicam: the previous rpicam-vid capture (no live zoom).
+# by j5mini over UDP (the Quest app's zoom). CAPTURE=rpicam: the previous rpicam-vid capture (no live zoom).
 CAPTURE="${CAPTURE:-picamera2}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # MATCH=master (default since 2026-10-19): no boot probe; cam0 runs auto exposure / white balance and one-shot

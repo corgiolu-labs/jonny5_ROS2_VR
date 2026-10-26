@@ -1,0 +1,45 @@
+#!/usr/sbin/nft -f
+# JONNY5 — firewall for the headset hotspot (wlan0, 10.42.0.1/24).
+# The radio link carries ONLY:
+#   Pi  -> headset : video      (RTP/UDP from MediaMTX, RTSP control on 8554; or direct RTP, outbound)
+#   headset -> Pi  : commands   (j5mini WebSocket on 8557; telemetry rides the same socket)
+#                    app HTTPS  (443: controller mappings, refocus) and DNS from NetworkManager's dnsmasq
+# Everything else on wlan0 is dropped: SSH, dashboards, and any forwarding between wlan0 and eth0
+# (no internet through the robot, no access to the PC LAN).
+# Installed by raspberry/setup_pi.sh as /etc/j5-wlan0.nft and loaded by j5-wlan0-firewall.service.
+
+table inet j5wlan
+delete table inet j5wlan
+
+table inet j5wlan {
+    chain input {
+        type filter hook input priority 0; policy accept;
+
+        iifname != "wlan0" accept
+
+        # replies to flows the Pi opened (RTP/RTCP from MediaMTX to the headset, etc.)
+        ct state established,related accept
+        ct state invalid drop
+
+        # link plumbing: DHCP and DNS from NetworkManager's dnsmasq, ping for diagnostics
+        udp dport { 53, 67 } accept
+        icmp type echo-request accept
+        icmpv6 type { echo-request, nd-neighbor-solicit, nd-neighbor-advert } accept
+
+        # video: RTSP session control (native app) + RTCP receiver reports to MediaMTX
+        tcp dport 8554 accept
+        udp dport 8000-8001 accept
+
+        # commands: j5mini WebSocket (wss 8557) and the app's HTTPS API (443)
+        tcp dport { 443, 8557 } accept
+
+        counter drop
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy accept;
+        # the headset link is a dead end: nothing routed to/from eth0 or anywhere else
+        iifname "wlan0" counter drop
+        oifname "wlan0" counter drop
+    }
+}

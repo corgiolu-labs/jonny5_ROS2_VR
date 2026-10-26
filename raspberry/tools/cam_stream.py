@@ -17,7 +17,7 @@ Zoom control: UDP 127.0.0.1:(CTL_PORT_BASE + camera), JSON {"zoom": z} (1 .. ZOO
 collimator moves cam1's crop onto the object under cam0's crosshair, so at high zoom the object stays in view and
 the residual disparity is small). The offset is clamped to the sensor area (no margin at 1x). The crop eases towards
 the target (time constant ZOOM_TAU_S) so both cameras move smoothly together. The applied zoom is written to
-/dev/shm/jonny5_cam{N}_zoom.json ({"zoom", "target", "ts"}) for the collimator and ws-teleop.
+/dev/shm/jonny5_cam{N}_zoom.json ({"zoom", "target", "ts"}) for j5mini (telemetry to the app).
 
 Brightness: UDP {"ev": stops} (EV_MIN .. EV_MAX). With the fixed probed exposure (--shutter/--gain, both cameras
 matched) the gain is scaled by 2^ev: below gain 1 the shutter gets shorter, above the sensor's analogue maximum

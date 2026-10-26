@@ -1,51 +1,62 @@
-# j5mini — controller minimale del braccio (Pi o Aura)
+# j5mini — controller del braccio (Pi o Aura)
 
-Un solo processo Python (~450 righe) al posto di ws-teleop + ponte SPI (o del container ROS 2) per la
-**teleoperazione**: stessi messaggi WebSocket di ws-teleop verso l'app Quest e il viewer web, SPI e
-UART verso lo STM32 come fa il Pi oggi.
+Un solo processo Python al posto di ws-teleop, del ponte SPI, del container ROS 2 e dei server HTTPS:
+parla con l'app Quest come ws-teleop e con lo STM32 come il Pi.
 
 | Fa | Come |
 |---|---|
-| Setpoint al braccio | SPI master 100 Hz, frame J5VR dall'ultimo intent; dopo 150 ms senza intent payload neutro (stesso modo e heartbeat, deadman rilasciato) |
+| Setpoint al braccio | SPI master 100 Hz, 64 byte, frame J5VR dall'ultimo intent; dopo 150 ms senza intent payload neutro (stesso modo e heartbeat, deadman rilasciato) |
 | Diagnostica | una richiesta STATUS ogni 20 trasferimenti (5 Hz): deadman, armato, freeze, E-STOP, bypass |
 | Comandi di stato | UART 115200 con `#seq`; risposte inoltrate ai client come `uart_response` |
 | Configurazione | su `BOOT_READY` (o 1,5 s dopo l'avvio) invia **le stesse righe del Pi**: `SET_OFFSETS`, `SET_VR_PARAMS` (3 tentativi), `SET_JOINT_LIMITS`, `SET_PWM_CONFIG`, `IMUON` |
 | Ingresso in HEAD/HYBRID/ASSIST | rimanda `SET_VR_PARAMS` (una volta ogni 2,5 s), come ws-teleop |
 | Stato robot | `STATUS?` ogni 2 s |
-| Telemetria ai client | 20 Hz: `robot_state`, `servo_deg_B..R`, quaternione IMU, `deadman_active`, `vr_armed`, `estop_active`, `estop_bypass`, contatori del link |
+| Telemetria ai client | 20 Hz: `robot_state`, `servo_deg_B..R`, quaternione IMU, `deadman_active`, `vr_armed`, `estop_active`, `estop_bypass`, contatori del link, stato telecamere |
+| Telecamere (app Quest) | `vr_zoom_state`, `cam_exposure`, `cam_mode`, `cam_focus` → `raspberry/tools/cam_stream.py` via UDP 5600/5601 come ws-teleop (zoom e luminosità rimandati ogni secondo); in telemetria `cam_zoom`, `cam_mode`, `cam_hfov`, `cam_fps`, `cam_ev`, `vr_zoom0/1` |
+| Impostazioni | `get_settings` → `offsets`/`dirs` (barre dei giunti dell'app) |
+| HTTPS 443 | `GET /api/controller-mappings` (mappatura dei pulsanti; l'app ha una copia interna) e `POST /api/refocus-cameras` (autofocus) |
+| Inoltro | `cameras_refocus_triggered`, `vr_session_state`, `vr_zoom_command` agli altri client |
 | Orologio | `time_sync` dall'app → `sudo -n date` se sfasato > 2 s (`set_clock`) |
 
 **Non fa** (apposta): target ASSIST del gimbal (in modo 5 B/S/G restano fermi), IK/FK e twin, pagine
-della dashboard, video, vision, collimatore, ROS 2, captive portal, demo e self-test IMU.
+della dashboard, visione, collimatore, ROS 2, captive portal, demo e self-test IMU. I messaggi dell'app
+per queste funzioni (`vision_request`, …) sono ignorati con una riga di log.
 
 ## Configurazione
 
-`j5mini.json` si genera **sul Pi** con il codice del Pi, così le righe sono identiche a quelle di oggi:
+`j5mini.json` (non versionato, accanto a `j5mini.py`). I percorsi relativi partono dalla sua cartella.
+`raspberry/setup_pi.sh` lo crea da `j5mini.example.json` se manca, ma con offset e limiti di default:
+sul robot con lo stack vecchio ancora installato conviene esportare quelli calibrati, con il codice del
+Pi stesso (righe identiche a quelle di oggi):
 
 ```bash
+cd ~/JONNY5_ROS2/minimal/j5mini            # la cartella di questo file nel checkout del Pi
 ~/raspberry5/.venv/bin/python3 export_config.py ~/raspberry5 > j5mini.json
+cp ~/raspberry5/config_runtime/robot/controller_mappings.json .
 ```
 
-`j5mini.example.json` è lo stesso file generato dalla copia di `config_runtime` nel repo (non dal Pi).
 Sull'Aura: `"spi": {"device": "/dev/spidev1.0"}`, `"uart": {"device": "/dev/ttyS4"}` e il sender avviato
 **senza** `--spi`/`--uart` (un solo proprietario per bus).
 
 ## Avvio
 
+Installato come servizio da `raspberry/setup_pi.sh` (`jonny5-j5mini`). A mano:
+
 ```bash
-sudo systemctl stop jonny5-ws-teleop jonny5-spi-j5vr jonny5-spi-shm-bridge jonny5-ros2   # quelli presenti
 python3 j5mini.py --config j5mini.json
 ```
 
-Dipendenze: `websockets`, `spidev`, `pyserial` (già nel venv del Pi). Unit di esempio: `j5mini.service`.
+Dipendenze: `websockets`, `spidev`, `pyserial` (pacchetti Debian `python3-websockets`, `python3-spidev`,
+`python3-serial`).
 
 ## Prove senza hardware
 
 ```bash
-python -m pytest minimal/j5mini -q      # 7 test contro il firmware vero simulato (firmware/stm32/tools/fw_sim)
+cd firmware/stm32 && python -m pytest ../../minimal/j5mini -q      # 9 test, firmware vero simulato
 ```
 
 Coprono: push della configurazione su `BOOT_READY` (tutte OK), armo automatico, HOME, manuale con
 deadman, neutro dopo il silenzio del visore (uscite a 0), reinvio di `SET_VR_PARAMS` in HEAD, bit e
-righe E-STOP, trasporto a 64 byte (default) e a 128 con firmware a 128, validazione degli intent come ws-teleop, e un
-client WebSocket reale (come l'app) fino al firmware simulato.
+righe E-STOP, trasporto a 64 byte (default) e a 128 con firmware a 128, validazione degli intent come
+ws-teleop, comandi telecamere e zoom residuo, le due API HTTPS, e un client WebSocket reale (come
+l'app) fino al firmware simulato, con `get_settings`.

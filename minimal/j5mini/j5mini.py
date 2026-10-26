@@ -17,9 +17,12 @@ What it does (and nothing else):
   - On entering HEAD/HYBRID/ASSIST (mode 3/4/5) re-sends SET_VR_PARAMS (2.5 s throttle), as ws-teleop.
   - Telemetry to the clients at 20 Hz: robot_state, servo_deg_*, IMU quaternion, deadman/armed/E-STOP.
   - Optional clock set from the headset (time_sync), the robot has no RTC and no internet.
+  - Camera controls of the Quest app (zoom, brightness, wide/tele, focus, autofocus) forwarded to
+    raspberry/tools/cam_stream.py over UDP, as ws-teleop; get_settings (offsets/dirs); HTTPS on 443
+    for the app's GET /api/controller-mappings and POST /api/refocus-cameras.
 
-Not here (on purpose): ASSIST gimbal targets, IK/FK, dashboard pages, video, vision,
-collimator, ROS 2, captive portal, demo/self-test. Mode 5 therefore holds B/S/G.
+Not here (on purpose): ASSIST gimbal targets, IK/FK, dashboard pages, vision, collimator,
+ROS 2, captive portal, demo/self-test. Mode 5 therefore holds B/S/G.
 
   python3 j5mini.py --config j5mini.json             # real hardware (spidev + pyserial)
 """
@@ -29,6 +32,7 @@ import argparse
 import asyncio
 import json
 import math
+import os
 import ssl
 import struct
 import threading
@@ -312,6 +316,113 @@ class Core:
                 "link": dict(self.stats)}
 
 
+# ------------------------------------------------------------------ cameras (tools/cam_stream.py)
+
+class Cameras:
+    """Camera controls of the native Quest app, as ws-teleop (ws_handlers_imu.py): JSON over UDP to the two
+    capture processes (127.0.0.1:5600 + camera); zoom and brightness re-sent every second and the mode every
+    3 s until cam0 reports it (a capture restart comes back at 1x, ev 0, tele). cam0 publishes its applied
+    state in /dev/shm/jonny5_cam0_zoom.json; vr_zoom0/1 in the telemetry are the residual digital zoom."""
+    PORT_BASE = 5600
+    STATE_PATH = "/dev/shm/jonny5_cam0_zoom.json"
+
+    def __init__(self, state_path: str = STATE_PATH, clock: Callable[[], float] = time.monotonic, sendto=None):
+        self.state_path, self.clock = state_path, clock
+        self._sock = None
+        self._sendto = sendto or self._udp
+        self.zoom = self.ev = self.mode = None
+        self.zoom_sent = self.ev_sent = self.mode_sent = -1e9
+        self.vr_zoom = [None, None]
+        self.last_af = -1e9
+
+    def _udp(self, data: bytes, port: int):
+        import socket
+        try:
+            if self._sock is None:
+                self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sock.sendto(data, ("127.0.0.1", port))
+        except OSError:
+            pass
+
+    def _send(self, obj: dict, cams=(0, 1)):
+        data = json.dumps(obj).encode()
+        for cam in cams:
+            self._sendto(data, self.PORT_BASE + cam)
+
+    @staticmethod
+    def _num(v) -> bool:
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+    def on_message(self, msg: dict) -> bool:
+        typ = msg.get("type")
+        if typ == "vr_zoom_state":
+            for i in (0, 1):
+                if self._num(msg.get(f"zoom{i}")):
+                    self.vr_zoom[i] = float(msg[f"zoom{i}"])
+            if msg.get("camera") and self._num(msg.get("zoom0")):
+                self.zoom, self.zoom_sent = float(msg["zoom0"]), self.clock()
+                self._send({"zoom": self.zoom})
+        elif typ == "cam_exposure":
+            if self._num(msg.get("ev")):
+                self.ev, self.ev_sent = max(-2.0, min(2.0, float(msg["ev"]))), self.clock()
+                self._send({"ev": self.ev})
+        elif typ == "cam_mode":
+            if msg.get("mode") in ("tele", "wide"):
+                self.mode, self.mode_sent = msg["mode"], self.clock()
+                self._send({"mode": self.mode})
+        elif typ == "cam_focus":                     # cam0 only: cam1 follows the master (cam_stream --follow)
+            v = "auto" if msg.get("auto") else msg.get("dioptres", "auto")
+            if v == "auto" or self._num(v):
+                self._send({"focus": v if v == "auto" else max(0.0, min(8.0, float(v)))}, cams=(0,))
+        else:
+            return False
+        return True
+
+    def autofocus(self) -> bool:
+        """One-shot AF on both cameras (POST /api/refocus-cameras); False within 1 s of the last one."""
+        now = self.clock()
+        if now - self.last_af < 1.0:
+            return False
+        self.last_af = now
+        self._send({"af": {"src": "button"}})
+        return True
+
+    def state(self):
+        try:
+            with open(self.state_path) as f:
+                st = json.load(f)
+            if time.time() - float(st.get("ts", 0)) < 3.0:
+                return st
+        except (OSError, ValueError, TypeError):
+            pass
+        return None
+
+    def telemetry(self) -> dict:
+        now, out = self.clock(), {}
+        st = self.state()
+        cz = float(st.get("zoom", 1.0)) if st else None
+        if cz is not None:
+            out["cam_zoom"] = round(cz, 3)
+        if self.zoom is not None and now - self.zoom_sent > 1.0:
+            self.zoom_sent = now
+            self._send({"zoom": self.zoom})
+        if st:
+            out.update(cam_mode=st.get("mode", "tele"), cam_hfov=st.get("hfov", 46.8), cam_fps=st.get("fps"))
+            if self.mode and st.get("mode") != self.mode and now - self.mode_sent > 3.0:
+                self.mode_sent = now
+                self._send({"mode": self.mode})
+        if self.ev is not None:
+            out["cam_ev"] = self.ev
+            if now - self.ev_sent > 1.0:
+                self.ev_sent = now
+                self._send({"ev": self.ev})
+        div = cz if (cz is not None and self.zoom is not None) else 1.0
+        for i in (0, 1):
+            if self.vr_zoom[i] is not None:
+                out[f"vr_zoom{i}"] = max(1.0, self.vr_zoom[i] / div)
+        return out
+
+
 # ------------------------------------------------------------------ hardware backends
 
 class SpidevBackend:
@@ -341,8 +452,12 @@ class SerialBackend:
 # ------------------------------------------------------------------ WebSocket server (ws-teleop subset)
 
 class Server:
-    def __init__(self, core: Core, lock: threading.Lock, cfg: dict):
+    # forwarded as they are to the other clients, like ws-teleop
+    RELAY = ("cameras_refocus_triggered", "vr_session_state", "vr_zoom_command")
+
+    def __init__(self, core: Core, lock: threading.Lock, cfg: dict, cams: Cameras | None = None):
         self.core, self.lock, self.cfg = core, lock, cfg
+        self.cams = cams or Cameras()
         self.clients = set()
         self.ignored = set()
 
@@ -376,6 +491,13 @@ class Server:
             await ws.send(json.dumps({"type": "ack", "set_vr_mode": msg.get("mode")}))
         elif typ == "time_sync":
             self.time_sync(msg.get("epoch_ms"))
+        elif typ == "get_settings":
+            await ws.send(json.dumps({"type": "settings", **self.cfg.get("settings", {})}))
+        elif typ in self.RELAY:
+            data = json.dumps(msg)
+            await asyncio.gather(*(c.send(data) for c in list(self.clients) if c is not ws), return_exceptions=True)
+        elif self.cams.on_message(msg):
+            pass
         elif typ not in self.ignored:
             self.ignored.add(typ)
             self.core.log(f"[j5mini] message type {typ!r} not handled by the minimal controller (ignored)")
@@ -391,12 +513,60 @@ class Server:
         while True:
             await asyncio.sleep(0.05)
             with self.lock:
-                msgs = [self.core.telemetry_message()] + self.core.events
+                msgs = [{**self.core.telemetry_message(), **self.cams.telemetry()}] + self.core.events
                 self.core.events = []
             if self.clients:
                 for m in msgs:
                     data = json.dumps(m)
                     await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
+
+
+def https_thread(cfg: dict, cams: Cameras, lock: threading.Lock):
+    """The two HTTPS calls of the Quest app (the old https_server.py on 443): GET /api/controller-mappings
+    (button bindings; the app falls back to its built-in copy) and POST /api/refocus-cameras."""
+    import socket
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    h_cfg, ws_cfg = cfg.get("https", {}), cfg.get("ws", {})
+
+    class Handler(BaseHTTPRequestHandler):
+        def _reply(self, code: int, body: bytes):
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path.split("?")[0] == "/api/controller-mappings" and h_cfg.get("controller_mappings"):
+                try:
+                    with open(h_cfg["controller_mappings"], "rb") as f:
+                        return self._reply(200, f.read())
+                except OSError:
+                    pass
+            self._reply(404, b'{"ok":false}')
+
+        def do_POST(self):
+            if self.path.split("?")[0] != "/api/refocus-cameras":
+                return self._reply(404, b'{"ok":false}')
+            with lock:
+                ok = cams.autofocus()
+            if ok:
+                self._reply(200, b'{"ok":true,"mode":"af"}')
+            else:
+                self._reply(429, b'{"ok":false,"error":"cooldown 1s"}')
+
+        def log_message(self, fmt, *args):
+            pass
+
+    class Http(ThreadingHTTPServer):
+        address_family = socket.AF_INET6 if ":" in h_cfg.get("host", "::") else socket.AF_INET
+
+    srv = Http((h_cfg.get("host", "::"), int(h_cfg["port"])), Handler)
+    if ws_cfg.get("cert") and ws_cfg.get("key"):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(ws_cfg["cert"], ws_cfg["key"])
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    srv.serve_forever()
 
 
 def control_thread(core: Core, lock: threading.Lock, stop: threading.Event, period=0.01):
@@ -412,14 +582,14 @@ def control_thread(core: Core, lock: threading.Lock, stop: threading.Event, peri
             nxt = time.monotonic()
 
 
-async def serve(core: Core, lock: threading.Lock, cfg: dict):
+async def serve(core: Core, lock: threading.Lock, cfg: dict, cams: Cameras):
     import websockets
     ws_cfg = cfg.get("ws", {})
     ssl_ctx = None
     if ws_cfg.get("cert") and ws_cfg.get("key"):
         ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_ctx.load_cert_chain(ws_cfg["cert"], ws_cfg["key"])
-    srv = Server(core, lock, cfg)
+    srv = Server(core, lock, cfg, cams)
     async with websockets.serve(srv.handler, ws_cfg.get("host", "0.0.0.0"), ws_cfg.get("port", 8557), ssl=ssl_ctx):
         core.log(f"[j5mini] {'wss' if ssl_ctx else 'ws'}://0.0.0.0:{ws_cfg.get('port', 8557)} ready")
         await srv.broadcast_loop()
@@ -430,13 +600,20 @@ def main():
     ap.add_argument("--config", default="j5mini.json")
     a = ap.parse_args()
     cfg = json.load(open(a.config, encoding="utf-8"))
+    base = os.path.dirname(os.path.abspath(a.config))          # relative paths in the config: from its folder
+    for sect, key in (("ws", "cert"), ("ws", "key"), ("https", "controller_mappings")):
+        if cfg.get(sect, {}).get(key):
+            cfg[sect][key] = os.path.join(base, cfg[sect][key])
     spi = SpidevBackend(cfg["spi"]["device"], int(cfg["spi"].get("speed_hz", 1000000)))
     uart = SerialBackend(cfg["uart"]["device"], int(cfg["uart"].get("baud", 115200)))
     core = Core(cfg, spi, uart)
+    cams = Cameras()
     lock, stop = threading.Lock(), threading.Event()
     threading.Thread(target=control_thread, args=(core, lock, stop), daemon=True, name="j5mini-100hz").start()
+    if cfg.get("https", {}).get("port"):
+        threading.Thread(target=https_thread, args=(cfg, cams, lock), daemon=True, name="j5mini-https").start()
     try:
-        asyncio.run(serve(core, lock, cfg))
+        asyncio.run(serve(core, lock, cfg, cams))
     finally:
         stop.set()
 
