@@ -1,5 +1,5 @@
 # JONNY5 minimal controller: SPI + UART to the STM32, wss 8557 + HTTPS 443 for the Quest app.
-# Installed by raspberry/setup_pi.sh (@REPO@ = repo checkout, @USER@ = its owner).
+# Installed by raspberry/setup_pi.sh (@REPO@ = repo checkout, @USER@ = its owner, @PY@ = Python with the deps).
 [Unit]
 Description=JONNY5 j5mini arm controller (SPI + UART + wss 8557 + https 443)
 After=network-online.target
@@ -8,7 +8,7 @@ Wants=network-online.target
 [Service]
 User=@USER@
 WorkingDirectory=@REPO@/minimal/j5mini
-ExecStart=/usr/bin/python3 -u @REPO@/minimal/j5mini/j5mini.py --config @REPO@/minimal/j5mini/j5mini.json
+ExecStart=@PY@ -u @REPO@/minimal/j5mini/j5mini.py --config @REPO@/minimal/j5mini/j5mini.json
 # port 443 without running as root
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 Restart=always

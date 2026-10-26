@@ -58,12 +58,15 @@ if [ "${J5_SKIP_NET:-0}" != "1" ]; then
 
   echo "[3/5] wlan0: headset hotspot (5 GHz, 10.42.0.1) + firewall..."
   # One radio hop from the headset to the robot. 5 GHz non-DFS channel 36, 80 MHz, power save off, WPA2.
-  # An older profile (jonny5-ap) keeps its SSID and password so known headsets reconnect.
-  if nmcli -t -f NAME con show 2>/dev/null | grep -qx "jonny5-ap"; then
-    : "${J5_HOTSPOT_SSID:=$(nmcli -g 802-11-wireless.ssid con show jonny5-ap 2>/dev/null || true)}"
-    : "${J5_HOTSPOT_PSK:=$(sudo nmcli -s -g 802-11-wireless-security.psk con show jonny5-ap 2>/dev/null || true)}"
-    sudo nmcli con delete jonny5-ap >/dev/null 2>&1 || true
-  fi
+  # An existing profile (jonny5-hotspot, or the older jonny5-ap) keeps its SSID and password, so the headsets and
+  # phones that know the network reconnect without being set up again.
+  for old in jonny5-hotspot jonny5-ap; do
+    if nmcli -t -f NAME con show 2>/dev/null | grep -qx "$old"; then
+      : "${J5_HOTSPOT_SSID:=$(nmcli -g 802-11-wireless.ssid con show "$old" 2>/dev/null || true)}"
+      : "${J5_HOTSPOT_PSK:=$(sudo nmcli -s -g 802-11-wireless-security.psk con show "$old" 2>/dev/null || true)}"
+      [ "$old" = jonny5-ap ] && sudo nmcli con delete jonny5-ap >/dev/null 2>&1 || true
+    fi
+  done
   SSID="${J5_HOTSPOT_SSID:-JONNY5}"
   PSK="${J5_HOTSPOT_PSK:-jonny5robot}"
   sudo raspi-config nonint do_wifi_country IT 2>/dev/null || sudo iw reg set IT || true
@@ -84,7 +87,19 @@ if [ "${J5_SKIP_NET:-0}" != "1" ]; then
 fi
 
 echo "[4/5] j5mini: dependencies, TLS, config..."
-sudo apt-get install -y python3-websockets python3-spidev python3-serial python3-av python3-numpy >/dev/null
+# j5mini needs websockets, spidev, pyserial: the system Python with the Debian packages, or the repo's
+# raspberry/.venv (the old stack's venv has all three) when the robot has no internet for apt.
+PY=/usr/bin/python3
+if ! $PY -c "import websockets, spidev, serial" 2>/dev/null; then
+  if sudo apt-get install -y python3-websockets python3-spidev python3-serial >/dev/null 2>&1; then
+    echo "    Python packages installed"
+  elif [ -x "$REPO/raspberry/.venv/bin/python3" ] && "$REPO/raspberry/.venv/bin/python3" -c "import websockets, spidev, serial"; then
+    PY="$REPO/raspberry/.venv/bin/python3"
+    echo "    no apt (offline?): j5mini and the collimator use $PY"
+  else
+    echo "ERR: websockets / spidev / pyserial missing and apt failed (no internet?)" >&2; exit 1
+  fi
+fi
 TLS="$REPO/raspberry/config_runtime/tls"
 if [ ! -f "$TLS/webrtc.crt" ]; then
   mkdir -p "$TLS"
@@ -101,13 +116,18 @@ if [ ! -f "$J5CFG" ]; then
 fi
 
 echo "[5/5] Services..."
-OLD="jonny5-ws-teleop jonny5-spi-j5vr jonny5-spi-shm-bridge jonny5-ros2 jonny5-https jonny5-https-443-proxy
-     jonny5-captive-portal jonny5-refocus-cams jonny5-refocus-cams.timer jonny5-video-init jonny5-video-fallback.timer"
+OLD="jonny5-ws-teleop jonny5-spi-j5vr jonny5-spi-shm-bridge jonny5-ros2 jonny5-https jonny5-https-443
+     jonny5-https-443-proxy jonny5-captive-portal jonny5-telemetry-webbridge jonny5-refocus-cams jonny5-refocus-cams.timer
+     jonny5-video-init jonny5-video-fallback.timer"
 for u in $OLD; do
   sudo systemctl disable --now "$u" >/dev/null 2>&1 || true
 done
+# the ROS 2 container owned the SPI: stop it and keep it from coming back at boot (its image is left alone)
+if command -v docker >/dev/null 2>&1 && docker inspect jonny5_ros2 >/dev/null 2>&1; then
+  docker update --restart=no jonny5_ros2 >/dev/null && docker stop jonny5_ros2 >/dev/null && echo "    ROS 2 container stopped"
+fi
 for f in "$REPO"/raspberry/systemd/*.service; do
-  sed -e "s|@REPO@|$REPO|g" -e "s|@USER@|$RUN_USER|g" "$f" | sudo tee "/etc/systemd/system/$(basename "$f")" >/dev/null
+  sed -e "s|@REPO@|$REPO|g" -e "s|@USER@|$RUN_USER|g" -e "s|@PY@|$PY|g" "$f" | sudo tee "/etc/systemd/system/$(basename "$f")" >/dev/null
 done
 sudo systemctl daemon-reload
 EN="jonny5-sync-route jonny5-mediamtx jonny5-video-capture jonny5-j5mini"
