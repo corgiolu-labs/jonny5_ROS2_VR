@@ -492,6 +492,101 @@ void j5vr_go_teleop_pose(void)
     );
 }
 
+/* =========================================================
+ * Interpolazione fra frame SPI (26/10/2026, scatti in ASSIST sul robot)
+ * =========================================================
+ * Il master manda un frame J5VR ogni 10 ms (20 ms quando al suo posto va una richiesta STATUS) e il RT loop
+ * segue ogni target nuovo in pochi ms (polso fino a 400 deg/s, base 600): il braccio si muoveva a gradini di
+ * 10-20 ms. Qui il valore continuo (quaternione, B/S/G dell'ASSIST) scorre linearmente dal valore attuale a
+ * quello del frame nuovo nell'intervallo fra gli ultimi due frame: traiettoria continua, ritardo <= 1 frame.
+ * Cambio di modo, validita' B/S/G cambiata o frame fermi da piu' di SMOOTH_STALE_MS: si salta al valore del
+ * frame (nessuna rincorsa da uno stato vecchio). */
+
+#define SMOOTH_MIN_MS   5U
+#define SMOOTH_MAX_MS   30U
+#define SMOOTH_STALE_MS 100U
+
+static struct {
+    bool     init;
+    uint8_t  mode;
+    uint8_t  arm_valid;
+    float    raw_q[4];       /* ultimo frame visto (per riconoscere il frame nuovo) */
+    int16_t  raw_a[3];
+    float    q0[4], q1[4];   /* da -> a */
+    float    a0[3], a1[3];
+    float    out_q[4];       /* ultimo valore uscito */
+    float    out_a[3];
+    uint32_t t_frame;        /* tick del frame nuovo */
+    uint32_t dur;            /* durata della corsa verso il frame nuovo */
+} sm;
+
+void j5vr_smooth_between_frames(struct j5vr_state *s, uint32_t now_ms)
+{
+    if (s == NULL) { return; }
+    const float rq[4] = { s->quat_w, s->quat_x, s->quat_y, s->quat_z };
+    const bool smooth_mode = (s->mode == 3U || s->mode == 4U || s->mode == 5U);
+    const bool fresh = !sm.init ||
+        rq[0] != sm.raw_q[0] || rq[1] != sm.raw_q[1] || rq[2] != sm.raw_q[2] || rq[3] != sm.raw_q[3] ||
+        s->mode5_arm_target_cdeg[0] != sm.raw_a[0] || s->mode5_arm_target_cdeg[1] != sm.raw_a[1] ||
+        s->mode5_arm_target_cdeg[2] != sm.raw_a[2];
+    const bool snap = !sm.init || !smooth_mode || s->mode != sm.mode || s->mode5_arm_valid != sm.arm_valid ||
+                      (now_ms - sm.t_frame) > SMOOTH_STALE_MS;
+
+    if (fresh || snap)
+    {
+        uint32_t dt = now_ms - sm.t_frame;
+        sm.dur = (dt < SMOOTH_MIN_MS) ? SMOOTH_MIN_MS : (dt > SMOOTH_MAX_MS) ? SMOOTH_MAX_MS : dt;
+        for (int i = 0; i < 4; i++)
+        {
+            sm.raw_q[i] = rq[i];
+            sm.q1[i] = rq[i];
+            sm.q0[i] = snap ? rq[i] : sm.out_q[i];
+        }
+        for (int i = 0; i < 3; i++)
+        {
+            sm.raw_a[i] = s->mode5_arm_target_cdeg[i];
+            sm.a1[i] = (float)s->mode5_arm_target_cdeg[i];
+            sm.a0[i] = snap ? sm.a1[i] : sm.out_a[i];
+        }
+        /* stesso emisfero: q e -q sono la stessa rotazione, interpolare sull'arco corto */
+        if (sm.q0[0] * sm.q1[0] + sm.q0[1] * sm.q1[1] + sm.q0[2] * sm.q1[2] + sm.q0[3] * sm.q1[3] < 0.0f)
+        {
+            for (int i = 0; i < 4; i++) { sm.q0[i] = -sm.q0[i]; }
+        }
+        sm.t_frame   = now_ms;
+        sm.mode      = s->mode;
+        sm.arm_valid = s->mode5_arm_valid;
+        sm.init      = true;
+    }
+    if (!smooth_mode)
+    {
+        return;
+    }
+
+    float u = (float)(now_ms - sm.t_frame) / (float)sm.dur;
+    u = j5_clampf(u, 0.0f, 1.0f);
+    float n = 0.0f;
+    for (int i = 0; i < 4; i++)
+    {
+        sm.out_q[i] = sm.q0[i] + (sm.q1[i] - sm.q0[i]) * u;
+        n += sm.out_q[i] * sm.out_q[i];
+    }
+    n = (n > 1e-12f) ? sqrtf(n) : 1.0f;
+    for (int i = 0; i < 4; i++) { sm.out_q[i] /= n; }
+    s->quat_w = sm.out_q[0];
+    s->quat_x = sm.out_q[1];
+    s->quat_y = sm.out_q[2];
+    s->quat_z = sm.out_q[3];
+    for (int i = 0; i < 3; i++)
+    {
+        sm.out_a[i] = sm.a0[i] + (sm.a1[i] - sm.a0[i]) * u;
+        if (s->mode5_arm_valid != 0U)
+        {
+            s->mode5_arm_target_cdeg[i] = (int16_t)lroundf(sm.out_a[i]);
+        }
+    }
+}
+
 /**
  * j5vr_set_joint_limits — aggiorna limiti per-giunto a runtime.
  * I valori vengono clampati ai limiti di sicurezza fisici globali.

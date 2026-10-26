@@ -334,6 +334,7 @@ static void rt_loop_step(void)
                 bool movement_allowed = state_machine_is_movement_allowed();
                 struct j5vr_state j5vr_current;
                 j5vr_latest_snapshot(&j5vr_current);
+                j5vr_smooth_between_frames(&j5vr_current, k_uptime_get_32());
                 g_rt_loop_stage = 31;
 
                 if (j5vr_current.mode == J5_MODE_JOINT_STREAM)

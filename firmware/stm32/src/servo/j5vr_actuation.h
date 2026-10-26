@@ -72,6 +72,14 @@ void j5vr_center_all_servos(void);
 /** Porta il robot in VR/Teleop Pose tramite SETPOSE (RTR5, non bloccante). */
 void j5vr_go_teleop_pose(void);
 
+/**
+ * Interpolazione fra un frame SPI e l'altro (HEAD/HYBRID/ASSIST): quaternione del visore e target B/S/G
+ * dell'ASSIST in s raggiungono il frame nuovo nell'intervallo misurato fra gli ultimi due frame, partendo dal
+ * valore uscito al tick precedente. Grip, pulsanti e stick restano quelli del frame. Da chiamare a ogni tick
+ * del RT loop sullo snapshot, prima di usarlo; now_ms = tempo del tick.
+ */
+void j5vr_smooth_between_frames(struct j5vr_state *s, uint32_t now_ms);
+
 /** Aggiorna i limiti per-giunto a runtime. Clamp automatico ai limiti fisici. */
 void j5vr_set_joint_limits(int joint, float lim_min, float lim_max);
 

@@ -411,3 +411,56 @@ def test_grips_pressed_again_take_the_new_head_as_reference(lib, mode):
     assert max(abs(a - b) for a, b in zip(s.angles(), held)) < 0.5, "jumped to the old head reference"
     pi.j5vr(1500, mode=mode, quat=quat_axis("y", 50), btn_l=GRIP, btn_r=GRIP)   # and it follows from here
     assert max(abs(a - b) for a, b in zip(s.angles(), held)) > 5
+
+
+def motion_share_right_after_frames(lib, mode):
+    """Smooth head motion, one J5VR frame every 10 ms (the Pi): share of each frame's motion that happens in its
+    first 3 ms. Higher = the arm moves to every new target and then waits (steps), 0.3 = uniform."""
+    import math
+    s = booted(lib)
+    for line in PI_BOOT_PUSH:
+        s.command(line)
+    pi = Pi(s)
+    pi.j5vr(100, mode=2)
+    s.command("HOME", 10)
+    pi.j5vr(3000, mode=2)
+    kw = dict(btn_l=GRIP, btn_r=GRIP)
+    bsg = None
+    pi.j5vr(300, mode=mode, **kw)
+    blocks = []
+    for k in range(150):
+        t = k * 10
+        a = math.radians(15 * math.sin(2 * math.pi * t / 2000.0)) / 2
+        if mode == 5:
+            bsg = tuple(int(100 * (v + 20 * math.sin(2 * math.pi * t / 2000.0))) for v in (100, 88, 93))
+        pi.hb += 1
+        pi.seq = (pi.seq + 1) & 0xFFFF
+        s.spi(pad(j5_frame(0x04, pi.seq, j5vr_payload(mode=mode, hb=pi.hb, quat=(math.cos(a), 0.0, math.sin(a), 0.0),
+                                                     mode5_bsg_cdeg=bsg, **kw)), s.frame_len))
+        trace = []
+        for _ in range(10):
+            s.run(1)
+            trace.append(s.angles())
+        blocks.append(trace)
+    shares = []
+    for j in range(6):
+        tot = early = 0.0
+        prev = blocks[49][-1][j]
+        for b in blocks[50:]:
+            steps = [abs(b[0][j] - prev)] + [abs(b[n][j] - b[n - 1][j]) for n in range(1, 10)]
+            tot += sum(steps)
+            early += sum(steps[:3])
+            prev = b[-1][j]
+        if tot > 5.0:
+            shares.append(early / tot)
+    return shares
+
+
+@pytest.mark.parametrize("mode", [3, 5])
+def test_targets_are_interpolated_between_spi_frames(lib, mode):
+    """26/10/2026, jerks in ASSIST on the robot: the RT loop followed each new frame within a few ms and then
+    waited for the next one (steps every 10 ms). The head quaternion and the ASSIST B/S/G targets now glide
+    from one frame to the next."""
+    shares = motion_share_right_after_frames(lib, mode)
+    assert shares, "nothing moved"
+    assert max(shares) < 0.33, shares               # without it: 0.37-0.42; uniform = 0.30

@@ -83,6 +83,11 @@ stessa lunghezza minimale e originale sono identici.
 pressione dei grip (fronte del deadman): testa e posa di quel momento. Prima restava quello dell'ingresso nel modo,
 così girando la testa a grip rilasciati il braccio saltava alla ripresa. Test `test_grips_pressed_again_*`.
 
+**Interpolazione fra frame SPI (26/10, scatti in ASSIST).** In HEAD/HYBRID/ASSIST il quaternione del visore e i
+target B/S/G scorrono linearmente da un frame al successivo nell'intervallo misurato fra i frame (5-30 ms),
+`j5vr_smooth_between_frames()` sullo snapshot del RT loop; grip, pulsanti e stick restano quelli del frame. Cambio di
+modo o frame fermi da 100 ms: salto diretto. Test `test_targets_are_interpolated_between_spi_frames`.
+
 **Sfasamento del DMA (trovato sul robot il 26/10).** Il DMA circolare dello slave non si riallinea sul CS:
 se si arma a metà di un trasferimento, ogni risposta esce in ritardo di qualche byte e si spezza su due
 trasferimenti (sul robot: 3 byte, poi 0 dopo un reset dello STM32). La ricezione dello STM32 regge (finestra
