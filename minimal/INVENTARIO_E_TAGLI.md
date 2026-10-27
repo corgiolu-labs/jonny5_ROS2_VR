@@ -261,8 +261,11 @@ Resta senza librerie (oggi 75 KB; obiettivo < 100 KB con il tab Teleop). Grafico
 ## 5. Stato (27/10/2026, sera)
 
 - Punto 1 **fatto**: dashboard nuova + j5mini (tunnel `/ws`, posa del visore in telemetria, pose e velocità in
-  `save_config`), 39 test verdi, app telefono 0.4 compilata. Da fare appena il robot è acceso: deploy sul Pi
-  (diff + riavvio di `jonny5-j5mini`), installazione dell'app via adb, prova dal PC e dal telefono.
+  `save_config`), 40 test verdi. App telefono **0.5** installata (27/10 pomeriggio): solo la dashboard in WebView,
+  icona del visore, schermata d'errore nativa con ritentativo automatico; `?app=phone` nasconde solo il marchio.
+  Jog per giunto (−/+/⇄, "← fisico") in Impostazioni → Giunti. Collegamenti sul desktop del PC con la stessa icona
+  (hotspot e cavo). Da fare appena il robot è acceso: deploy sul Pi (diff + riavvio di `jonny5-j5mini`), prova dal
+  PC e dal telefono.
 - Punto 2 **fatto** per la parte Python (`find_frame`, `horizon_lock` doppio, sonda di debug del gimbal, parametri
   inutili di `configure`, `export_config.py`, docstring). **Rimandati** a un giro con il robot acceso, perché
   toccano i servizi video: `--roi`/`--autofocus-range` di cam_stream, ramo rpicam di `video_capture.sh`, profili
