@@ -283,6 +283,8 @@ Resta senza librerie (oggi 75 KB; obiettivo < 100 KB con il tab Teleop). Grafico
   al primo movimento (verificato: HOME da PARK parte dagli angoli di PARK); app Quest 1.4.6: ENABLE = SAFE+ENABLE, cosi'
   riparte anche dopo il fungo. Regola: PARK prima di spegnere. Poi (flash delle 20:45): i servo tengono la posa al
   rilascio dei grip e SETPOSE parte dall'angolo reale, niente scatti HOME/PARK/VR pose dopo il teleop.
+  Accensione a freddo verificata alle 21:00: STM32 ripartito, BOOT_READY perso (il Pi parte un minuto dopo), j5mini
+  manda la posa iniziale PARK perché il firmware riporta 90 ovunque; la prima VR pose parte esattamente da PARK.
 
 ## 5 bis. Ordine di esecuzione proposto
 
