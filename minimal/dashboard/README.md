@@ -15,7 +15,7 @@ ha internet) servita da `j5mini`, che parla con lo STM32. Gli stessi messaggi We
 Sul robot il certificato è autofirmato: la prima volta il browser chiede di accettarlo, una volta sola. La pagina
 parla con j5mini sulla stessa origine (`wss://<robot>/ws`, tunnel verso il WebSocket locale); se il tunnel non
 risponde prova `wss://<robot>:8557` (in quel caso va accettato anche lì). `?ws=wss://host:porta` forza un altro
-indirizzo; `?app=phone` nasconde marchio e STOP (l'app del telefono ha i suoi).
+indirizzo; `?app=phone` nasconde solo la riga del marchio (l'app del telefono è questa pagina e basta, STOP compreso).
 
 Stile: base scura della vecchia Control Room con gli accenti dell'app del telefono (teal, verde/ambra/rosso degli
 stati, numeri live in verde mono). Su telefono verticale le schede stanno in basso; in orizzontale (WebView

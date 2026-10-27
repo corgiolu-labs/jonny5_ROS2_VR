@@ -182,5 +182,4 @@ body:not(.motion-on) button.motion, body.teleop-live button.motion { opacity: .3
   #toast { bottom: 8px; }
 }
 /* dentro l'app telefono (?app=phone): STOP e marchio nativi */
-body.app-phone .brand, body.app-phone #stop { display: none; }
-body.app-phone header { padding-right: 130px; }
+body.app-phone .brand { display: none; }

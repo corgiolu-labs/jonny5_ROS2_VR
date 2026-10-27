@@ -11,7 +11,7 @@ const SK = ["servo_deg_B", "servo_deg_S", "servo_deg_G", "servo_deg_Y", "servo_d
 const MOTION_CMDS = /^(HOME|PARK|TELEOPPOSE|SETPOSE)/;
 const MODES = { 0: "PREPARAZIONE", 1: "POSE", 2: "MANUALE", 3: "HEAD", 4: "HYBRID", 5: "ASSIST" };
 const QS = new URLSearchParams(location.search);
-const APP = QS.get("app");                       // ?app=phone: dentro il WebView dell'app telefono (STOP nativo)
+const APP = QS.get("app");                       // ?app=phone: dentro il WebView dell'app telefono (niente riga del marchio)
 const S = {
   ws: null, connected: false, cfg: null, kin: null, tm: null, col: null, colAt: 0,
   target: [90, 90, 90, 90, 90, 90], pending: [], waiters: [], mine: new Set(), abort: false,
