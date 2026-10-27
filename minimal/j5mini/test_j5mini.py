@@ -929,3 +929,33 @@ def test_telemetry_carries_the_headset_pose():
     robot.tick()
     tm = core.telemetry_message()
     assert tm["vr_q"] == [0.9, 0.1, 0.2, 0.3] and tm["teleop_mode"] == 3 and tm["vr_heartbeat"] == 7
+
+
+def test_kinematics_editor_validates_saves_and_reconfigures_the_gimbal(tmp_path):
+    """Impostazioni -> Cinematica (POE): get_kinematics serves the file, save_kinematics validates, writes it with a
+    .bak (config on disk) and hands the new screw axes to the ASSIST gimbal."""
+    kin = tmp_path / "kinematics.json"
+    kin.write_text(j5mini.KIN_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    cfg = json.loads(json.dumps(CFG))
+    cfg["_path"] = str(tmp_path / "j5mini.json")
+    robot = j5mini.SimRobot(64)
+    core = j5mini.Core(cfg, robot, robot, log=lambda s: None)
+    srv = j5mini.Server(core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None), kin_path=kin)
+    assert srv.kin["S"][1][3] == -0.1343 and "_doc" in srv.kin
+    good = {k: srv.kin[k] for k in ("S", "M", "draw_points")}
+    for change, key in (({"S": good["S"][:5]}, "S:"), ({"S": [[0, 0, 2, 0, 0, 0]] + good["S"][1:]}, "S[0]"),
+                        ({"M": good["M"][:3] + [[0, 0, 0, 2]]}, "M:"), ({"draw_points": [[0, 0]] * 6}, "draw_points")):
+        bad = srv.save_kinematics({**good, **change})
+        assert bad["ok"] is False and bad["error"].startswith(key)
+    new_s = json.loads(json.dumps(good["S"]))
+    new_s[1][3] = -0.15
+    ok = srv.save_kinematics({**good, "S": new_s})
+    assert ok["ok"] is True and ok["saved_to_file"] is True
+    disk = json.loads(kin.read_text(encoding="utf-8"))
+    assert disk["S"][1][3] == -0.15 and disk["_doc"].startswith("JONNY5") and disk["joints"][0] == "Base"
+    assert json.loads((tmp_path / "kinematics.json.bak").read_text(encoding="utf-8"))["S"][1][3] == -0.1343
+    assert srv.kin["S"][1][3] == -0.15
+    if srv.assist:                                                   # numpy present: the gimbal got the new axes
+        assert srv.assist.g._glue["screws"][1][3] == -0.15 and srv.assist.g._ARM_GEOM is None
+        assert abs(srv.assist.g._arm_geom()[0] - 0.15) < 1e-9       # shoulder height from the new screw
+

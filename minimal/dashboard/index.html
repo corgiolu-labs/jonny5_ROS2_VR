@@ -263,6 +263,25 @@
         <p class="note">Le pose valgono subito dopo "Salva" (le esegue j5mini, non servono al firmware). "← target" copia gli slider della scheda Braccio.</p>
       </div>
       <div class="card wide">
+        <h3>Cinematica (POE) <small>assi di vite S, posa M e punti di disegno, in metri</small></h3>
+        <p class="note">Product of Exponentials: per ogni giunto l'asse di vite <code>[wx wy wz vx vy vz]</code> con w unitario
+          e <code>v = −w × q</code> (q un punto dell'asse), M = posa dell'end-effector con tutti i giunti a 90° virtuali.
+          Li usano la vista 3D, la tabella x/y/z e la IK del gimbal ASSIST (polso, spalla/gomito): dopo una modifica
+          meccanica del robot cambia qui e controlla la posa misurata nella scheda Braccio. Ogni modifica si vede subito
+          nella vista 3D; "Salva" la scrive in <code>kinematics.json</code> (copia <code>.bak</code>) e la passa al gimbal.</p>
+        <h4>Assi di vite S</h4>
+        <table id="kin-s" class="set kin-edit"></table>
+        <h4>Posa M (end-effector in HOME)</h4>
+        <table id="kin-m" class="set kin-edit"></table>
+        <h4>Punti di disegno (un punto per asse, in HOME)</h4>
+        <table id="kin-dp" class="set kin-edit"></table>
+        <div class="row">
+          <button id="kin-save" class="primary">Salva in kinematics.json</button>
+          <button id="kin-reload">Ricarica</button>
+        </div>
+        <pre id="kin-out" class="small"></pre>
+      </div>
+      <div class="card wide">
         <details>
           <summary>Avanzate: righe SET_VR_PARAMS e SET_PWM_CONFIG</summary>
           <p class="note">I parametri VR si modificano con le etichette nella scheda Teleop; qui la riga intera. PWM: Hz,

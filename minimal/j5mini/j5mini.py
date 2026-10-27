@@ -23,7 +23,8 @@ What it does (and nothing else):
     for the app's GET /api/controller-mappings and POST /api/refocus-cameras.
   - The dashboard (minimal/dashboard, served on the HTTPS port): get_config / save_config (offsets, dirs,
     joint limits, SET_VR_PARAMS and SET_PWM_CONFIG lines, PARK / VR poses, speed, profile -> j5mini.json,
-    with a .bak), ws_ping; its WebSocket goes through the same HTTPS port (/ws, tunnelled to a plain
+    with a .bak), get_kinematics / save_kinematics (POE axes -> dashboard/kinematics.json, used by the ASSIST
+    gimbal too), ws_ping; its WebSocket goes through the same HTTPS port (/ws, tunnelled to a plain
     listener on 127.0.0.1:ws.local_port) so the browser accepts one certificate only.
 
   - PARK / TELEOPPOSE from the clients become a SETPOSE to the saved poses (settings "park" / "vr", virtual
@@ -585,6 +586,57 @@ def save_config_file(path: str, lines: list[str], dirs: list[int], poses: dict |
     os.replace(tmp, path)
 
 
+# ------------------------------------------------------------------ kinematics (POE, dashboard + ASSIST gimbal)
+
+KIN_PATH = pathlib.Path(__file__).resolve().parent.parent / "dashboard" / "kinematics.json"
+
+
+def load_kinematics(path=KIN_PATH) -> dict | None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def kinematics_from_msg(msg: dict) -> tuple[dict | None, str | None]:
+    """The dashboard's POE editor: S (6 screw axes [w v], w unit), M (4x4, last row 0 0 0 1), draw_points (6 x 3),
+    metres. Validated: (data, None) or (None, error)."""
+    def nums(v, n):
+        return (isinstance(v, list) and len(v) == n and
+                all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in v))
+    S = msg.get("S")
+    if not (isinstance(S, list) and len(S) == 6 and all(nums(s, 6) for s in S)):
+        return None, "S: 6 assi di vite da 6 numeri [wx wy wz vx vy vz]"
+    for i, s in enumerate(S):
+        if abs(math.sqrt(s[0] ** 2 + s[1] ** 2 + s[2] ** 2) - 1.0) > 1e-3:
+            return None, f"S[{i}]: w deve essere unitario (|w| = 1)"
+    M = msg.get("M")
+    if not (isinstance(M, list) and len(M) == 4 and all(nums(r, 4) for r in M) and M[3] == [0, 0, 0, 1]):
+        return None, "M: matrice 4x4 con ultima riga 0 0 0 1"
+    dp = msg.get("draw_points")
+    if not (isinstance(dp, list) and len(dp) == 6 and all(nums(x, 3) for x in dp)):
+        return None, "draw_points: 6 punti [x y z]"
+    f = lambda rows: [[float(x) for x in r] for r in rows]  # noqa: E731
+    return {"S": f(S), "M": f(M), "draw_points": f(dp)}, None
+
+
+def save_kinematics_file(path, data: dict):
+    """Rewrites S, M and draw_points in kinematics.json (docs and joint names kept), previous file as .bak."""
+    path = str(path)
+    disk = load_kinematics(path) or {}
+    disk.update(data)
+    try:
+        os.replace(path, path + ".bak")
+    except OSError:
+        pass
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(disk, f, indent=1)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
 # ------------------------------------------------------------------ cameras (tools/cam_stream.py)
 
 class Cameras:
@@ -757,12 +809,17 @@ class Server:
     RELAY = ("cameras_refocus_triggered", "vr_session_state", "vr_zoom_command",
              "stereo_collimation", "stereo_calibrate", "vision_request", "vision_result")
 
-    def __init__(self, core: Core, lock: threading.Lock, cfg: dict, cams: Cameras | None = None):
+    def __init__(self, core: Core, lock: threading.Lock, cfg: dict, cams: Cameras | None = None, kin_path=KIN_PATH):
         self.core, self.lock, self.cfg = core, lock, cfg
         self.cams = cams or Cameras()
         self.clients = set()
         self.ignored = set()
+        self.kin_path = kin_path
+        self.kin = load_kinematics(kin_path) or {}      # POE: the dashboard draws with it, the ASSIST gimbal solves with it
         self.assist = Assist.create(core, lock, cfg)
+        if self.assist and self.kin.get("S"):
+            with self.lock:
+                self.assist.configure(self.kin["S"])
 
     async def handler(self, ws):
         self.clients.add(ws)
@@ -830,6 +887,11 @@ class Server:
                                       "saveable": bool(self.cfg.get("_path"))}))
         elif typ == "save_config":
             await ws.send(json.dumps(self.save_config(msg)))
+        elif typ == "get_kinematics":
+            await ws.send(json.dumps({"type": "kinematics", **{k: v for k, v in self.kin.items() if not k.startswith("_")},
+                                      "saveable": bool(self.cfg.get("_path"))}))
+        elif typ == "save_kinematics":
+            await ws.send(json.dumps(self.save_kinematics(msg)))
         elif typ == "ws_ping":
             await ws.send(json.dumps({"type": "ws_pong", "id": msg.get("id"), "ts_client": msg.get("ts_client"),
                                       "ts_server": time.time()}))
@@ -895,9 +957,28 @@ class Server:
             self.core.boot_lines = list(lines)
             self.core.vr_params_line = next((l for l in lines if l.startswith("SET_VR_PARAMS")), None)
             if self.assist:
-                self.assist.configure()
+                self.assist.configure(self.kin.get("S"))
         self.core.log(f"[j5mini] configuration saved ({'file' if path else 'memory only'})")
         return {"type": "config_saved", "ok": True, "saved_to_file": bool(path), "boot_commands": lines}
+
+    def save_kinematics(self, msg: dict) -> dict:
+        """POE editor of the dashboard (Impostazioni -> Cinematica): validated -> kinematics.json (+ .bak, only when
+        the config is on disk, as save_config) and at once into the ASSIST gimbal (wrist IK, arm geometry)."""
+        data, err = kinematics_from_msg(msg)
+        if err:
+            return {"type": "kinematics_saved", "ok": False, "error": err}
+        path = self.cfg.get("_path")
+        try:
+            if path:
+                save_kinematics_file(self.kin_path, data)
+        except OSError as e:
+            return {"type": "kinematics_saved", "ok": False, "error": str(e)}
+        with self.lock:
+            self.kin.update(data)
+            if self.assist:
+                self.assist.configure(data["S"])
+        self.core.log(f"[j5mini] kinematics saved ({'file' if path else 'memory only'})")
+        return {"type": "kinematics_saved", "ok": True, "saved_to_file": bool(path)}
 
     def time_sync(self, epoch_ms):
         if not self.cfg.get("set_clock") or not isinstance(epoch_ms, (int, float)):
@@ -977,13 +1058,10 @@ class Assist:
             return None
         return cls(core, lock, cfg, assist_gimbal)
 
-    def configure(self):
+    def configure(self, screws=None):
         s = settings_from_config(self.cfg)
-        try:
-            with open(HERE.parent / "dashboard" / "kinematics.json", encoding="utf-8") as f:
-                screws = json.load(f)["S"]
-        except (OSError, ValueError, KeyError):
-            screws = None
+        if screws is None:
+            screws = (load_kinematics() or {}).get("S")
         self.limits = {n: {"min": lo, "max": hi} for n, (lo, hi) in zip(self.LIMIT_NAMES, s["limits"])}
         self.g.configure(s["offsets"], s["dirs"], screws=screws, telemetry=lambda: self.core.telemetry)
 

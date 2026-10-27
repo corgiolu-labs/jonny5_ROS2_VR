@@ -267,6 +267,7 @@ Resta senza librerie (oggi 75 KB; obiettivo < 100 KB con il tab Teleop). Grafico
   inutili di `configure`, `export_config.py`, docstring). **Rimandati** a un giro con il robot acceso, perché
   toccano i servizi video: `--roi`/`--autofocus-range` di cam_stream, ramo rpicam di `video_capture.sh`, profili
   di `start_mediamtx.sh`, spostamento di `rtp_push` in `legacy/`.
+- Editor POE **fatto** (27/10 sera): Impostazioni → Cinematica, `get_kinematics` / `save_kinematics`, anteprima 3D, gimbal riconfigurato.
 - Punti 3 e 4: non iniziati (richiedono riflash e aggiornamento dell'app Quest).
 
 ## 5 bis. Ordine di esecuzione proposto

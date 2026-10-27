@@ -92,6 +92,16 @@ function onMessage(m) {
       $("b-sim").classList.toggle("hidden", !m.sim);
       if (typeof m.horizon_lock === "boolean") { S.horizon = m.horizon_lock; horizonButtons(); }
       buildJoints(); fillSettings(); buildVrp(); queueUi();
+      send({ type: "get_kinematics" });
+      break;
+    case "kinematics":
+      if (!Array.isArray(m.S)) { toast("cinematica non disponibile: vista 3D disattivata", true); break; }
+      S.kin = { S: m.S, M: m.M, draw_points: m.draw_points };
+      fillKin(); draw3d(measuredVirtual());
+      break;
+    case "kinematics_saved":
+      $("kin-out").textContent = m.ok ? `salvata ${m.saved_to_file ? "in kinematics.json (copia precedente in .bak)" : "solo in memoria (modalità simulata)"} e passata al gimbal ASSIST` : "errore: " + m.error;
+      toast(m.ok ? "cinematica salvata" : "errore: " + m.error, !m.ok);
       break;
     case "uart_response": {
       const i = S.pending.findIndex(p => p.cmd === m.cmd);
@@ -373,8 +383,6 @@ $("h-horizon").onclick = $("tp-horizon").onclick = () => {
 
 // ------------------------------------------------------------------ arm tab: joints, poses, 3D
 const view = new View3D($("view3d"));
-fetch("kinematics.json").then(r => r.json()).then(k => { S.kin = k; queueUi(); draw3d(measuredVirtual()); })
-  .catch(() => toast("kinematics.json non trovato: vista 3D disattivata", true));
 
 function buildJoints() {
   const box = $("joints");
@@ -652,6 +660,36 @@ $("set-apply").onclick = async () => {
   for (const l of lines) { const r = await uart(l); out.push(`${r.ok ? "OK " : "ERR"}  ${l}  →  ${r.response}`); }
   $("set-out").textContent = out.join("\n") + "\n\nApplicato solo al firmware acceso: per tenerlo, Salva in j5mini.json (le pose si salvano soltanto).";
 };
+
+// ------------------------------------------------------------------ settings: POE editor
+const KIN_COLS = { s: ["wx", "wy", "wz", "vx", "vy", "vz"], m: ["r1", "r2", "r3", "pos (m)"], dp: ["x", "y", "z"] };
+function kinTable(id, cols, rowNames, rows, fixedLast = false) {
+  const head = `<tr><th></th>${cols.map(c => `<th>${c}</th>`).join("")}</tr>`;
+  const body = rows.map((r, i) => `<tr><td>${rowNames[i]}</td>` + r.map((v, j) =>
+    fixedLast && i === rows.length - 1 ? `<td class="fixed">${v}</td>` :
+      `<td><input type="number" step="0.0001" id="${id}-${i}-${j}" value="${v}" inputmode="decimal"></td>`).join("") + "</tr>").join("");
+  $(id).innerHTML = head + body;
+}
+function fillKin() {
+  const k = S.kin;
+  if (!k) return;
+  kinTable("kin-s", KIN_COLS.s, JN, k.S);
+  kinTable("kin-m", KIN_COLS.m, ["x", "y", "z", ""], k.M, true);
+  kinTable("kin-dp", KIN_COLS.dp, JN, k.draw_points);
+  for (const id of ["kin-s", "kin-m", "kin-dp"]) $(id).querySelectorAll("input").forEach(inp => inp.onchange = () => {
+    S.kin = readKin(); draw3d(measuredVirtual()); $("kin-out").textContent = "modificata (anteprima nella vista 3D): non ancora salvata";
+  });
+}
+function readKin() {
+  const num = id => Number($(id).value);
+  return {
+    S: JN.map((_, i) => KIN_COLS.s.map((_, j) => num(`kin-s-${i}-${j}`))),
+    M: [0, 1, 2].map(i => KIN_COLS.m.map((_, j) => num(`kin-m-${i}-${j}`))).concat([[0, 0, 0, 1]]),
+    draw_points: JN.map((_, i) => KIN_COLS.dp.map((_, j) => num(`kin-dp-${i}-${j}`))),
+  };
+}
+$("kin-save").onclick = () => { if (!send({ type: "save_kinematics", ...readKin() })) toast("non collegato", true); };
+$("kin-reload").onclick = () => send({ type: "get_kinematics" });
 
 // ------------------------------------------------------------------ tests tab
 $("t-ping").onclick = async () => {

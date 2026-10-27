@@ -120,6 +120,9 @@ th:first-child, td:first-child { text-align: left; color: var(--muted); }
 table.kin { margin-top: 10px; }
 table.set input { width: 72px; } table.set select { width: 66px; }
 table.set input.pose { width: 64px; }
+table.kin-edit input { width: 82px; min-height: 32px; padding: 4px 6px; font-size: 13px; }
+table.kin-edit, table#set-poses, table#set-joints { display: block; overflow-x: auto; }   /* scorrono in orizzontale sul telefono */
+table.kin-edit td.fixed { color: var(--muted); }
 .manip { display: flex; gap: 10px; align-items: center; margin-top: 10px; color: var(--muted); font-size: 14px; }
 .manip meter { flex: 1; height: 14px; }
 details { margin: 12px 0; } summary { cursor: pointer; color: var(--muted); }
