@@ -19,6 +19,7 @@ const S = {
   imuRef: null, imuRefLabel: "", homePending: false, horizon: false, camp: false, visionReq: 0, wsAlt: false,
 };
 if (APP) document.body.classList.add("app-" + APP);
+if (APP) document.querySelectorAll("a.tab-link").forEach(a => a.href += location.search);   // la guida tiene ?app=
 
 // ------------------------------------------------------------------ WebSocket
 /** Stessa origine della pagina (wss://robot/ws, un solo certificato); se il tunnel non risponde, la porta 8557 diretta. */
