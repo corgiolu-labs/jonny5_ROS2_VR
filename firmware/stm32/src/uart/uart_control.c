@@ -368,11 +368,6 @@ static void uart_process_command(uint32_t seq, const char *cmd)
         }
         uart_send_response_with_seq(seq, s);
     }
-    /* --- HYBRID ENABLE: lo manda ancora l'app Quest prima del modo 4; risponde OK e basta --- */
-    else if (strcmp(cmd, "HYBRID ENABLE") == 0)
-    {
-        uart_send_response_with_seq(seq, "OK HYBRID ENABLED");
-    }
     /* --- Diagnostica VR --- */
     else if (strncmp(cmd, "VR?", 3) == 0)
     {

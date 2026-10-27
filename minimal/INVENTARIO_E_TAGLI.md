@@ -277,7 +277,7 @@ Resta senza librerie (oggi 75 KB; obiettivo < 100 KB con il tab Teleop). Grafico
   insieme al deploy sul Pi (`ws.local_port 8556` aggiunto). Provato sul robot: HOME, giro ASSIST con Orizzonte e puntamenti
   della visione, PARK/TELEOPPOSE, fungo (ESTOP → STOPPED, ESTOP_CLEAR senza ripartenza, SAFE+ENABLE), 45.000 frame SPI
   senza errori. Dettaglio in `firmware/stm32/MINIMAL.md`.
-- Punto 4 (`HYBRID ENABLE`): non iniziato, richiede l'app Quest.
+- Punto 4 (`HYBRID ENABLE`) **fatto** (27/10 sera): app Quest 1.4.5 non lo manda piu', firmware senza il comando (riflash).
 
 ## 5 bis. Ordine di esecuzione proposto
 

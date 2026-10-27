@@ -84,7 +84,6 @@ PI_BOOT_PUSH = [
     "#3 SET_JOINT_LIMITS 0 10 170", "#4 SET_JOINT_LIMITS 1 10 170", "#5 SET_JOINT_LIMITS 2 10 170",
     "#6 SET_JOINT_LIMITS 3 10 170", "#7 SET_JOINT_LIMITS 4 50 145", "#8 SET_JOINT_LIMITS 5 68 128",
     "#9 SET_PWM_CONFIG 50 500 2500 180 330 500 2500 180",
-    "#11 HYBRID ENABLE",
 ]
 
 
@@ -219,9 +218,10 @@ def test_uart_seq_prefix_and_errors(lib):
     assert s.command("FOO") == ["ERR UNKNOWN"]
     assert s.command("PP1 50") == ["ERR UNKNOWN"]            # pick&place removed (no hardware on the G474)
     assert s.command("HOME") == ["ERR BUSY"]                 # not IDLE
-    assert s.command("HYBRID ENABLE") == ["OK HYBRID ENABLED"]   # still sent by the Quest app before mode 4
-    # removed 27/10/2026 (nobody sent them): integer SETPOSE_T, HYBRID DISABLE, the RESET alias of SAFE
+    # removed 27/10/2026 (nobody sends them any more): integer SETPOSE_T, HYBRID ENABLE / DISABLE (the Quest app
+    # 1.4.5 no longer sends HYBRID ENABLE before mode 4: mode 4 is just the J5VR mode byte), the RESET alias of SAFE
     assert s.command("SETPOSE_T 90 90 90 90 90 90 500 RTR5") == ["ERR UNKNOWN"]
+    assert s.command("HYBRID ENABLE") == ["ERR UNKNOWN"]
     assert s.command("HYBRID DISABLE") == ["ERR UNKNOWN"]
     assert s.command("RESET") == ["ERR UNKNOWN"]
 

@@ -39,7 +39,7 @@ fungo, PARK/TELEOPPOSE; backup della flash precedente in `jonny5-backups/pre-cut
 | Tolto | Note |
 |---|---|
 | `SETPOSE_T` a gradi interi (`j5vr_go_setpose_time`) | resta `SETPOSE_T_HR` in decimi di grado; `SETPOSE_T ...` ora risponde `ERR UNKNOWN` |
-| `HYBRID DISABLE`, alias `RESET` di `SAFE` | `HYBRID ENABLE` resta (lo manda l'app Quest prima del modo 4) |
+| `HYBRID ENABLE` / `HYBRID DISABLE`, alias `RESET` di `SAFE` | `HYBRID ENABLE` tolto la sera stessa insieme all'app Quest 1.4.5 (il modo 4 e' solo il byte mode del J5VR) |
 | modo 1 POSE e modo 6 JOINT_STREAM nel RT loop | un modo sconosciuto non attua nulla (prima il fallback era MANUAL) e non impedisce il riarmo |
 | `servo_set_angle()` a interi con il log `[PWM_US]`, `servo_last_sent_angle[]` | resta `servo_set_angle_f()` |
 | `imu_get_quaternion()` e la copia `g_imu_quat`, `bno085_is_ready()` | `imu_get_snapshot()` e' l'unica lettura |
@@ -54,7 +54,7 @@ fungo, PARK/TELEOPPOSE; backup della flash precedente in `jonny5-backups/pre-cut
 Corretto nello stesso giro: il bit 4 di diag (`guard`) segue il freeze invece di restare a 1 (stranezza 13 qui sotto).
 Build Zephyr: Flash 76244 B, RAM 25922 B; `src/` 7093 righe; `python -m pytest tools/fw_sim -q` 23 test.
 
-Rimasti, anche se poco usati: IMU BNO085 (solo telemetria, sempre accesa), `HYBRID ENABLE` (risponde OK, lo manda l'app Quest), `VR?`,
+Rimasti, anche se poco usati: IMU BNO085 (solo telemetria, sempre accesa), `VR?`,
 pulsante centrale PC13, log `J5VR_DEBUG_MINIMAL` (attivo).
 
 Spostato senza modifiche: la logica dei frame SPI (finestra, scelta del frame, risposte, contatori) da
