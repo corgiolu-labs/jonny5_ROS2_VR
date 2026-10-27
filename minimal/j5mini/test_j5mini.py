@@ -849,3 +849,83 @@ def point_end_wrist_jump():
 def test_point_at_object_ends_without_a_wrist_jump():
     assert point_end_wrist_jump() < 1.0                 # per-intent wrist change (deg) right after the motion;
                                                         # before: 3.4 (arm assist at full rate at once)
+
+
+def test_dashboard_websocket_tunnel_on_the_https_port():
+    """GET /ws with Upgrade on the HTTPS port reaches the controller's local listener byte by byte: the page
+    talks to its own origin and the browser accepts one certificate (443), not two."""
+    websockets = pytest.importorskip("websockets")
+    robot = j5mini.SimRobot(64)
+    core = j5mini.Core(json.loads(json.dumps(CFG)), robot, robot, log=lambda s: None)
+    srv = j5mini.Server(core, threading.Lock(), json.loads(json.dumps(CFG)),
+                        j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+
+    async def go():
+        async with websockets.serve(srv.handler, "127.0.0.1", 0) as local:
+            lport = next(iter(local.sockets)).getsockname()[1]
+            http = j5mini.https_server({"https": {"host": "127.0.0.1", "port": 0}, "ws": {"local_port": lport}},
+                                       srv.cams, threading.Lock())
+            threading.Thread(target=http.serve_forever, daemon=True).start()
+            try:
+                async with websockets.connect(f"ws://127.0.0.1:{http.server_address[1]}/ws") as ws:
+                    await ws.send(json.dumps({"type": "ws_ping", "id": 3}))
+                    while True:
+                        m = json.loads(await asyncio.wait_for(ws.recv(), 2))
+                        if m["type"] == "ws_pong":
+                            return m
+            finally:
+                http.shutdown()
+
+    assert asyncio.run(go())["id"] == 3
+
+
+def test_https_ws_without_a_local_listener_is_refused():
+    srv = j5mini.https_server({"https": {"host": "127.0.0.1", "port": 0}}, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None),
+                              threading.Lock())
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    import http.client                      # urllib would force "Connection: close"
+    c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=2)
+    c.putrequest("GET", "/ws", skip_host=False)
+    c.putheader("Connection", "Upgrade")
+    c.putheader("Upgrade", "websocket")
+    c.endheaders()
+    assert c.getresponse().status == 503
+    c.close()
+    srv.shutdown()
+
+
+def test_save_config_poses_speed_and_profile(tmp_path):
+    """PARK / VR poses, SETPOSE speed and profile edited by the dashboard: validated, written to j5mini.json and
+    used at once by pose_command()."""
+    path = tmp_path / "j5mini.json"
+    path.write_text((HERE / "j5mini.example.json").read_text(encoding="utf-8"), encoding="utf-8")
+    cfg = json.loads(json.dumps(CFG))
+    cfg["_path"] = str(path)
+    robot = j5mini.SimRobot(64)
+    core = j5mini.Core(cfg, robot, robot, log=lambda s: None)
+    srv = j5mini.Server(core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+    s = j5mini.settings_from_config(cfg)
+    assert s["park"] == CFG["settings"]["park"] and s["speed_pct"] == 40 and s["profile"] == "RTR5"
+    for change, key in ((dict(speed_pct=0), "speed_pct"), (dict(profile="FAST"), "profile"), (dict(vr=[90] * 5), "vr"),
+                        (dict(park=[90, 90, 90, 90, 90, 181]), "park")):
+        bad = srv.save_config({**s, **change})
+        assert bad["ok"] is False and bad["error"].startswith(key)
+    ok = srv.save_config({**s, "park": [90, 60, 140, 90, 120, 90.5], "speed_pct": 25, "profile": "RTR3"})
+    assert ok["ok"] is True
+    disk = json.loads(path.read_text(encoding="utf-8"))["settings"]
+    assert disk["park"] == [90, 60, 140, 90, 120, 90.5] and disk["speed_pct"] == 25 and disk["profile"] == "RTR3"
+    assert disk["vr"] == CFG["settings"]["vr"]
+    assert j5mini.pose_setpose_line(cfg, "park").endswith(" 25 RTR3")
+    assert j5mini.settings_from_config(cfg)["profile"] == "RTR3"
+
+
+def test_telemetry_carries_the_headset_pose():
+    robot = j5mini.SimRobot(64)
+    core = j5mini.Core(json.loads(json.dumps(CFG)), robot, robot, clock=lambda: robot.sim.now_ms() / 1000.0,
+                       log=lambda s: None)
+    assert core.telemetry_message()["vr_q"] is None
+    assert core.set_intent(intent(mode=3, heartbeat=7, quat_w=0.9, quat_x=0.1, quat_y=0.2, quat_z=0.3, timestamp=1.0)) is None
+    core.step()
+    robot.tick()
+    tm = core.telemetry_message()
+    assert tm["vr_q"] == [0.9, 0.1, 0.2, 0.3] and tm["teleop_mode"] == 3 and tm["vr_heartbeat"] == 7

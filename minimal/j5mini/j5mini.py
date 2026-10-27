@@ -22,7 +22,9 @@ What it does (and nothing else):
     raspberry/tools/cam_stream.py over UDP, as ws-teleop; get_settings (offsets/dirs); HTTPS on 443
     for the app's GET /api/controller-mappings and POST /api/refocus-cameras.
   - The dashboard (minimal/dashboard, served on the HTTPS port): get_config / save_config (offsets, dirs,
-    joint limits, SET_VR_PARAMS and SET_PWM_CONFIG lines -> j5mini.json, with a .bak), ws_ping.
+    joint limits, SET_VR_PARAMS and SET_PWM_CONFIG lines, PARK / VR poses, speed, profile -> j5mini.json,
+    with a .bak), ws_ping; its WebSocket goes through the same HTTPS port (/ws, tunnelled to a plain
+    listener on 127.0.0.1:ws.local_port) so the browser accepts one certificate only.
 
   - PARK / TELEOPPOSE from the clients become a SETPOSE to the saved poses (settings "park" / "vr", virtual
     degrees), as ws-teleop did (the firmware's own PARK/TELEOPPOSE go to one factory pose), then teleop_pose_ack.
@@ -462,13 +464,18 @@ class Core:
 
     def telemetry_message(self) -> dict:
         intent_age = self.clock() - self.payload_t
+        live = intent_age < 1.0 and self.payload is not None
         return {"type": "telemetry", "robot_state": self.robot_state, **self.telemetry,
                 "deadman_active": self.diag.get("deadman"), "vr_armed": self.diag.get("armed"),
                 "estop_active": self.diag.get("estop_active"), "estop_bypass": self.diag.get("estop_bypass"),
                 "input_active": self.diag.get("input_active"), "vr_freeze": self.diag.get("freeze"),
-                "vr_guard": self.diag.get("guard"), "diag": self.diag.get("diag"),
-                "teleop_mode": self.last_mode if intent_age < 1.0 else -1,
+                "vr_guard": self.diag.get("guard"),
+                "teleop_mode": self.last_mode if live else -1,
                 "intent_age_ms": int(intent_age * 1000) if self.payload is not None else None,
+                # the headset's orientation as the app sends it (dashboard "Visore" card), the heartbeat and the
+                # mode echoed by the firmware in its STATUS reply
+                "vr_q": [round(v, 4) for v in self.samples[-1][2]] if live and self.samples else None,
+                "vr_heartbeat": self.last_hb if live else None, "mode_echo": self.diag.get("mode_echo"),
                 "link": dict(self.stats)}
 
 
@@ -511,11 +518,42 @@ def settings_from_config(cfg: dict) -> dict:
         f = l.split()
         if f[0] == "SET_JOINT_LIMITS" and len(f) == 4 and f[1].isdigit() and int(f[1]) < 6:
             limits[int(f[1])] = [int(f[2]), int(f[3])]
-    dirs = list(cfg.get("settings", {}).get("dirs", [1] * 6))
+    st = cfg.get("settings", {})
+    dirs = list(st.get("dirs", [1] * 6))
     return {"offsets": offsets, "dirs": dirs, "limits": limits,
             "vr_params": next((l for l in lines if l.startswith("SET_VR_PARAMS ")), ""),
             "pwm_config": next((l for l in lines if l.startswith("SET_PWM_CONFIG ")), ""),
-            "boot_commands": list(lines)}
+            "boot_commands": list(lines), **poses_from_settings(st)}
+
+
+def poses_from_settings(st: dict) -> dict:
+    """PARK / VR poses (virtual degrees), SETPOSE speed and profile used by pose_command()."""
+    return {"park": list(st.get("park", POSE_DEFAULTS["park"])), "vr": list(st.get("vr", POSE_DEFAULTS["vr"])),
+            "speed_pct": int(st.get("speed_pct", POSE_DEFAULTS["speed_pct"])),
+            "profile": str(st.get("profile", POSE_DEFAULTS["profile"]))}
+
+
+def poses_from_settings_msg(s: dict) -> tuple[dict | None, str | None]:
+    """The optional pose fields of save_config, validated: (poses, None) or (None, error); {} when absent."""
+    out = {}
+    for name in ("park", "vr"):
+        v = s.get(name)
+        if v is None:
+            continue
+        if not (isinstance(v, list) and len(v) == 6 and
+                all(isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 180 for x in v)):
+            return None, f"{name}: 6 angoli virtuali 0..180"
+        out[name] = [round(float(x), 1) for x in v]
+    if s.get("speed_pct") is not None:
+        pct = s["speed_pct"]
+        if not (isinstance(pct, (int, float)) and not isinstance(pct, bool) and 1 <= pct <= 100):
+            return None, "speed_pct: 1..100"
+        out["speed_pct"] = int(pct)
+    if s.get("profile") is not None:
+        if s["profile"] not in ("RTR5", "RTR3", "BCB", "BB"):
+            return None, "profile: RTR5, RTR3, BCB o BB"
+        out["profile"] = s["profile"]
+    return out, None
 
 
 def boot_lines_from_settings(s: dict) -> tuple[list[str] | None, str | None]:
@@ -544,14 +582,15 @@ def boot_lines_from_settings(s: dict) -> tuple[list[str] | None, str | None]:
     return lines, None
 
 
-def save_config_file(path: str, lines: list[str], dirs: list[int]):
+def save_config_file(path: str, lines: list[str], dirs: list[int], poses: dict | None = None):
     """Rewrites only boot_commands and settings in the config file (the in-memory cfg has absolute paths),
-    keeping the previous file as .bak."""
+    keeping the previous file as .bak. poses: park / vr / speed_pct / profile, only the keys given."""
     with open(path, encoding="utf-8") as f:
         disk = json.load(f)
     disk["boot_commands"] = lines
     disk.setdefault("settings", {})["offsets"] = [int(v) for v in lines[0].split()[1:7]]
     disk["settings"]["dirs"] = dirs
+    disk["settings"].update(poses or {})
     try:
         os.replace(path, path + ".bak")
     except OSError:
@@ -803,6 +842,7 @@ class Server:
         elif typ == "get_config":
             with self.lock:
                 s = settings_from_config(self.cfg)
+                s["horizon_lock"] = self.core.horizon_on
             await ws.send(json.dumps({"type": "config", **s, "sim": bool(self.cfg.get("_sim")),
                                       "saveable": bool(self.cfg.get("_path"))}))
         elif typ == "save_config":
@@ -854,16 +894,20 @@ class Server:
         lines, err = boot_lines_from_settings(msg)
         if err:
             return {"type": "config_saved", "ok": False, "error": err}
+        poses, err = poses_from_settings_msg(msg)
+        if err:
+            return {"type": "config_saved", "ok": False, "error": err}
         path = self.cfg.get("_path")
         try:
             if path:
-                save_config_file(path, lines, list(msg["dirs"]))
+                save_config_file(path, lines, list(msg["dirs"]), poses)
         except (OSError, ValueError) as e:
             return {"type": "config_saved", "ok": False, "error": str(e)}
         with self.lock:
             self.cfg["boot_commands"] = lines
             self.cfg.setdefault("settings", {})["offsets"] = list(msg["offsets"])
             self.cfg["settings"]["dirs"] = list(msg["dirs"])
+            self.cfg["settings"].update(poses)
             self.core.horizon_dirs = [1 if d >= 0 else -1 for d in msg["dirs"]]
             self.core.boot_lines = list(lines)
             self.core.vr_params_line = next((l for l in lines if l.startswith("SET_VR_PARAMS")), None)
@@ -1046,6 +1090,8 @@ def https_server(cfg: dict, cams: Cameras, lock: threading.Lock):
 
         def do_GET(self):
             path = self.path.split("?")[0]
+            if path == "/ws" and "upgrade" in (self.headers.get("Connection") or "").lower():
+                return self.tunnel_ws()
             if path == "/api/controller-mappings" and h_cfg.get("controller_mappings"):
                 try:
                     with open(h_cfg["controller_mappings"], "rb") as f:
@@ -1066,6 +1112,49 @@ def https_server(cfg: dict, cams: Cameras, lock: threading.Lock):
                     self.wfile.write(body)
                     return
             self._reply(404, b'{"ok":false}')
+
+        def tunnel_ws(self):
+            """The dashboard's WebSocket on this same port and origin (wss://robot/ws): one certificate to
+            accept instead of two (443 and 8557, the phone's WebView included). The handshake and everything
+            after it are copied byte by byte to the controller's local listener (ws.local_port, loopback);
+            the apps keep their direct wss://robot:8557."""
+            port = int(ws_cfg.get("local_port") or 0)
+            try:
+                up = socket.create_connection(("127.0.0.1", port), timeout=5) if port else None
+            except OSError:
+                up = None
+            if up is None:
+                return self._reply(503, b'{"ok":false,"error":"websocket non disponibile"}')
+            head = f"GET {self.path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in self.headers.items()) + "\r\n"
+            self.close_connection = True
+            down = self.connection
+            up.settimeout(None)
+            down.settimeout(None)
+
+            def pump(src, dst):
+                try:
+                    while True:
+                        data = src.recv(65536)
+                        if not data:
+                            break
+                        dst.sendall(data)
+                except OSError:
+                    pass
+                finally:
+                    for s in (src, dst):
+                        try:
+                            s.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+
+            try:
+                up.sendall(head.encode("latin-1"))
+                t = threading.Thread(target=pump, args=(up, down), daemon=True, name="j5mini-ws-tunnel")
+                t.start()
+                pump(down, up)
+                t.join(2)
+            finally:
+                up.close()
 
         def do_POST(self):
             path = self.path.split("?")[0]
@@ -1145,9 +1234,15 @@ async def serve(core: Core, lock: threading.Lock, cfg: dict, cams: Cameras):
         ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_ctx.load_cert_chain(ws_cfg["cert"], ws_cfg["key"])
     srv = Server(core, lock, cfg, cams)
+    local = int(ws_cfg.get("local_port") or 0)        # plain ws on loopback for the HTTPS server's /ws tunnel
     async with websockets.serve(srv.handler, ws_cfg.get("host", "0.0.0.0"), ws_cfg.get("port", 8557), ssl=ssl_ctx):
         core.log(f"[j5mini] {'wss' if ssl_ctx else 'ws'}://0.0.0.0:{ws_cfg.get('port', 8557)} ready")
-        await srv.broadcast_loop()
+        if local:
+            async with websockets.serve(srv.handler, "127.0.0.1", local):
+                core.log(f"[j5mini] dashboard WebSocket tunnel: /ws on the HTTPS port -> 127.0.0.1:{local}")
+                await srv.broadcast_loop()
+        else:
+            await srv.broadcast_loop()
 
 
 def main():
@@ -1167,7 +1262,8 @@ def main():
     if a.sim:
         # plain ws/http on this PC (no certificate), dashboard on --http-port, no clock setting, no telemetry file
         cfg["_sim"] = True
-        cfg["ws"] = {"host": cfg.get("ws", {}).get("host", "0.0.0.0"), "port": 8557}
+        cfg["ws"] = {"host": cfg.get("ws", {}).get("host", "0.0.0.0"), "port": 8557,
+                     "local_port": cfg.get("ws", {}).get("local_port", 8556)}
         cfg["https"] = {**cfg.get("https", {}), "host": "0.0.0.0", "port": a.http_port}
         cfg["set_clock"] = False
         cfg.pop("telemetry_file", None)

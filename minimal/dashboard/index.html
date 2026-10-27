@@ -2,40 +2,57 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JONNY5 Banco</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05070c">
+<title>JONNY5 Control Room</title>
 <link rel="stylesheet" href="style.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e6ec8'/%3E%3Cpath d='M8 25 L13 15 L21 11 L25 6' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2305070c'/%3E%3Cpath d='M8 25 L13 15 L21 11 L25 6' stroke='%231ec8a5' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 </head>
 <body>
 <header>
-  <div class="brand">JONNY5 <span>banco</span></div>
-  <div class="badges">
-    <span id="b-link" class="badge off" title="Collegamento WebSocket con j5mini">non collegato</span>
-    <span id="b-state" class="badge" title="Stato del firmware (STATUS?)">?</span>
-    <span id="b-estop" class="badge" title="Fungo di emergenza">E-STOP ?</span>
-    <span id="b-teleop" class="badge dim" title="Chi comanda il braccio">visore: no</span>
-    <span id="b-sim" class="badge sim hidden">SIMULATO</span>
+  <div class="brand">JONNY5 <span>control room</span></div>
+  <div class="pills">
+    <span id="b-link" class="pill off" title="Collegamento WebSocket con j5mini">non collegato</span>
+    <span id="b-state" class="pill" title="Stato del firmware (STATUS?)">?</span>
+    <span id="b-estop" class="pill" title="Fungo di emergenza">E-STOP ?</span>
+    <span id="b-teleop" class="pill dim" title="Chi comanda il braccio">visore: no</span>
+    <span id="b-horizon" class="pill dim" title="Orizzonte: l'immagine resta orizzontale">orizzonte off</span>
+    <span id="b-sim" class="pill sim hidden">SIMULATO</span>
   </div>
   <label class="arm" title="Senza questo i comandi di movimento sono disattivati">
-    <input type="checkbox" id="motion"> comandi di movimento
+    <input type="checkbox" id="motion"> <span>comandi di movimento</span>
   </label>
   <button id="stop" class="stop" title="STOP (anche con Esc o barra spaziatrice)">STOP</button>
 </header>
 
 <nav id="tabs">
-  <button data-tab="stato" class="active">Stato</button>
-  <button data-tab="braccio">Braccio</button>
-  <button data-tab="camere">Camere</button>
-  <button data-tab="comandi">Comandi</button>
-  <button data-tab="impostazioni">Impostazioni</button>
-  <button data-tab="test">Test</button>
-  <button data-tab="guida">Guida</button>
+  <button data-tab="stato" class="active"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Stato</span></button>
+  <button data-tab="braccio"><svg viewBox="0 0 24 24"><circle cx="5" cy="19" r="2"/><path d="M6.5 17.5 10 9l6 2 4-6"/><circle cx="10" cy="9" r="1.5"/><circle cx="16" cy="11" r="1.5"/></svg><span>Braccio</span></button>
+  <button data-tab="camere"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="13" height="11" rx="2"/><path d="m16 11 5-3v9l-5-3"/></svg><span>Camere</span></button>
+  <button data-tab="teleop"><svg viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="9" rx="3"/><path d="M8 17v2M16 17v2"/><circle cx="7.5" cy="12.5" r="1.5"/><circle cx="16.5" cy="12.5" r="1.5"/></svg><span>Teleop</span></button>
+  <button data-tab="comandi"><svg viewBox="0 0 24 24"><path d="m5 7 5 5-5 5M12 17h7"/></svg><span>Comandi</span></button>
+  <button data-tab="impostazioni"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Impostazioni</span></button>
+  <button data-tab="test"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4 20h16l-6-11V3"/></svg><span>Test</span></button>
+  <a href="guida.html" class="tab-link"><svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM8 7h8M8 11h8M8 15h5"/></svg><span>Guida</span></a>
 </nav>
 
 <main>
   <!-- ======================================================================= STATO -->
   <section id="stato" class="tab active">
+    <div class="hero">
+      <div>
+        <h2>Stato sistema</h2>
+        <div id="hero-sub" class="hero-sub">in attesa del collegamento…</div>
+      </div>
+      <div class="row cmds">
+        <button id="h-enable" class="primary" title="SAFE poi ENABLE: il robot passa in IDLE, pronto">ENABLE</button>
+        <button id="h-safe" title="servo spenti; si riarma da solo con un flusso dal visore">SAFE</button>
+        <button id="h-home" class="motion" title="HOME: tutti i giunti agli offset (90° virtuali)">HOME</button>
+        <button id="h-park" class="motion" title="posa di parcheggio (Impostazioni → Pose)">PARK</button>
+        <button id="h-vr" class="motion" title="posa di partenza della teleoperazione (Impostazioni → Pose)">VR pose</button>
+        <button id="h-horizon" class="toggle" title="Orizzonte: tiene l'immagine delle camere orizzontale in ogni modo">Orizzonte</button>
+      </div>
+    </div>
     <div class="grid">
       <div class="card">
         <h3>Robot</h3>
@@ -46,12 +63,16 @@
         <dl id="st-link"></dl>
       </div>
       <div class="card">
-        <h3>Teleoperazione</h3>
+        <h3>Visore</h3>
         <dl id="st-teleop"></dl>
       </div>
       <div class="card">
-        <h3>IMU (polso)</h3>
+        <h3>IMU (polso) <small id="imu-ref-lbl">grezza</small></h3>
         <dl id="st-imu"></dl>
+        <div class="row small">
+          <button id="imu-zero" class="tiny" title="da qui in poi roll/pitch/yaw sono relativi a questa orientazione">riferimento = adesso</button>
+          <button id="imu-raw" class="tiny">grezza</button>
+        </div>
       </div>
       <div class="card">
         <h3>Telecamere e stereo</h3>
@@ -76,7 +97,7 @@
         <h3>Giunti <small>angoli virtuali, HOME = 90°</small></h3>
         <div id="joints"></div>
         <div class="row">
-          <label>tempo <input type="number" id="move-ms" value="1500" min="200" max="10000" step="100"> ms</label>
+          <label>tempo <input type="number" id="move-ms" value="1500" min="200" max="10000" step="100" inputmode="numeric"> ms</label>
           <label>profilo <select id="move-prof">
             <option value="RTR5">RTR5 quintico (min. jerk)</option>
             <option value="RTR3">RTR3 cubico</option>
@@ -128,7 +149,7 @@
         <label>zoom <select id="cam-zoom"><option>1</option><option>1.5</option><option>2</option><option>3</option><option>4</option></select></label>
         <label>fuoco <select id="cam-focus"><option value="auto">auto</option><option value="0">∞</option><option value="0.5">2 m</option>
           <option value="1">1 m</option><option value="2">50 cm</option><option value="4">25 cm</option></select></label>
-        <label>luminosità <input type="range" id="cam-ev" min="-2" max="2" step="0.33" value="0"> <span id="cam-ev-v">0.0 EV</span></label>
+        <label>luminosità <input type="range" id="cam-ev" min="-2" max="2" step="0.33" value="0"> <span id="cam-ev-v" class="live">0.0 EV</span></label>
       </div>
       <div class="cams">
         <div><h3>Sinistra <small>cam0</small> <button id="cam-shot0" class="tiny">istantanea</button></h3>
@@ -137,21 +158,80 @@
           <video id="cam-v1" autoplay muted playsinline poster="data:image/gif;base64,R0lGODlhAQABAAAAACw="></video><pre id="cam-s1" class="small">fermo</pre></div>
       </div>
       <pre id="cam-cmp" class="small"></pre>
+      <h4>Distanza stereo</h4>
+      <div class="row">
+        <span id="cal-now" class="live">collimatore: nessun dato</span>
+        <label>distanza reale al mirino <input type="number" id="cal-mm" value="460" min="100" max="5000" step="10" inputmode="numeric"> mm</label>
+        <button id="cal-go">calibra a questa distanza</button>
+      </div>
       <p class="note">Video WebRTC da MediaMTX sul robot (lo stesso flusso delle app, che lo ricevono in RTSP). Esito OK con
         almeno 20 fps e meno dell'1 % di pacchetti persi. La nitidezza (varianza del laplaciano) serve a confrontare le due
         camere sulla stessa scena: inquadra un oggetto con dettagli. Zoom, fuoco e luminosità cambiano anche ciò che vede
-        il visore. In simulazione non c'è video.</p>
+        il visore. Calibrazione della distanza: punta il mirino su un oggetto a distanza nota (misurata dal centro delle
+        camere), scrivi i millimetri e premi; servono due punti a distanze diverse (es. 46 cm e 1,2 m). In simulazione non c'è video.</p>
+    </div>
+  </section>
+
+  <!-- ======================================================================= TELEOP -->
+  <section id="teleop" class="tab">
+    <div class="grid">
+      <div class="card">
+        <h3>Orizzonte</h3>
+        <p class="note">Tiene l'immagine delle camere orizzontale in ogni modo di teleoperazione: il firmware livella il
+          roll del polso dagli angoli dei giunti, j5mini corregge il resto con l'IMU del polso (trim). Lo stesso tasto dell'app del visore.</p>
+        <div class="row"><button id="tp-horizon" class="toggle">Orizzonte</button></div>
+        <dl id="tp-horizon-dl"></dl>
+      </div>
+      <div class="card">
+        <h3>Visore</h3>
+        <dl id="tp-vr"></dl>
+        <div class="row">
+          <button id="tp-headzero" title="il firmware prende l'orientazione attuale del visore come centro">HEADZERO</button>
+        </div>
+        <p class="note">Modi: 0 PREPARAZIONE, 2 MANUALE (stick), 3 HEAD (testa → polso), 4 HYBRID (testa + stick), 5 ASSIST
+          (tutto il braccio segue la testa). Il modo si sceglie nel visore; ripremendo i grip il robot riparte dalla posizione attuale della testa.</p>
+      </div>
+      <div class="card">
+        <h3>Visione e puntamento</h3>
+        <p class="note">Il servizio di visione (YOLO + distanza stereo + OCR) guarda ciò che c'è sotto il mirino. "Punta"
+          chiede al gimbal ASSIST di portare la camera sull'oggetto: funziona in ASSIST con i grip premuti.</p>
+        <div class="row">
+          <button id="tp-analyze">analizza la scena</button>
+          <button id="tp-point">punta all'oggetto</button>
+        </div>
+        <pre id="tp-vision-out" class="small"></pre>
+      </div>
+      <div class="card">
+        <h3>Registrazione IMU</h3>
+        <p class="note">Registra a 50 Hz orientazione desiderata, comandata, misurata e IMU del polso
+          (<code>logs/imu_campaign/*.jsonl</code> sul Pi) per analizzare scatti e ritardi. Serve ASSIST attivo.</p>
+        <div class="row">
+          <input id="tp-camp-label" placeholder="etichetta (es. assist orizzonte on)">
+          <button id="tp-camp" class="toggle">avvia registrazione</button>
+        </div>
+        <pre id="tp-camp-out" class="small"></pre>
+      </div>
+      <div class="card wide">
+        <h3>Parametri VR <small>SET_VR_PARAMS: guadagni, filtri, instradamento e velocità del firmware</small></h3>
+        <div id="vrp" class="vrp"></div>
+        <div class="row">
+          <button id="vrp-apply" class="motion">Applica al firmware</button>
+          <button id="vrp-save" class="primary">Salva in j5mini.json</button>
+          <button id="vrp-reset">ricarica</button>
+        </div>
+        <pre id="vrp-out" class="small"></pre>
+      </div>
     </div>
   </section>
 
   <!-- ======================================================================= COMANDI -->
   <section id="comandi" class="tab">
     <div class="card">
-      <h3>Stato del firmware</h3>
+      <h3>Comandi del firmware</h3>
       <div class="row buttons" id="cmd-buttons"></div>
       <h3>Console UART <small>righe verso lo STM32, ↑↓ per la cronologia</small></h3>
       <form id="console" class="row">
-        <input id="console-in" autocomplete="off" placeholder="es. STATUS?  oppure  SETPOSE_T 90 90 90 90 90 90 1500 RTR5">
+        <input id="console-in" autocomplete="off" autocapitalize="characters" placeholder="es. STATUS?  oppure  SETPOSE_T_HR 900 900 900 900 900 900 1500 RTR5">
         <button type="submit">invia</button>
       </form>
       <div class="row">
@@ -166,24 +246,37 @@
 
   <!-- ======================================================================= IMPOSTAZIONI -->
   <section id="impostazioni" class="tab">
-    <div class="card">
-      <h3>Giunti</h3>
-      <p class="note">Offset = angolo fisico del servo in HOME. Dir = verso del servo rispetto all'angolo virtuale
-        (solo lato Pi/app). Limiti in gradi fisici: il firmware non supera questi valori in nessun modo.</p>
-      <table id="set-joints" class="set"></table>
-      <details>
-        <summary>Avanzate: righe SET_VR_PARAMS e SET_PWM_CONFIG</summary>
-        <p class="note">Parametri della teleoperazione (velocità, filtri, instradamento del polso) e dei PWM. Si
-          modificano come riga intera; il firmware risponde OK o ERR.</p>
-        <label>SET_VR_PARAMS <textarea id="set-vr" rows="2"></textarea></label>
-        <label>SET_PWM_CONFIG <input id="set-pwm"></label>
-      </details>
-      <div class="row">
-        <button id="set-apply" class="motion">Applica al firmware</button>
-        <button id="set-save" class="primary">Salva in j5mini.json</button>
-        <button id="set-reload">Ricarica</button>
+    <div class="grid">
+      <div class="card wide">
+        <h3>Giunti</h3>
+        <p class="note">Offset = angolo fisico del servo in HOME. Dir = verso del servo rispetto all'angolo virtuale
+          (solo lato Pi/app). Limiti in gradi fisici: il firmware non supera questi valori in nessun modo.</p>
+        <table id="set-joints" class="set"></table>
       </div>
-      <pre id="set-out" class="small"></pre>
+      <div class="card wide">
+        <h3>Pose e velocità <small>PARK e VR pose dei comandi, in gradi virtuali</small></h3>
+        <table id="set-poses" class="set"></table>
+        <div class="row">
+          <label>velocità SETPOSE <input type="number" id="set-speed" min="1" max="100" inputmode="numeric"> %</label>
+          <label>profilo <select id="set-prof"><option>RTR5</option><option>RTR3</option><option>BCB</option><option>BB</option></select></label>
+        </div>
+        <p class="note">Le pose valgono subito dopo "Salva" (le esegue j5mini, non servono al firmware). "← target" copia gli slider della scheda Braccio.</p>
+      </div>
+      <div class="card wide">
+        <details>
+          <summary>Avanzate: righe SET_VR_PARAMS e SET_PWM_CONFIG</summary>
+          <p class="note">I parametri VR si modificano con le etichette nella scheda Teleop; qui la riga intera. PWM: Hz,
+            µs min, µs max, gradi per i due gruppi di servo. Il firmware risponde OK o ERR.</p>
+          <label>SET_VR_PARAMS <textarea id="set-vr" rows="2"></textarea></label>
+          <label>SET_PWM_CONFIG <input id="set-pwm"></label>
+        </details>
+        <div class="row">
+          <button id="set-apply" class="motion">Applica al firmware</button>
+          <button id="set-save" class="primary">Salva in j5mini.json</button>
+          <button id="set-reload">Ricarica</button>
+        </div>
+        <pre id="set-out" class="small"></pre>
+      </div>
     </div>
   </section>
 
@@ -208,24 +301,19 @@
           accelerazione massime del profilo) ed errore finale misurato.</p>
         <div class="row">
           <label>giunto <select id="t-sweep-j"></select></label>
-          <label>A <input type="number" id="t-sweep-a" value="15" min="1" max="60"> °</label>
-          <label>tempo <input type="number" id="t-sweep-ms" value="1200" min="200" max="10000" step="100"> ms</label>
+          <label>A <input type="number" id="t-sweep-a" value="15" min="1" max="60" inputmode="numeric"> °</label>
+          <label>tempo <input type="number" id="t-sweep-ms" value="1200" min="200" max="10000" step="100" inputmode="numeric"> ms</label>
         </div>
         <button id="t-sweep" class="motion">avvia</button>
         <pre id="t-sweep-out" class="small"></pre>
       </div>
       <div class="card">
         <h3>Prova del fungo di emergenza</h3>
-        <p class="note">Procedura guidata: premi il fungo, prova ENABLE (deve essere rifiutato), rilascia; ENABLE è ancora rifiutato finché non si passa da SAFE, poi SAFE e ENABLE riportano in IDLE. Controlla prima che il bypass sia spento (badge in alto).</p>
+        <p class="note">Procedura guidata: premi il fungo, prova ENABLE (deve essere rifiutato), rilascia; ENABLE è ancora rifiutato finché non si passa da SAFE, poi SAFE e ENABLE riportano in IDLE. Controlla prima che il bypass sia spento (pill in alto).</p>
         <button id="t-estop">avvia</button>
         <pre id="t-estop-out" class="small"></pre>
       </div>
     </div>
-  </section>
-
-  <!-- ======================================================================= GUIDA -->
-  <section id="guida" class="tab">
-    <div class="card prose" id="guide"></div>
   </section>
 </main>
 
