@@ -1113,3 +1113,37 @@ def test_a_firmware_that_booted_before_j5mini_gets_the_init_pose(lib):
     assert not any(e["cmd"].startswith("SETPOSE_INIT") for e in r2.responses())
     assert r2.sim.angles() == [100.0] * 6
 
+
+def test_auto_park_after_a_minute_without_the_grips(lib):
+    """27/10/2026, user: in VR with the grips released for a minute the robot should park by itself, so that it is
+    already in position when switched off. Once per idle period; pressing the grips restarts the count."""
+    cfg = json.loads(json.dumps(CFG))
+    cfg["settings"]["dirs"] = [1, -1, 1, 1, -1, 1]
+    cfg["settings"]["auto_park_s"] = 20                                  # shorter than the default 60 for the test
+    r = Rig(lib, cfg)
+    r.run(1000)
+    r.run(2500, intent())
+    r.core.uart_send("HOME")
+    r.run(3000, intent())
+    held = intent(mode=5, buttons_left=GRIP, buttons_right=GRIP)
+    r.run(2000, held)                                                    # ASSIST with the grips: no countdown
+    assert r.core.auto_park_in() is None
+    r.run(10000, intent(mode=5))                                         # grips released, still in ASSIST
+    left = r.core.auto_park_in()
+    assert left is not None and 8 <= left <= 12, left
+    r.run(2000, held)                                                    # grips again: reset
+    assert r.core.auto_park_in() is None
+    r.core.events = []
+    r.run(21000, intent(mode=5))                                         # released for 21 s: PARK goes out
+    parks = [e for e in r.core.events if e["type"] == "auto_park"]
+    assert len(parks) == 1 and parks[0]["line"] == "SETPOSE 88 125 143 90 50 98 40 RTR5"
+    assert any(e["type"] == "uart_response" and e["cmd"] == parks[0]["line"] and e["ok"] for e in r.core.events)
+    r.run(5000, intent(mode=5))
+    assert [round(a) for a in r.sim.angles()] == [88, 125, 143, 90, 50, 98]
+    assert r.core.auto_park_in() is None                                 # done: no second countdown
+    r.run(30000, intent(mode=5))
+    assert len([e for e in r.core.events if e["type"] == "auto_park"]) == 1
+    # PREPARAZIONE (mode 0) never counts
+    r.run(2000, held); r.run(25000, intent(mode=0))
+    assert r.core.auto_park_in() is None
+

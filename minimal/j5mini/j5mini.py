@@ -201,6 +201,9 @@ class Core:
         # IMUON / IMUOFF no longer exist in the firmware (IMU always on): skipped if an older config has them
         self.boot_lines = [l for l in cfg.get("boot_commands", []) if l not in ("IMUON", "IMUOFF")]
         self.cfg_for_init = cfg                        # SETPOSE_INIT at BOOT_READY: last_pose or PARK
+        self.auto_park_s = float(cfg.get("settings", {}).get("auto_park_s", POSE_DEFAULTS["auto_park_s"]))
+        self.idle_since: float | None = None           # headset in a teleop mode with the grips released since
+        self.auto_park_done = False                    # one PARK per idle period (until the grips are pressed)
         self.last_pose: list[int] | None = None        # servo angles seen in telemetry (kept across a reset)
         self.init_check_pending = False                # fallback push done: is the firmware fresh (all servos at 90)?
         self.vr_params_line = next((l for l in self.boot_lines if l.startswith("SET_VR_PARAMS")), None)
@@ -464,6 +467,7 @@ class Core:
         now = self.clock()
         self._init_pose_check()
         self._demo_tick(now)
+        self._auto_park_tick(now)
         if not self.boot_done and now - self.t0 >= self.BOOT_FALLBACK_S:
             self.log("[j5mini] no BOOT_READY seen: pushing configuration anyway")
             self._start_boot_push()
@@ -535,6 +539,41 @@ class Core:
         self.uart_send(line, sent)
         self.events.append({"type": "demo", "on": True, "step": d["i"] + 1, "n": len(d["lines"])})
 
+    # ---------------- auto-park: the arm parks itself when the operator leaves it idle ----------------
+    def auto_park_in(self, now: float | None = None) -> int | None:
+        """Seconds left before the automatic PARK, or None when the countdown is not running."""
+        if self.idle_since is None or self.auto_park_done or self.auto_park_s <= 0:
+            return None
+        return max(0, int(round(self.auto_park_s - ((now if now is not None else self.clock()) - self.idle_since))))
+
+    def _auto_park_tick(self, now: float):
+        """Headset in a teleop mode (2-5) with the grips released for auto_park_s (user, 27/10/2026: "so when I switch
+        it off it is already in position"): PARK, once per idle period. Needs IDLE, no demo, no trajectory in flight
+        and the arm not already there; pressing the grips or leaving the modes resets everything."""
+        live = self.payload is not None and (now - self.payload_t) < 1.0
+        in_mode = live and self.last_mode in (2, 3, 4, 5)
+        grips = self.diag.get("deadman") is True
+        if not in_mode or grips:
+            self.idle_since = None
+            self.auto_park_done = False
+            return
+        if self.idle_since is None:
+            self.idle_since = now
+            return
+        if self.auto_park_done or self.auto_park_s <= 0 or now - self.idle_since < self.auto_park_s:
+            return
+        if self.robot_state != "IDLE" or self.demo:
+            return                                    # try again next tick, the countdown stays at zero
+        park = pose_physical(self.cfg_for_init, self.cfg_for_init.get("settings", {}).get("park", POSE_DEFAULTS["park"]))
+        pose = [self.telemetry.get(k) for k in SERVO_KEYS]
+        self.auto_park_done = True
+        if all(isinstance(v, int) for v in pose) and max(abs(a - b) for a, b in zip(pose, park)) <= 2:
+            return                                    # already parked
+        line = pose_setpose_line(self.cfg_for_init, "park")
+        self.uart_send(line)
+        self.events.append({"type": "auto_park", "after_s": int(self.auto_park_s), "line": line})
+        self.log(f"[j5mini] auto-park after {self.auto_park_s:.0f} s without the grips: {line}")
+
     def _demo_tick(self, now: float):
         d = self.demo
         if not d:
@@ -561,7 +600,7 @@ class Core:
                 # mode echoed by the firmware in its STATUS reply
                 "vr_q": [round(v, 4) for v in self.samples[-1][2]] if live and self.samples else None,
                 "vr_heartbeat": self.last_hb if live else None, "mode_echo": self.diag.get("mode_echo"),
-                "demo": self.demo_status(), "link": dict(self.stats)}
+                "demo": self.demo_status(), "auto_park_in": self.auto_park_in(), "link": dict(self.stats)}
 
 
 # ------------------------------------------------------------------ settings (dashboard)
@@ -572,6 +611,7 @@ JOINTS = ("B", "S", "G", "Y", "P", "R")
 POSE_DEFAULTS = {            # the robot's j5_settings.json (virtual degrees, 90 = HOME)
     "park": [90, 50, 150, 90, 130, 90],
     "vr": [90, 110, 90, 90, 70, 90],
+    "auto_park_s": 60,           # headset in a teleop mode, grips released this long -> PARK by itself (0 = never)
     "speed_pct": 40,             # SETPOSE speed, as the firmware's HOME (ws-teleop used vel_max 120 = 100 %: too
                                  # fast on the robot, 26/10/2026)
     "profile": "RTR5",
@@ -653,6 +693,7 @@ def poses_from_settings(st: dict) -> dict:
     return {"park": list(st.get("park", POSE_DEFAULTS["park"])), "vr": list(st.get("vr", POSE_DEFAULTS["vr"])),
             "speed_pct": int(st.get("speed_pct", POSE_DEFAULTS["speed_pct"])),
             "profile": str(st.get("profile", POSE_DEFAULTS["profile"])),
+            "auto_park_s": int(st.get("auto_park_s", POSE_DEFAULTS["auto_park_s"])),
             "demo": [dict(x) for x in st.get("demo", DEMO_DEFAULT)]}
 
 
@@ -676,6 +717,11 @@ def poses_from_settings_msg(s: dict) -> tuple[dict | None, str | None]:
         if s["profile"] not in ("RTR5", "RTR3", "BCB", "BB"):
             return None, "profile: RTR5, RTR3, BCB o BB"
         out["profile"] = s["profile"]
+    if s.get("auto_park_s") is not None:
+        v = s["auto_park_s"]
+        if not (isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 3600):
+            return None, "auto_park_s: 0..3600 (0 = mai)"
+        out["auto_park_s"] = int(v)
     if s.get("demo") is not None:
         steps = s["demo"]
         if not isinstance(steps, list) or len(steps) > 40:
@@ -1138,6 +1184,7 @@ class Server:
             self.cfg.setdefault("settings", {})["offsets"] = list(msg["offsets"])
             self.cfg["settings"]["dirs"] = list(msg["dirs"])
             self.cfg["settings"].update(poses)
+            self.core.auto_park_s = float(self.cfg["settings"].get("auto_park_s", POSE_DEFAULTS["auto_park_s"]))
             self.core.horizon_dirs = [1 if d >= 0 else -1 for d in msg["dirs"]]
             self.core.boot_lines = list(lines)
             self.core.vr_params_line = next((l for l in lines if l.startswith("SET_VR_PARAMS")), None)

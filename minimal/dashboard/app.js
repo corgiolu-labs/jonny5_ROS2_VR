@@ -123,6 +123,7 @@ function onMessage(m) {
     case "stereo_collimation": S.col = m; S.colAt = Date.now(); break;
     case "ws_pong": if (S.onPong) S.onPong(m); break;
     case "horizon_lock": S.horizon = !!m.on; horizonButtons(); toast(S.horizon ? "Orizzonte acceso" : "Orizzonte spento"); break;
+    case "auto_park": toast(`PARK automatico: ${m.after_s} s senza grip`); log("⇠ auto-park " + m.line, "uns"); break;
     case "demo":
       if (m.ok === false) toast("demo: " + m.error, true);
       else if (m.on && m.step === 1 && !m.reason) { /* step messages: the Demo button shows step/n */ }
@@ -267,6 +268,7 @@ function badges() {
     `${st === "IDLE" ? "pronto (IDLE)" : st === "SAFE" ? "servo spenti (SAFE)" : st === "STOPPED" ? "fermo (STOPPED): SAFE poi ENABLE per ripartire" : "stato " + st}` +
     ` · fungo ${tm.estop_bypass ? "in bypass" : tm.estop_active ? "PREMUTO" : "ok"}` +
     ` · ${live ? "visore in " + (MODES[tm.teleop_mode] || tm.teleop_mode) : "visore assente"}` +
+    (typeof tm.auto_park_in === "number" ? ` · PARK automatico tra ${tm.auto_park_in} s` : "") +
     (tm.link && S.tmRate ? ` · SPI ${S.lastSpiRate ?? "–"}/s` : "");
 }
 
@@ -671,6 +673,7 @@ function fillSettings() {
     S.target.forEach((v, i) => { $(`s-${b.dataset.pose}${i}`).value = v; });
   });
   $("set-speed").value = c.speed_pct ?? 40;
+  $("set-autopark").value = c.auto_park_s ?? 60;
   $("set-prof").value = c.profile || "RTR5";
   S.demoSteps = (c.demo || []).map(x => ({ angles: [...x.angles], speed_pct: x.speed_pct ?? 30, profile: x.profile || "RTR5" }));
   fillDemo();
@@ -747,7 +750,7 @@ function readSettings() {
     limits: JN.map((_, i) => [num("s-min" + i), num("s-max" + i)]),
     vr_params: $("set-vr").value.trim().replace(/\s+/g, " "), pwm_config: $("set-pwm").value.trim().replace(/\s+/g, " "),
     park: JN.map((_, i) => num("s-park" + i)), vr: JN.map((_, i) => num("s-vr" + i)),
-    speed_pct: num("set-speed"), profile: $("set-prof").value,
+    speed_pct: num("set-speed"), profile: $("set-prof").value, auto_park_s: num("set-autopark"),
     demo: readDemo(),
   };
 }
