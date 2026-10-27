@@ -263,9 +263,11 @@
         <p class="note">Le pose valgono subito dopo "Salva" (le esegue j5mini, non servono al firmware). "← target" copia gli slider della scheda Braccio.</p>
       </div>
       <div class="card wide">
-        <h3>Cinematica (POE) <small>assi di vite S, posa M e punti di disegno, in metri</small></h3>
-        <p class="note">Product of Exponentials: per ogni giunto l'asse di vite <code>[wx wy wz vx vy vz]</code> con w unitario
-          e <code>v = −w × q</code> (q un punto dell'asse), M = posa dell'end-effector con tutti i giunti a 90° virtuali.
+        <h3>Cinematica (POE) <small>assi di vite S, posa M e punti di disegno; lunghezze in millimetri</small></h3>
+        <p class="note">Product of Exponentials: per ogni giunto l'asse di vite <code>[w v]</code>, con w la direzione
+          dell'asse (unitaria, senza unità) e <code>v = −w × q</code> dove q è un punto dell'asse in HOME (in mm: per un asse
+          verticale a x = 0 e un asse orizzontale lungo y a quota h, v = [−h 0 0]); M = posa dell'end-effector con tutti i
+          giunti a 90° virtuali (rotazione e posizione in mm). Il file resta in metri.
           Li usano la vista 3D, la tabella x/y/z e la IK del gimbal ASSIST (polso, spalla/gomito): dopo una modifica
           meccanica del robot cambia qui e controlla la posa misurata nella scheda Braccio. Ogni modifica si vede subito
           nella vista 3D; "Salva" la scrive in <code>kinematics.json</code> (copia <code>.bak</code>) e la passa al gimbal.</p>
@@ -273,7 +275,7 @@
         <table id="kin-s" class="set kin-edit"></table>
         <h4>Posa M (end-effector in HOME)</h4>
         <table id="kin-m" class="set kin-edit"></table>
-        <h4>Punti di disegno (un punto per asse, in HOME)</h4>
+        <h4>Punti di disegno <small>solo per la vista 3D: dove sta fisicamente ogni giunto in HOME, un punto sul suo asse</small></h4>
         <table id="kin-dp" class="set kin-edit"></table>
         <div class="row">
           <button id="kin-save" class="primary">Salva in kinematics.json</button>

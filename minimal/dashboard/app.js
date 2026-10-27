@@ -662,12 +662,17 @@ $("set-apply").onclick = async () => {
 };
 
 // ------------------------------------------------------------------ settings: POE editor
-const KIN_COLS = { s: ["wx", "wy", "wz", "vx", "vy", "vz"], m: ["r1", "r2", "r3", "pos (m)"], dp: ["x", "y", "z"] };
+// shown in millimetres (v of the screw axes, position of M, draw points); the file and kin.js stay in metres
+const KIN_COLS = { s: ["wx", "wy", "wz", "vx (mm)", "vy (mm)", "vz (mm)"], m: ["r1", "r2", "r3", "pos (mm)"], dp: ["x (mm)", "y (mm)", "z (mm)"] };
+const KIN_MM = { "kin-s": j => j >= 3, "kin-m": j => j === 3, "kin-dp": () => true };   // which columns are lengths
+const r3 = v => Math.round(v * 1000) / 1000, r6 = v => Math.round(v * 1e6) / 1e6;   // 0.001 mm shown, 1 um kept
 function kinTable(id, cols, rowNames, rows, fixedLast = false) {
   const head = `<tr><th></th>${cols.map(c => `<th>${c}</th>`).join("")}</tr>`;
-  const body = rows.map((r, i) => `<tr><td>${rowNames[i]}</td>` + r.map((v, j) =>
-    fixedLast && i === rows.length - 1 ? `<td class="fixed">${v}</td>` :
-      `<td><input type="number" step="0.0001" id="${id}-${i}-${j}" value="${v}" inputmode="decimal"></td>`).join("") + "</tr>").join("");
+  const body = rows.map((r, i) => `<tr><td>${rowNames[i]}</td>` + r.map((v, j) => {
+    const mm = KIN_MM[id](j), shown = mm ? r3(v * 1000) : v;
+    return fixedLast && i === rows.length - 1 ? `<td class="fixed">${v}</td>` :
+      `<td><input type="number" step="${mm ? 0.1 : 0.0001}" id="${id}-${i}-${j}" value="${shown}" inputmode="decimal"></td>`;
+  }).join("") + "</tr>").join("");
   $(id).innerHTML = head + body;
 }
 function fillKin() {
@@ -681,11 +686,12 @@ function fillKin() {
   });
 }
 function readKin() {
-  const num = id => Number($(id).value);
+  const num = (id, j) => { const v = Number($(`${id}-${j}`).value); return KIN_MM[id.split("-").slice(0, 2).join("-")](Number(j.split("-")[1])) ? r6(v / 1000) : v; };
+  const cell = (id, i, j) => num(id, `${i}-${j}`);
   return {
-    S: JN.map((_, i) => KIN_COLS.s.map((_, j) => num(`kin-s-${i}-${j}`))),
-    M: [0, 1, 2].map(i => KIN_COLS.m.map((_, j) => num(`kin-m-${i}-${j}`))).concat([[0, 0, 0, 1]]),
-    draw_points: JN.map((_, i) => KIN_COLS.dp.map((_, j) => num(`kin-dp-${i}-${j}`))),
+    S: JN.map((_, i) => KIN_COLS.s.map((_, j) => cell("kin-s", i, j))),
+    M: [0, 1, 2].map(i => KIN_COLS.m.map((_, j) => cell("kin-m", i, j))).concat([[0, 0, 0, 1]]),
+    draw_points: JN.map((_, i) => KIN_COLS.dp.map((_, j) => cell("kin-dp", i, j))),
   };
 }
 $("kin-save").onclick = () => { if (!send({ type: "save_kinematics", ...readKin() })) toast("non collegato", true); };
