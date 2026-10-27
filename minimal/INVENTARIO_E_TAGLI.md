@@ -273,8 +273,10 @@ Resta senza librerie (oggi 75 KB; obiettivo < 100 KB con il tab Teleop). Grafico
 - Editor POE **fatto** (27/10 sera): Impostazioni → Cinematica, `get_kinematics` / `save_kinematics`, anteprima 3D, gimbal riconfigurato.
 - Punto 3 **fatto** (27/10 pomeriggio, solo sul PC): gruppi A e C, bit guard corretto, commenti stantii; build Zephyr
   ok (Flash 76244 B, RAM 25922 B, `src/` 7093 righe), 23 test `fw_sim` verdi (nuovi: comandi rifiutati, modi
-  sconosciuti, bit guard). **Non flashato**: serve il tuo ok, poi prova del fungo e un giro ASSIST sul robot. Dettaglio
-  in `firmware/stm32/MINIMAL.md`.
+  sconosciuti, bit guard). **Flashato il 27/10 alle 18:20** (backup della flash precedente in `jonny5-backups/pre-cuts-20261027`)
+  insieme al deploy sul Pi (`ws.local_port 8556` aggiunto). Provato sul robot: HOME, giro ASSIST con Orizzonte e puntamenti
+  della visione, PARK/TELEOPPOSE, fungo (ESTOP → STOPPED, ESTOP_CLEAR senza ripartenza, SAFE+ENABLE), 45.000 frame SPI
+  senza errori. Dettaglio in `firmware/stm32/MINIMAL.md`.
 - Punto 4 (`HYBRID ENABLE`): non iniziato, richiede l'app Quest.
 
 ## 5 bis. Ordine di esecuzione proposto

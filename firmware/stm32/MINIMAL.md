@@ -33,7 +33,8 @@ sono rimasti parola per parola, è stato tolto solo ciò che è morto, speriment
 | comandi `IMUON` / `IMUOFF` | la IMU è sempre accesa (era già il default all'avvio); j5mini non manda più `IMUON` e lo salta nelle configurazioni vecchie |
 
 Tagli del 27/10/2026 (gruppi A e C di `minimal/INVENTARIO_E_TAGLI.md`, nessun client li usava; verificati con grep su
-j5mini, dashboard, app Quest, app telefono, test), **non ancora flashati**:
+j5mini, dashboard, app Quest, app telefono, test), **flashati il 27/10/2026** e provati sul robot (HOME, ASSIST,
+fungo, PARK/TELEOPPOSE; backup della flash precedente in `jonny5-backups/pre-cuts-20261027`):
 
 | Tolto | Note |
 |---|---|
