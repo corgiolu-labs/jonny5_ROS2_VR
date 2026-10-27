@@ -324,6 +324,7 @@ function updateUi() {
   const mv = measuredVirtual();
   dl($("st-joints"), SK.map((k, i) => [JN[i], `${tm[k] ?? "–"}°  (virtuale ${mv ? mv[i].toFixed(0) : "–"}°)`]));
   updateJointsMeas(mv);
+  if ($("impostazioni").classList.contains("active")) SK.forEach((k, i) => { const e = $("s-cur" + i); if (e) e.textContent = tm[k] != null ? tm[k] + "°" : "–"; });
   draw3d(mv);
 }
 
@@ -623,9 +624,12 @@ function fillSettings() {
       <td><input type="number" id="s-min${i}" min="0" max="180" value="${c.limits[i][0]}" inputmode="numeric"></td>
       <td><input type="number" id="s-max${i}" min="0" max="180" value="${c.limits[i][1]}" inputmode="numeric"></td>
       <td>${lo.toFixed(0)}..${hi.toFixed(0)}</td>
-      <td><button type="button" class="tiny" data-off="${i}" title="prende l'angolo fisico misurato adesso come offset: porta prima il giunto dritto con gli slider (Braccio, 'segui gli slider')">← fisico</button></td></tr>`;
+      <td class="live" id="s-cur${i}">–</td>
+      <td class="jog"><button type="button" class="tiny motion" data-jog="${i}" data-d="-1" title="muove solo questo giunto, di un passo, verso il basso dell'angolo fisico">−</button><button type="button" class="tiny motion" data-jog="${i}" data-d="1" title="muove solo questo giunto, di un passo, verso l'alto dell'angolo fisico">+</button><button type="button" class="tiny motion" data-wig="${i}" title="prova: +passo, −passo, ritorno (per vedere il verso e il gioco)">⇄</button><button type="button" class="tiny" data-off="${i}" title="prende l'angolo fisico misurato adesso come offset (porta prima il giunto dritto con − e +)">← fisico</button></td></tr>`;
   });
-  $("set-joints").innerHTML = `<tr><th></th><th>offset (HOME)</th><th>dir</th><th>min fisico</th><th>max fisico</th><th>virtuale</th><th></th></tr>` + rows.join("");
+  $("set-joints").innerHTML = `<tr><th></th><th>offset (HOME)</th><th>dir</th><th>min fisico</th><th>max fisico</th><th>virtuale</th><th>fisico ora</th><th>muovi sul robot</th></tr>` + rows.join("");
+  $("set-joints").querySelectorAll("button[data-jog]").forEach(b => b.onclick = () => jogJoint(Number(b.dataset.jog), Number(b.dataset.d) * Number($("set-step").value)));
+  $("set-joints").querySelectorAll("button[data-wig]").forEach(b => b.onclick = () => wiggleJoint(Number(b.dataset.wig), Number($("set-step").value)));
   $("set-joints").querySelectorAll("button[data-off]").forEach(b => b.onclick = () => {
     const i = Number(b.dataset.off), v = S.tm && S.tm[SK[i]];
     if (typeof v !== "number") return toast("nessuna telemetria", true);
@@ -644,6 +648,42 @@ function fillSettings() {
   $("set-speed").value = c.speed_pct ?? 40;
   $("set-prof").value = c.profile || "RTR5";
 }
+/** SETPOSE_T_HR from PHYSICAL degrees (the settings page reasons in servo angles). */
+function setposePhysCmd(phys, ms, prof = "RTR5") {
+  return `SETPOSE_T_HR ${phys.map(p => Math.round(p * 10)).join(" ")} ${Math.round(ms)} ${prof}`;
+}
+function measuredPhysical() { return S.tm && SK[0] in S.tm ? SK.map(k => S.tm[k]) : null; }
+/** Moves one joint on the robot by delta physical degrees from where it is now; resolves with the SETPOSE_DONE line. */
+async function jogJoint(i, delta) {
+  if (!motionAllowed()) return null;
+  if (S.tm && S.tm.robot_state !== "IDLE") { toast(`robot in ${S.tm.robot_state}: serve IDLE (ENABLE)`, true); return null; }
+  const phys = measuredPhysical();
+  if (!phys) { toast("nessuna telemetria", true); return null; }
+  const lim = S.cfg ? S.cfg.limits[i] : [0, 180];
+  const want = Math.max(5, Math.min(175, Math.max(lim[0], Math.min(lim[1], phys[i] + delta))));
+  if (want === phys[i]) { toast(`${JN[i]}: già al limite (${phys[i]}°)`, true); return null; }
+  phys[i] = want;
+  const ms = Math.max(300, Math.abs(delta) * 1000 / 30);           // ~30 deg/s: slow enough to watch
+  const done = waitLine(/^SETPOSE_DONE/, ms + 3000);
+  const r = await uart(setposePhysCmd(phys, ms));
+  if (!r.ok) { toast("rifiutato: " + r.response, true); return null; }
+  return done;
+}
+/** +A, -A, back: shows the direction of the joint and its play. */
+async function wiggleJoint(i, A) {
+  const start = measuredPhysical();
+  if (!start) return toast("nessuna telemetria", true);
+  S.abort = false;
+  for (const target of [start[i] + A, start[i] - A, start[i]]) {
+    if (S.abort) return;
+    const phys = measuredPhysical() || start;
+    const d = await jogJoint(i, target - phys[i]);
+    if (!d || !(await d)) return;
+    await sleep(250);
+  }
+  toast(`${JN[i]}: prova finita, tornato a ${start[i]}°`);
+}
+
 function readSettings() {
   const num = id => Number($(id).value);
   return {

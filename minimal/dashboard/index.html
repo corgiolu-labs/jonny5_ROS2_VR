@@ -251,9 +251,13 @@
         <h3>Giunti</h3>
         <p class="note">Offset = angolo fisico del servo in HOME. Dir = verso del servo rispetto all'angolo virtuale
           (solo lato Pi/app). Limiti in gradi fisici: il firmware non supera questi valori in nessun modo.
-          <b>Allineamento dal vivo:</b> cambia un offset e premi "Applica": con "poi HOME" il braccio va subito nella
-          nuova HOME e vedi se il giunto è dritto; ripeti finché torna. Oppure porta il giunto dritto con gli slider
-          (Braccio, "segui gli slider") e premi "← fisico" sulla sua riga.</p>
+          <b>Allineamento dal vivo:</b> con − e + muovi quel solo giunto sul robot di un passo (gradi fisici), ⇄ lo fa
+          andare avanti e indietro per vedere il verso; quando è dritto premi "← fisico" (l'angolo fisico di quel momento
+          diventa l'offset), poi "Applica" (con "poi HOME" il braccio va nella nuova HOME e verifichi) e "Salva".</p>
+        <div class="row">
+          <label>passo <select id="set-step"><option>1</option><option selected>5</option><option>10</option><option>20</option></select> °</label>
+          <span class="note">serve "comandi di movimento" e il robot in IDLE; STOP ferma tutto</span>
+        </div>
         <table id="set-joints" class="set"></table>
       </div>
       <div class="card wide">
