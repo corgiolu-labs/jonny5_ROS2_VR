@@ -246,8 +246,6 @@ def main():
     ap.add_argument("--lens-position", type=float, default=None, help="dioptres (with --autofocus-mode manual)")
     # rpicam-vid style options passed through by video_capture.sh
     ap.add_argument("--autofocus-mode", choices=("default", "manual", "auto", "continuous"), default="default")
-    ap.add_argument("--autofocus-range", default="normal")
-    ap.add_argument("--roi", default="", help="ignored: the zoom is driven over UDP")
     ap.add_argument("--follow", type=int, default=-1,
                     help="follow this camera's exposure / white balance / focus (stereo slave), see MATCH_CALIB_PATH")
     ap.add_argument("--match-calib", default=MATCH_CALIB_PATH)

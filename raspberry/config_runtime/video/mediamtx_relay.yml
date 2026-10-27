@@ -31,4 +31,3 @@ webrtcTrackGatherTimeout: 2s
 paths:
   cam0:
   cam1:
-  cam_g2g:

@@ -344,7 +344,6 @@ static void rt_loop_step(void)
                 static int16_t last_jx = 0, last_jy = 0, last_p = 0, last_y = 0;
                 static uint32_t last_change_ms = 0;
                 static uint32_t last_active_ms = 0;
-                static bool servos_disabled_latched = false;
                 static bool last_guarded = false;
                 const uint32_t now_ms = k_uptime_get_32();
 
@@ -450,7 +449,6 @@ static void rt_loop_step(void)
                         if (arm_by_edge || arm_in_manual_vr || arm_in_ik_vr)
                         {
                             g_vr_armed = 1;
-                            servos_disabled_latched = false;
                         }
                     }
 
@@ -474,12 +472,6 @@ static void rt_loop_step(void)
                  * 27/10/2026 qui si toglieva il PWM (braccio libero): cedeva sotto il suo peso e il comando successivo
                  * (HOME/PARK/VR pose) ripartiva dall'angolo che il firmware credeva, con uno scatto. Le uscite si
                  * spengono solo con SAFE, STOP, fungo e watchdog SPI (STATE_SAFE / STATE_STOPPED). */
-                bool allow_servos_in_manual = (j5vr_current.mode == 2U) && deadman_active && (j5vr_current.vr_heartbeat > 0U);
-                bool allow_servos_in_mode5  = (j5vr_current.mode == 5U) && deadman_active && (j5vr_current.vr_heartbeat > 0U);
-                if (!g_vr_armed && !allow_servos_in_manual && !allow_servos_in_mode5)
-                {
-                    servos_disabled_latched = true;    /* "uscite non pilotate dalla pipeline": restano dove sono */
-                }
 
                 /* Log mode change only on edge (no per-tick spam). */
                 {
@@ -512,7 +504,6 @@ static void rt_loop_step(void)
                             if (!g_vr_armed && deadman_active && movement_allowed && (j5vr_current.vr_heartbeat > 0U))
                             {
                                 g_vr_armed = 1;
-                                servos_disabled_latched = false;
                                 last_active_ms = now_ms;
                             }
                             /* In Manual VR blocchiamo solo per freeze (200ms senza input).

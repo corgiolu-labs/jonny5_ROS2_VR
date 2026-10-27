@@ -283,6 +283,10 @@ Resta senza librerie (oggi 75 KB; obiettivo < 100 KB con il tab Teleop). Grafico
   al primo movimento (verificato: HOME da PARK parte dagli angoli di PARK); app Quest 1.4.6: ENABLE = SAFE+ENABLE, cosi'
   riparte anche dopo il fungo. Regola: PARK prima di spegnere. Poi (flash delle 20:45): i servo tengono la posa al
   rilascio dei grip e SETPOSE parte dall'angolo reale, niente scatti HOME/PARK/VR pose dopo il teleop.
+  Pulizia finale (sera): `servos_disabled_latched` tolto dal RT loop; `--roi` / `--autofocus-range` di cam_stream,
+  ramo rpicam, sonda e ROI di `video_capture.sh`, profili inesistenti di `start_mediamtx.sh` e path `cam_g2g` tolti.
+  `rtp_push` / `video_direct.sh` RESTANO: sono la via a latenza minima scelta per il visore. Pi ripulito: vecchio
+  albero, backup, immagini Docker ROS 2, unit legacy (archivio in `jonny5-backups/pi-20261027` sul PC).
   Accensione a freddo verificata alle 21:00: STM32 ripartito, BOOT_READY perso (il Pi parte un minuto dopo), j5mini
   manda la posa iniziale PARK perché il firmware riporta 90 ovunque; la prima VR pose parte esattamente da PARK.
 
