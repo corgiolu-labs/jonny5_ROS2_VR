@@ -1090,3 +1090,26 @@ def test_boot_push_ends_with_the_park_pose_as_init_pose(lib):
     r.core._start_boot_push(booted=True)
     assert "SETPOSE_INIT 88 85 83 90 90 98" in r.core.boot_queue
 
+
+def test_a_firmware_that_booted_before_j5mini_gets_the_init_pose(lib):
+    """Cold power-on 27/10/2026: the STM32 boots in a second, the Pi in a minute, BOOT_READY is lost and the fallback
+    push left the firmware at 90 everywhere -> the first VR pose snapped from PARK. The fallback push now checks the
+    telemetry: a firmware reporting 90 on every joint gets SETPOSE_INIT (PARK at a cold start)."""
+    cfg = json.loads(json.dumps(CFG))
+    cfg["settings"]["dirs"] = [1, -1, 1, 1, -1, 1]
+    r = Rig(lib, cfg)
+    r.sim.run(1500)                      # the firmware is up long before j5mini...
+    r.sim.uart_read()                    # ...and its BOOT_READY went to nobody
+    r.run(2000)                          # j5mini starts: fallback push at 1 s, then the check on the telemetry
+    cmds = [e["cmd"] for e in r.responses()]
+    assert "BOOT_READY" not in r.unsolicited()
+    assert "SETPOSE_INIT 88 125 143 90 50 98" in cmds and all(e["ok"] for e in r.responses() if e["cmd"].startswith("SETPOSE_INIT"))
+    assert cmds.index("SETPOSE_INIT 88 125 143 90 50 98") > cmds.index(CFG["boot_commands"][-1])
+    assert r.sim.angles() == [88.0, 125.0, 143.0, 90.0, 50.0, 98.0]
+    # a j5mini restart with a positioned firmware: nothing is sent
+    r2 = Rig(lib, cfg)
+    r2.sim.run(1500); r2.sim.uart_read(); r2.sim.command("SETPOSE_INIT 100 100 100 100 100 100")
+    r2.run(2000)
+    assert not any(e["cmd"].startswith("SETPOSE_INIT") for e in r2.responses())
+    assert r2.sim.angles() == [100.0] * 6
+

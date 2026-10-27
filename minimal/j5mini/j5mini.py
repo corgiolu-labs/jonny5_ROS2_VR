@@ -202,6 +202,7 @@ class Core:
         self.boot_lines = [l for l in cfg.get("boot_commands", []) if l not in ("IMUON", "IMUOFF")]
         self.cfg_for_init = cfg                        # SETPOSE_INIT at BOOT_READY: last_pose or PARK
         self.last_pose: list[int] | None = None        # servo angles seen in telemetry (kept across a reset)
+        self.init_check_pending = False                # fallback push done: is the firmware fresh (all servos at 90)?
         self.vr_params_line = next((l for l in self.boot_lines if l.startswith("SET_VR_PARAMS")), None)
         self.t0 = clock()
         # setpoint
@@ -376,6 +377,8 @@ class Core:
         self.boot_queue = list(self.boot_lines)
         if booted:                                    # the firmware just (re)started: tell it where the arm is
             self.boot_queue.append(init_pose_line(self.cfg_for_init, self.last_pose))
+        else:                                         # no BOOT_READY seen: maybe it booted before us (_init_pose_check)
+            self.init_check_pending = True
         if self.horizon_on:
             self.boot_queue.append(self.horizon_line())
         self.boot_retries = 0
@@ -459,6 +462,7 @@ class Core:
         self._spi_tick()
         self._uart_poll()
         now = self.clock()
+        self._init_pose_check()
         self._demo_tick(now)
         if not self.boot_done and now - self.t0 >= self.BOOT_FALLBACK_S:
             self.log("[j5mini] no BOOT_READY seen: pushing configuration anyway")
@@ -466,6 +470,23 @@ class Core:
         if now >= self.next_state_poll:
             self.next_state_poll = now + self.STATE_POLL_S
             self.uart_send("STATUS?")
+
+    def _init_pose_check(self):
+        """At a cold power-on the STM32 boots in a second and the Pi in a minute: BOOT_READY is printed to nobody and
+        the fallback push has no SETPOSE_INIT, so the firmware believed the arm at 90 on every joint and the first pose
+        snapped from PARK (27/10/2026). A firmware reporting exactly 90 everywhere has never been told where the arm
+        is: it gets the init pose (last_pose, or PARK) after the configuration lines."""
+        if not self.init_check_pending:
+            return
+        pose = [self.telemetry.get(k) for k in SERVO_KEYS]
+        if not all(isinstance(v, int) for v in pose):
+            return                                    # no telemetry yet
+        self.init_check_pending = False
+        if pose == [90] * 6:
+            self.boot_queue.append(init_pose_line(self.cfg_for_init, self.last_pose))
+            if len(self.boot_queue) == 1:
+                self._boot_next()
+            self.log("[j5mini] firmware never positioned (all servos at 90): sending the init pose")
 
     # ---------------- demo: the saved pose sequence, looped (dashboard "Demo") ----------------
     DEMO_STEP_TIMEOUT_S = 15.0
