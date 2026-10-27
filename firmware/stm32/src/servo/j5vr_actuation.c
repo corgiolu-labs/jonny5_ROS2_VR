@@ -519,6 +519,18 @@ void j5vr_actuation_init(void)
             (double)current_max_velocity_deg_per_sec);
 }
 
+void j5vr_actuation_set_init_pose(const float q_deg[6])
+{
+    for (int i = 0; i < SERVO_COUNT; i++)
+    {
+        const float v = j5_clampf(q_deg[i], joint_min_deg[i], joint_max_deg[i]);
+        desired_positions[i]          = v;
+        desired_positions_filtered[i] = v;
+        step_accumulator[i]           = 0.0f;
+        servo_set_angle_init((servo_joint_t)i, v);
+    }
+}
+
 /**
  * j5vr_center_all_servos — porta tutti i servo alla posa HOME tramite SETPOSE (RTR5).
  * Non scrive direttamente desired_positions[]: delega al RT loop via g_setpose_state.

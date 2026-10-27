@@ -50,6 +50,13 @@ uint8_t servo_get_angle(servo_joint_t joint);
 /** Angolo logico corrente con la frazione (ultimo valore comandato, 0–180). */
 float servo_get_angle_f(servo_joint_t joint);
 
+/**
+ * Dichiara dove si trova il servo SENZA scrivere il PWM (SETPOSE_INIT dal Pi all'avvio: la posa in cui il
+ * braccio e' stato spento, PARK). Da qui partono il limitatore di velocita' e la prima traiettoria, cosi' il
+ * primo impulso non fa saltare il servo alla posa HOME.
+ */
+void servo_set_angle_init(servo_joint_t joint, float angle_deg);
+
 /* Ultimo pulse width applicato (microsecondi); 0 se mai applicato / disabilitato */
 uint16_t servo_get_last_pulse_us(servo_joint_t joint);
 

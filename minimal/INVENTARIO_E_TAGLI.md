@@ -278,6 +278,10 @@ Resta senza librerie (oggi 75 KB; obiettivo < 100 KB con il tab Teleop). Grafico
   della visione, PARK/TELEOPPOSE, fungo (ESTOP → STOPPED, ESTOP_CLEAR senza ripartenza, SAFE+ENABLE), 45.000 frame SPI
   senza errori. Dettaglio in `firmware/stm32/MINIMAL.md`.
 - Punto 4 (`HYBRID ENABLE`) **fatto** (27/10 sera): app Quest 1.4.5 non lo manda piu', firmware senza il comando (riflash).
+- Sera, dalle prove sul robot: j5mini non si blocca piu' per un client che non legge (visore in pausa); nuovo comando
+  firmware `SETPOSE_INIT` + j5mini lo manda al BOOT_READY (ultima posa nota, o PARK all'accensione): niente salto dei servo
+  al primo movimento (verificato: HOME da PARK parte dagli angoli di PARK); app Quest 1.4.6: ENABLE = SAFE+ENABLE, cosi'
+  riparte anche dopo il fungo. Regola: PARK prima di spegnere.
 
 ## 5 bis. Ordine di esecuzione proposto
 

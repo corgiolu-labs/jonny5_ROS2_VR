@@ -56,6 +56,9 @@ bool j5vr_setpose_tick(uint32_t rt_tick);
  */
 void j5vr_setpose_abort(void);
 
+/** true mentre una traiettoria SETPOSE/HOME/PARK e' in esecuzione (guardia di SETPOSE_INIT). */
+bool j5vr_setpose_is_active(void);
+
 /**
  * Posa assoluta 6-DOF con velocità percentuale e profilo di moto.
  */

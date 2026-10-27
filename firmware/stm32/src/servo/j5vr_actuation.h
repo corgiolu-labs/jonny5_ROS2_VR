@@ -53,6 +53,10 @@ extern volatile int16_t  g_j5vr_last_inc_mdeg_gomito;
 /** Inizializza desired_positions[], velocità max e parametri HEAD. */
 void j5vr_actuation_init(void);
 
+/** SETPOSE_INIT: la posa (gradi fisici) in cui il braccio si trova da spento, senza muovere nulla: target,
+ *  filtri e angolo "corrente" dei servo partono da qui (niente salto al primo impulso). */
+void j5vr_actuation_set_init_pose(const float q_deg[6]);
+
 /** Porta tutti i servo alla posa HOME tramite SETPOSE (RTR5, non bloccante). */
 void j5vr_center_all_servos(void);
 
@@ -139,6 +143,9 @@ bool j5vr_setpose_tick(uint32_t rt_tick);
  * UART STOP/SAFE: nessuna auto-ripresa della traiettoria dopo uno stop.
  */
 void j5vr_setpose_abort(void);
+
+/** true mentre una traiettoria SETPOSE/HOME/PARK e' in esecuzione (vedi j5vr_setpose.h). */
+bool j5vr_setpose_is_active(void);
 
 /**
  * j5vr_go_setpose_time_f — posa a durata fissa, setpoint float sub-degree.

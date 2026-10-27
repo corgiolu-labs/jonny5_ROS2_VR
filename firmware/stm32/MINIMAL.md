@@ -52,6 +52,8 @@ fungo, PARK/TELEOPPOSE; backup della flash precedente in `jonny5-backups/pre-cut
 | `tools/fw_sim/orig/` e il test differenziale | il minimale diverge dall'originale apposta da qui in poi |
 
 Corretto nello stesso giro: il bit 4 di diag (`guard`) segue il freeze invece di restare a 1 (stranezza 13 qui sotto).
+Aggiunto la sera: `SETPOSE_INIT <B S G Y P R>` (gradi fisici, nessun PWM, rifiutato con traiettoria in corso o teleop
+armato): posa da cui partono limitatore e prima traiettoria; j5mini la manda con PARK (stranezza 10).
 Build Zephyr: Flash 76244 B, RAM 25922 B; `src/` 7093 righe; `python -m pytest tools/fw_sim -q` 23 test.
 
 Rimasti, anche se poco usati: IMU BNO085 (solo telemetria, sempre accesa), `VR?`,
@@ -144,8 +146,9 @@ Il minimale si comporta **come l'originale**, quindi anche questi restano. Ognun
 7. `PARK` e `TELEOPPOSE` vanno alla stessa posa.
 8. `SET_JOINT_LIMITS` con min > max risponde OK ma non applica nulla.
 9. `SET_VR_PARAMS` senza la parte intera cambia l'instradamento del polso (default diversi dal boot).
-10. La prima SETPOSE dopo il boot parte dalle `desired_positions` (offset), non dalla posa reale:
-    possibile scatto.
+10. ~~La prima SETPOSE dopo il boot parte dalle `desired_positions` (offset), non dalla posa reale:
+    possibile scatto.~~ Dal 27/10 sera j5mini manda `SETPOSE_INIT <PARK>` dopo la configurazione: la prima
+    traiettoria parte da PARK (regola: PARK prima di spegnere).
 11. Pulsante PC13: la doppia inversione fa scattare HOME probabilmente al **rilascio** (cablaggio ignoto).
 12. Il DMA SPI si riavvia ogni 3 s quando il master tace (riga di log ogni volta).
 13. ~~Il bit 4 di diag (`guard`) resta a 1 per sempre dopo il primo freeze.~~ Corretto il 27/10: segue il freeze

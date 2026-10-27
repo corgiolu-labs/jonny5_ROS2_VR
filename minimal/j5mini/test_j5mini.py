@@ -1067,3 +1067,25 @@ def test_a_client_that_stops_reading_is_dropped_and_the_others_still_get_telemet
     assert stuck not in srv.clients and good in srv.clients and stuck.closed
     assert [m["n"] for m in good.sent] == [1, 2]
 
+
+def test_boot_push_ends_with_the_park_pose_as_init_pose(lib):
+    """27/10/2026: at power-on the servos snapped to HOME. After the configuration j5mini declares the PARK pose
+    (where the arm is left when switched off) with SETPOSE_INIT; HOME then starts from there as a trajectory."""
+    cfg = json.loads(json.dumps(CFG))
+    cfg["settings"]["dirs"] = [1, -1, 1, 1, -1, 1]
+    r = Rig(lib, cfg)
+    r.run(1500)
+    cmds = [e["cmd"] for e in r.responses()]
+    assert "SETPOSE_INIT 88 125 143 90 50 98" in cmds                # park [90,50,150,90,130,90] virtual -> physical
+    assert cmds.index("SETPOSE_INIT 88 125 143 90 50 98") > cmds.index(CFG["boot_commands"][-1])
+    assert all(e["ok"] for e in r.responses() if e["cmd"].startswith("SETPOSE_INIT"))
+    assert r.sim.angles() == [88.0, 125.0, 143.0, 90.0, 50.0, 98.0] and r.sim.pwm()[0] == [0] * 6
+    # a j5mini restart with the firmware already running (fallback push) must not touch what the firmware knows
+    r.core.boot_queue = []
+    r.core._start_boot_push(booted=False)
+    assert not any(l.startswith("SETPOSE_INIT") for l in r.core.boot_queue)
+    # a firmware reset mid-session: the last pose seen in telemetry, not PARK (the arm stayed about there)
+    r.core.last_pose = [88, 85, 83, 90, 90, 98]
+    r.core._start_boot_push(booted=True)
+    assert "SETPOSE_INIT 88 85 83 90 90 98" in r.core.boot_queue
+

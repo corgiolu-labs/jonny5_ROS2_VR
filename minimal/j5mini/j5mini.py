@@ -57,6 +57,13 @@ import threading
 import time
 from typing import Callable
 
+try:
+    import websockets                      # the server (serve()) and the closed-connection check in Server.handler
+    from websockets.exceptions import ConnectionClosed as _WS_CLOSED   # submodule: not a lazy attribute of the package
+except ImportError:                        # the module still imports without the package (helpers, tests)
+    websockets = None
+    _WS_CLOSED = ()
+
 # ------------------------------------------------------------------ J5 protocol (firmware layout)
 
 J5_TELEMETRY, J5_TEST_ECHO, J5_STATUS, J5_J5VR, J5_J5IK = 0x01, 0x02, 0x03, 0x04, 0x05
@@ -193,6 +200,8 @@ class Core:
         self.link_timeout = cfg.get("link_timeout_ms", 150) / 1000.0
         # IMUON / IMUOFF no longer exist in the firmware (IMU always on): skipped if an older config has them
         self.boot_lines = [l for l in cfg.get("boot_commands", []) if l not in ("IMUON", "IMUOFF")]
+        self.cfg_for_init = cfg                        # SETPOSE_INIT at BOOT_READY: last_pose or PARK
+        self.last_pose: list[int] | None = None        # servo angles seen in telemetry (kept across a reset)
         self.vr_params_line = next((l for l in self.boot_lines if l.startswith("SET_VR_PARAMS")), None)
         self.t0 = clock()
         # setpoint
@@ -345,7 +354,7 @@ class Core:
         self.events.append({"type": "uart_unsolicited", "line": line})
         if line == "BOOT_READY":
             self.log("[j5mini] STM32 BOOT_READY: pushing configuration")
-            self._start_boot_push()
+            self._start_boot_push(booted=True)
 
     def _uart_done(self, cmd, ok, resp, cb):
         if resp.startswith("STATUS:"):
@@ -363,8 +372,12 @@ class Core:
             cb(ok, resp)
         self.events.append({"type": "uart_response", "cmd": cmd, "ok": ok, "response": resp})
 
-    def _start_boot_push(self):
-        self.boot_queue = list(self.boot_lines) + ([self.horizon_line()] if self.horizon_on else [])
+    def _start_boot_push(self, booted: bool = False):
+        self.boot_queue = list(self.boot_lines)
+        if booted:                                    # the firmware just (re)started: tell it where the arm is
+            self.boot_queue.append(init_pose_line(self.cfg_for_init, self.last_pose))
+        if self.horizon_on:
+            self.boot_queue.append(self.horizon_line())
         self.boot_retries = 0
         self.boot_done = True
         self._boot_next()
@@ -511,6 +524,9 @@ class Core:
             self.demo_stop(f"passo {d['i'] + 1} senza SETPOSE_DONE entro {self.DEMO_STEP_TIMEOUT_S:.0f} s")
 
     def telemetry_message(self) -> dict:
+        pose = [self.telemetry.get(k) for k in SERVO_KEYS]
+        if all(isinstance(v, int) for v in pose) and pose != [90] * 6:    # [90]*6 = a firmware just reset, not a pose
+            self.last_pose = pose
         intent_age = self.clock() - self.payload_t
         live = intent_age < 1.0 and self.payload is not None
         return {"type": "telemetry", "robot_state": self.robot_state, **self.telemetry,
@@ -550,8 +566,8 @@ DEMO_DEFAULT = [{"angles": [90, 90, 90, 90, 90, 90], "speed_pct": 33, "profile":
 
 
 
-def setpose_line(cfg: dict, virtual, speed_pct, profile) -> str:
-    """A virtual pose -> physical (offsets, dirs, [5, 175], joint limits) -> "SETPOSE b s g y p r vel% profile"."""
+def pose_physical(cfg: dict, virtual) -> list[int]:
+    """A virtual pose -> physical servo degrees (offsets, dirs, [5, 175], joint limits)."""
     s = settings_from_config(cfg)
     phys = []
     for i in range(6):
@@ -559,8 +575,24 @@ def setpose_line(cfg: dict, virtual, speed_pct, profile) -> str:
         v = max(5, min(175, int(s["offsets"][i] + d * (float(virtual[i]) - 90))))
         lo, hi = s["limits"][i]
         phys.append(max(lo, min(hi, v)))
+    return phys
+
+
+def setpose_line(cfg: dict, virtual, speed_pct, profile) -> str:
+    """A virtual pose -> "SETPOSE b s g y p r vel% profile"."""
     pct = max(1, min(100, int(speed_pct)))
-    return "SETPOSE " + " ".join(str(v) for v in phys) + f" {pct} {profile}"
+    return "SETPOSE " + " ".join(str(v) for v in pose_physical(cfg, virtual)) + f" {pct} {profile}"
+
+
+def init_pose_line(cfg: dict, physical=None) -> str:
+    """SETPOSE_INIT: where the arm is when the firmware boots, so its first trajectory starts there instead of
+    snapping the servos to HOME (27/10/2026). `physical` = the last pose seen before a reset; without one (cold
+    start) the PARK pose, where the arm rests when it is switched off. Sent after the boot lines, at BOOT_READY
+    only: a j5mini restart with the firmware running must not change what the firmware knows."""
+    if physical is None:
+        st = cfg.get("settings", {})
+        physical = pose_physical(cfg, st.get("park", POSE_DEFAULTS["park"]))
+    return "SETPOSE_INIT " + " ".join(str(int(v)) for v in physical)
 
 
 def pose_setpose_line(cfg: dict, name: str) -> str:
@@ -936,7 +968,7 @@ class Server:
                 except ValueError:
                     continue
                 await self.on_message(ws, msg)
-        except websockets.exceptions.ConnectionClosed:
+        except _WS_CLOSED:
             pass                                     # dropped without a close frame: normal for apps and phones
         finally:
             self.clients.discard(ws)
@@ -1415,7 +1447,8 @@ def control_thread(core: Core, lock: threading.Lock, stop: threading.Event, peri
 
 
 async def serve(core: Core, lock: threading.Lock, cfg: dict, cams: Cameras):
-    import websockets
+    if websockets is None:
+        raise SystemExit("websockets non installato")
     ws_cfg = cfg.get("ws", {})
     ssl_ctx = None
     if ws_cfg.get("cert") and ws_cfg.get("key"):

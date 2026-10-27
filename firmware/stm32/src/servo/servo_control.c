@@ -275,6 +275,13 @@ bool servo_set_angle_f(servo_joint_t joint, float angle_deg)
 	return true;
 }
 
+void servo_set_angle_init(servo_joint_t joint, float angle_deg)
+{
+	if (joint >= SERVO_COUNT) { return; }
+	servo_angles[joint] = (uint8_t)(angle_deg + 0.5f);
+	servo_angles_f[joint] = angle_deg;
+}
+
 uint16_t servo_get_last_pulse_us(servo_joint_t joint)
 {
 	if (joint >= SERVO_COUNT) {

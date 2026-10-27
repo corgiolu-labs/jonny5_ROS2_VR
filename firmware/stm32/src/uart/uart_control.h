@@ -3,7 +3,7 @@
  *
  * Control plane UART ASCII per comandi di teleoperazione e configurazione.
  * Comandi supportati: STOP, SAFE, ENABLE, STATUS?,
- *   HOME, PARK, TELEOPPOSE, SETPOSE, SETPOSE_T_HR, SET_OFFSETS,
+ *   HOME, PARK, TELEOPPOSE, SETPOSE, SETPOSE_T_HR, SETPOSE_INIT, SET_OFFSETS,
  *   SET_JOINT_LIMITS, SET_VR_PARAMS, VR?
  *
  * Formato richiesta: [#<seq>] <CMD> [argomenti]\n

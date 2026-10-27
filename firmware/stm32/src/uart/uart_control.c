@@ -10,6 +10,7 @@
  *   HOME, PARK
  *   SETPOSE <B S G Y P R vel PLANNER>
  *   SETPOSE_T_HR <B S G Y P R (decimi di grado) time_ms PLANNER>
+ *   SETPOSE_INIT <B S G Y P R>   posa in cui il braccio si trova (da spento), nessun movimento
  *   SET_OFFSETS <B S G Y P R>
  *   SET_JOINT_LIMITS <idx min_deg max_deg>
  *   SET_VR_PARAMS <16 float> [18 uint opzionali]
@@ -486,6 +487,43 @@ static void uart_process_command(uint32_t seq, const char *cmd)
          * più stressati. Gli altri servo restano ingaggiati. */
         servo_relax_digital();
         uart_send_response_with_seq(seq, "OK RELAX_DIGITAL");
+    }
+    /* --- SETPOSE_INIT <B S G Y P R> ---
+     * Il Pi la manda dopo la configurazione all'avvio: la posa fisica in cui il braccio e' stato spento (PARK).
+     * Nessun PWM: diventa il punto di partenza del limitatore e della prima traiettoria, cosi' il primo impulso
+     * non fa saltare i servo alla HOME. Rifiutata con una traiettoria in corso o con il teleop armato. */
+    else if (strncmp(cmd, "SETPOSE_INIT ", 13) == 0)
+    {
+        if (j5vr_setpose_is_active() || g_vr_armed)
+        {
+            uart_send_response_with_seq(seq, "ERR BUSY");
+            return;
+        }
+        const char *p = cmd + 13;
+        unsigned int args[6];
+        bool fmt_ok = true;
+        for (int i = 0; i < 6 && fmt_ok; i++)
+        {
+            fmt_ok = parse_uint(&p, &args[i]);
+        }
+        if (fmt_ok) { skip_spaces(&p); fmt_ok = (*p == '\0'); }
+        if (!fmt_ok)
+        {
+            uart_send_response_with_seq(seq, "ERR SETPOSE_INIT_FMT");
+            return;
+        }
+        float q[6];
+        for (int i = 0; i < 6; i++)
+        {
+            if (args[i] < 5U || args[i] > 175U)
+            {
+                uart_send_response_with_seq(seq, "ERR SETPOSE_INIT_RANGE");
+                return;
+            }
+            q[i] = (float)args[i];
+        }
+        j5vr_actuation_set_init_pose(q);
+        uart_send_response_with_seq(seq, "OK SETPOSE_INIT");
     }
     /* --- SETPOSE_T_HR <B*10 S*10 G*10 Y*10 P*10 R*10 time_ms PLANNER> ---
      * High-resolution: angoli moltiplicati per 10 (50–1750 = 5.0°–175.0°).

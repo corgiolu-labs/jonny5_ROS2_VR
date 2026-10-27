@@ -519,3 +519,30 @@ def test_horizon_command_format(lib):
     assert s.command("HORIZON 2") == ["ERR HORIZON_FMT"]
     assert s.command("HORIZON 1 1 -1 1") == ["ERR HORIZON_FMT"]
     assert s.command("HORIZON 1 1 -1 1 1 -1 1 2.5 x") == ["ERR HORIZON_FMT"]
+
+
+def test_setpose_init_makes_the_first_motion_start_from_the_parked_pose(lib):
+    """27/10/2026, user: at power-on the arm jumped to HOME at full servo speed (the firmware's idea of the current
+    pose was HOME). j5mini now sends SETPOSE_INIT with the PARK pose after the configuration: no PWM, but the first
+    trajectory starts there; refused while a trajectory runs or the teleop is armed."""
+    s = booted(lib)
+    for line in PI_BOOT_PUSH:
+        s.command(line)
+    assert s.command("SETPOSE_INIT 88 125 143 90 50 98") == ["OK SETPOSE_INIT"]
+    assert s.state() == "SAFE" and s.pwm()[0] == [0] * 6            # nothing written
+    assert s.angles() == [88.0, 125.0, 143.0, 90.0, 50.0, 98.0]
+    assert s.command("SETPOSE_INIT 1 2 3") == ["ERR SETPOSE_INIT_FMT"]
+    assert s.command("SETPOSE_INIT 0 90 90 90 90 90") == ["ERR SETPOSE_INIT_RANGE"]
+    pi = Pi(s)
+    pi.j5vr(100, mode=2)
+    assert s.command("HOME", 10) == ["OK HOME"]
+    s.run(30)                                                        # 30 ms into the HOME trajectory
+    a = s.angles()
+    assert abs(a[1] - 125.0) < 8 and abs(a[2] - 143.0) < 8, a      # it starts from PARK, not from 90
+    assert s.command("SETPOSE_INIT 90 90 90 90 90 90") == ["ERR BUSY"]
+    pi.j5vr(4000, mode=2)
+    assert s.angles() == [100.0, 88.0, 93.0, 95.0, 90.0, 95.0]      # and ends at HOME (the offsets)
+    pi.j5vr(300, mode=2, joy_x=20000, btn_l=GRIP, btn_r=GRIP)       # teleop armed
+    s.uart_read()                                                    # SETPOSE_DONE / RELAX of the HOME
+    assert s.command("SETPOSE_INIT 90 90 90 90 90 90") == ["ERR BUSY"]
+
