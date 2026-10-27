@@ -180,6 +180,9 @@ const yes = (v, alarm) => v === true ? [alarm ? "SÌ" : "sì", alarm ? "alarm" :
 const fx = (v, d = 1) => (typeof v === "number" ? v.toFixed(d) : "–");
 
 function teleopLive() { return !!(S.tm && S.tm.teleop_mode >= 0); }
+/** The headset is actually driving the servos: a teleop mode (2-5) with the grips held (deadman). In PREPARAZIONE or
+ *  with the grips released the firmware's VR pipeline does not actuate, so HOME / PARK / VR pose from here are fine. */
+function teleopDriving() { return teleopLive() && S.tm.teleop_mode >= 2 && !!S.tm.deadman_active; }
 
 function setMotion(on) {
   $("motion").checked = on;
@@ -189,7 +192,7 @@ function setMotion(on) {
 function motionAllowed() {
   if (!S.connected) { toast("non collegato", true); return false; }
   if (!$("motion").checked) { toast("attiva prima 'comandi di movimento' in alto", true); return false; }
-  if (teleopLive()) { toast("il visore sta comandando il braccio: comandi di movimento disattivati", true); return false; }
+  if (teleopDriving()) { toast("il visore sta comandando il braccio (grip premuti): comandi di movimento disattivati", true); return false; }
   return true;
 }
 
@@ -258,6 +261,7 @@ function badges() {
   b("b-teleop", live ? `visore: ${MODES[tm.teleop_mode] || "modo " + tm.teleop_mode}` : "visore: no", live ? "warn" : "dim");
   b("b-horizon", S.horizon ? "orizzonte ON" : "orizzonte off", S.horizon ? "teal" : "dim");
   document.body.classList.toggle("teleop-live", live);
+  document.body.classList.toggle("teleop-driving", S.connected && teleopDriving());
   demoButton();
   $("hero-sub").textContent = !S.connected ? "in attesa del collegamento con j5mini…" :
     `${st === "IDLE" ? "pronto (IDLE)" : st === "SAFE" ? "servo spenti (SAFE)" : st === "STOPPED" ? "fermo (STOPPED): SAFE poi ENABLE per ripartire" : "stato " + st}` +
@@ -444,7 +448,7 @@ let liveTimer = null;
 function targetChanged() {
   $("go-cmd").textContent = setposeCmd(S.target, Number($("move-ms").value), $("move-prof").value);
   draw3d(measuredVirtual());
-  if ($("live").checked && $("motion").checked && !teleopLive()) {
+  if ($("live").checked && $("motion").checked && !teleopDriving()) {
     clearTimeout(liveTimer);
     liveTimer = setTimeout(() => {
       const mv = measuredVirtual() || S.target;

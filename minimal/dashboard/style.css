@@ -128,7 +128,7 @@ td.jog { white-space: nowrap; } td.jog button { margin-left: 4px; min-width: 32p
 .manip meter { flex: 1; height: 14px; }
 details { margin: 12px 0; } summary { cursor: pointer; color: var(--muted); }
 details label { display: block; margin: 8px 0; }
-body:not(.motion-on) button.motion, body.teleop-live button.motion { opacity: .35; pointer-events: none; }
+body:not(.motion-on) button.motion, body.teleop-driving button.motion { opacity: .35; pointer-events: none; }   /* visore con i grip premuti */
 #toast {
   position: fixed; bottom: calc(18px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); z-index: 30;
   background: var(--panel); padding: 10px 18px; border-radius: 10px; border: 1px solid var(--teal); box-shadow: var(--shadow);
