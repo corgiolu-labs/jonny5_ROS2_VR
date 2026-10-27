@@ -118,7 +118,8 @@ def test_teleop_manual_and_neutral_after_silence(lib):
     assert r.core.stats["neutral"] - n0 >= 30              # neutral after 150 ms
     assert r.core.diag.get("deadman") is False
     pulses, _ = r.sim.pwm()
-    assert pulses == [0] * 6                               # deadman released -> outputs off
+    assert all(p > 0 for p in pulses[:4])                  # deadman released -> the arm HOLDS (27/10/2026; before: outputs off)
+    assert pulses[4] == 0 and pulses[5] == 0               # pitch/roll still relaxed from the HOME
     assert r.core.telemetry["servo_deg_Y"] == round(r.sim.angles()[3])
 
 
