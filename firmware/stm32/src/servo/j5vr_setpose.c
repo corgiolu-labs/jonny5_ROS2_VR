@@ -307,10 +307,14 @@ void j5vr_go_setpose(
     q_target[SERVO_PITCH]  = sp_clamp_joint_runtime_deg(SERVO_PITCH,  (float)pitch_deg);
     q_target[SERVO_ROLL]   = sp_clamp_joint_runtime_deg(SERVO_ROLL,   (float)roll_deg);
 
+    /* Partenza = ultimo angolo SCRITTO al servo (servo_get_angle_f), non il target desired_positions: in MANUAL il
+     * target corre avanti al servo (limitatore di velocita') e in SETPOSE_INIT e' la posa dichiarata; partire dal
+     * target faceva saltare il servo di quella differenza al primo tick (27/10/2026). */
     float q_start[SERVO_COUNT];
     for (int i = 0; i < SERVO_COUNT; i++)
     {
-        q_start[i] = sp_clamp_joint_runtime_deg(i, desired_positions[i]);
+        q_start[i] = sp_clamp_joint_runtime_deg(i, servo_get_angle_f((servo_joint_t)i));
+        desired_positions[i] = q_start[i];
     }
 
     float dq_max = 0.0f;
@@ -391,7 +395,8 @@ void j5vr_go_setpose_time_f(
     for (int i = 0; i < SERVO_COUNT; i++)
     {
         const float target = q_target_clamped[i];
-        const float start  = sp_clamp_joint_runtime_deg(i, desired_positions[i]);
+        const float start  = sp_clamp_joint_runtime_deg(i, servo_get_angle_f((servo_joint_t)i));
+        desired_positions[i] = start;
         g_setpose_state.q_target[i]   = target;
         g_setpose_state.q_start[i]    = start;
         g_setpose_state.prev_angle[i] = start;

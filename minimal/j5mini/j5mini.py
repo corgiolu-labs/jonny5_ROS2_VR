@@ -360,7 +360,7 @@ class Core:
         if resp.startswith("STATUS:"):
             self.robot_state = resp[7:].strip()
         if self.boot_queue and cmd == self.boot_queue[0]:
-            if not ok and cmd.startswith("SET_VR_PARAMS") and self.boot_retries < 2:
+            if not ok and self.boot_retries < 2:        # TIMEOUT at a Pi reboot (UART not ready yet), SET_VR_PARAMS hiccups
                 self.boot_retries += 1
             else:
                 if not ok:

@@ -470,16 +470,15 @@ static void rt_loop_step(void)
                     }
                 }
 
-                /* Se non armato, disabilita servos; eccezione: Manual VR (2) o IK VR (5) con deadman+heartbeat */
+                /* Non armato (grip rilasciati, PREPARAZIONE): i servo TENGONO l'ultimo angolo scritto. Fino al
+                 * 27/10/2026 qui si toglieva il PWM (braccio libero): cedeva sotto il suo peso e il comando successivo
+                 * (HOME/PARK/VR pose) ripartiva dall'angolo che il firmware credeva, con uno scatto. Le uscite si
+                 * spengono solo con SAFE, STOP, fungo e watchdog SPI (STATE_SAFE / STATE_STOPPED). */
                 bool allow_servos_in_manual = (j5vr_current.mode == 2U) && deadman_active && (j5vr_current.vr_heartbeat > 0U);
                 bool allow_servos_in_mode5  = (j5vr_current.mode == 5U) && deadman_active && (j5vr_current.vr_heartbeat > 0U);
                 if (!g_vr_armed && !allow_servos_in_manual && !allow_servos_in_mode5)
                 {
-                    if (!servos_disabled_latched)
-                    {
-                        servo_disable_all();
-                        servos_disabled_latched = true;
-                    }
+                    servos_disabled_latched = true;    /* "uscite non pilotate dalla pipeline": restano dove sono */
                 }
 
                 /* Log mode change only on edge (no per-tick spam). */

@@ -52,7 +52,7 @@ fungo, PARK/TELEOPPOSE; backup della flash precedente in `jonny5-backups/pre-cut
 | `tools/fw_sim/orig/` e il test differenziale | il minimale diverge dall'originale apposta da qui in poi |
 
 Corretto nello stesso giro: il bit 4 di diag (`guard`) segue il freeze invece di restare a 1 (stranezza 13 qui sotto).
-Aggiunto la sera: `SETPOSE_INIT <B S G Y P R>` (gradi fisici, nessun PWM, rifiutato con traiettoria in corso o teleop
+Aggiunti la sera: tenuta dei servo al rilascio dei grip + SETPOSE che parte dall'angolo reale (stranezza 3); `SETPOSE_INIT <B S G Y P R>` (gradi fisici, nessun PWM, rifiutato con traiettoria in corso o teleop
 armato): posa da cui partono limitatore e prima traiettoria; j5mini la manda con PARK (stranezza 10).
 Build Zephyr: Flash 76244 B, RAM 25922 B; `src/` 7093 righe; `python -m pytest tools/fw_sim -q` 23 test.
 
@@ -137,7 +137,9 @@ Il minimale si comporta **come l'originale**, quindi anche questi restano. Ognun
    media esponenziale del target e `vel_pitch/vel_roll` non contano.
 2. **In HEAD/HYBRID la spalla/gomito/base restano senza PWM** quando non c'è input sugli stick (latch
    "servo off"): tengono solo grazie alla tenuta degli LDX-218.
-3. **Deadman rilasciato = tutte le uscite PWM a 0** (servo liberi), non "tieni posizione".
+3. ~~**Deadman rilasciato = tutte le uscite PWM a 0** (servo liberi), non "tieni posizione".~~ Dal 27/10 sera i servo
+   **tengono** l'ultimo angolo al rilascio dei grip e in PREPARAZIONE (liberi solo con SAFE/STOP/fungo/watchdog), e ogni
+   SETPOSE parte dall'angolo scritto al servo invece che dal target: niente scatto alla posa dopo il teleop.
 4. **SAFE non è stabile**: con un flusso J5VR e heartbeat che avanza il firmware torna IDLE da solo
    in ~1 ms. Lo stop affidabile è `STOP` (STOPPED) o l'E-STOP.
 5. Il heartbeat è controllato solo come `> 0`; la "freschezza" è garantita solo dal timeout SPI di 500 ms.

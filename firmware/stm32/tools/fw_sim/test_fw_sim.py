@@ -546,3 +546,38 @@ def test_setpose_init_makes_the_first_motion_start_from_the_parked_pose(lib):
     s.uart_read()                                                    # SETPOSE_DONE / RELAX of the HOME
     assert s.command("SETPOSE_INIT 90 90 90 90 90 90") == ["ERR BUSY"]
 
+
+@pytest.mark.parametrize("mode", [2, 3, 5])
+def test_releasing_the_grips_holds_the_pose_and_the_next_pose_starts_from_the_servos(lib, mode):
+    """27/10/2026, user: after teleop, grips released, HOME / PARK / VR pose must move smoothly. Before: in MANUAL and
+    ASSIST the PWM was cut on release (the arm sagged) and the trajectory started from the target, which in MANUAL runs
+    ahead of the velocity-limited servo: both gave a snap at the first pulse."""
+    s = booted(lib)
+    for line in PI_BOOT_PUSH:
+        s.command(line)
+    pi = Pi(s)
+    pi.j5vr(100, mode=2)
+    s.command("HOME", 10)
+    pi.j5vr(4000, mode=2)
+    s.uart_read()
+    kw = dict(btn_l=GRIP, btn_r=GRIP)
+    if mode == 2:
+        pi.j5vr(800, mode=2, joy_x=20000, pitch=-15000, **kw)
+    elif mode == 3:
+        pi.j5vr(200, mode=3, **kw)
+        pi.j5vr(1200, mode=3, quat=quat_axis("y", 20), **kw)
+    else:
+        pi.j5vr(200, mode=5, **kw)
+        pi.j5vr(1200, mode=5, quat=quat_axis("y", 10), mode5_bsg_cdeg=(10000, 7500, 10500), **kw)
+    held = s.angles()
+    pulses_held = s.pwm()[0]
+    pi.j5vr(500, mode=mode)                                   # grips released, still in the mode
+    assert s.angles() == held
+    assert s.pwm()[0] == pulses_held and all(p > 0 for p in pulses_held[:4])   # servos keep holding
+    assert s.command("HOME", 10) == ["OK HOME"]
+    s.run(20)
+    first = s.angles()
+    assert max(abs(a - b) for a, b in zip(first, held)) < 0.5, (first, held)    # starts where the servos are
+    pi.j5vr(4000, mode=mode)
+    assert s.angles() == [100.0, 88.0, 93.0, 95.0, 90.0, 95.0]
+
