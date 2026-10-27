@@ -285,47 +285,6 @@ void estop_notify_poll(void)
     }
 }
 
-#else /* !DT_NODE_EXISTS(ESTOP_NODE) — build senza E-STOP (es. F446) */
-
-void estop_init(void)
-{
-    /* Nessun alias DT "estop" su questa board: stub attivo, nessun E-STOP HW. */
-    LOG_INF("[ESTOP] assente su questa board: stub attivo");
-}
-
-void estop_poll_tick(void)
-{
-}
-
-bool estop_is_active(void)
-{
-    return false;
-}
-
-bool estop_line_active(void)
-{
-    return false;
-}
-
-void estop_notify_poll(void)
-{
-}
-
-int32_t estop_bypass_set(bool on, uint32_t minutes)
-{
-    ARG_UNUSED(on);
-    ARG_UNUSED(minutes);
-    return -1;
-}
-
-bool estop_bypass_active(void)
-{
-    return false;
-}
-
-int32_t estop_bypass_remaining_s(void)
-{
-    return 0;
-}
-
+#else
+#error "alias DT estop mancante: il fungo E-STOP su PC6 e' obbligatorio (zephyr/overlays_g474/gpio_estop.overlay)"
 #endif /* DT_NODE_EXISTS(ESTOP_NODE) */

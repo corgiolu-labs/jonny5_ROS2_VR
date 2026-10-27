@@ -3,8 +3,7 @@
  *
  * Fungo di emergenza su PC6 (JONNY5 SHIELD rev3, solo build G474).
  * Linea ALTA = STOP ATTIVO (fail-safe: NC verso GND + pull-up esterno R8).
- * Sul F446 (nessun alias DT "estop") l'implementazione e' uno stub no-op
- * con estop_is_active() == false: zero cambi di comportamento.
+ * L'alias DT "estop" e' obbligatorio: senza, la build si ferma (#error).
  */
 
 #ifndef ESTOP_H
@@ -33,8 +32,7 @@ bool estop_line_active(void);
  * 2026-10-19): la linea viene ignorata (niente latch STOPPED, niente gate UART)
  * fino alla scadenza o a ESTOP_BYPASS OFF. Non persiste al riavvio. Alla
  * scadenza il robot viene fermato come per una pressione del fungo e il Pi
- * riceve "ESTOP_BYPASS_EXPIRED". Ritorna i secondi residui (0 = off),
- * -1 = nessun E-STOP hardware su questa board (stub F446). */
+ * riceve "ESTOP_BYPASS_EXPIRED". Ritorna i secondi residui (0 = off). */
 int32_t estop_bypass_set(bool on, uint32_t minutes);
 bool estop_bypass_active(void);
 int32_t estop_bypass_remaining_s(void);
@@ -42,7 +40,7 @@ int32_t estop_bypass_remaining_s(void);
 /* Emette le notifiche "ESTOP"/"ESTOP_CLEAR" pendenti verso il Pi. Da chiamare
  * dal main loop (stesso thread di uart_control_process): i fronti nel tick RT
  * settano solo flag, cosi' il busy-wait di uart_poll_out non causa overrun del
- * tick 1 kHz ne' interleaving con le risposte in corso. Stub no-op sul F446. */
+ * tick 1 kHz ne' interleaving con le risposte in corso. */
 void estop_notify_poll(void);
 
 #endif /* ESTOP_H */

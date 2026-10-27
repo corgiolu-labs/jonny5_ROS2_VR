@@ -80,8 +80,7 @@ static void rt_tick_isr_cb(const struct device *dev, void *user_data)
 }
 
 
-/* Periodo RT loop: 1 ms = 1000 Hz */
-#define RT_LOOP_PERIOD_MS 1
+/* Periodo RT loop: 1 ms = 1000 Hz (RT_LOOP_PERIOD_MS in rt_loop.h) */
 #define RT_LOOP_PERIOD_US 1000
 
 /* Thread IMU dedicato 400 Hz (fuori dal RT loop; priorità < system workqueue 5) */
@@ -189,7 +188,7 @@ volatile uint16_t g_rt_step_us = 0;
 /* Diagnostica teleop VR gating */
 volatile uint8_t g_vr_armed = 0;
 volatile uint8_t g_vr_freeze_active = 0;
-volatile uint32_t g_vr_guard_block_count = 0;
+volatile uint8_t g_vr_guard_active = 0;
 volatile uint8_t g_vr_input_active = 0;
 
 volatile uint32_t g_imu_thread_ticks = 0;
@@ -227,17 +226,12 @@ static bool auto_transition_done = false;
  * richiede quindi frame SPI freschi E un heartbeat avanzato rispetto a questo. */
 static uint16_t safe_entry_heartbeat = 0;
 
-/* Mode 6 (JOINT_STREAM di ROS 2, tolto): in IDLE i servo restano spenti.
- * true se l'ultimo tick IDLE era in mode 6: uscendone restando in IDLE la
- * pipeline VR non spegne i servo (il suo latch servos_disabled_latched e'
- * rimasto a true da prima), quindi li spegniamo qui, una volta. */
-static bool stream_servos_off = false;
-static bool stream_mode_prev = false;
-
 static void rt_loop_step(void)
 {
     g_rt_loop_ticks++;
     g_rt_loop_stage = 1;
+    g_vr_freeze_active = 0U;
+    g_vr_guard_active = 0U;   /* validi solo nel ramo MANUAL di STATE_IDLE, piu' sotto */
 
     /* SPI frame watchdog: ogni 100 tick (= 100 ms) verifica che il Pi stia
      * ancora inviando frame. Se il timeout scade e il sistema e' in IDLE,
@@ -261,7 +255,6 @@ static void rt_loop_step(void)
     if (state_machine_get_state() == STATE_STOPPED)
     {
         servo_disable_all();
-        stream_mode_prev = false;
         return;
     }
 
@@ -278,7 +271,6 @@ static void rt_loop_step(void)
         j5vr_setpose_abort();
         /* Fuori da IDLE i servo sono gia' spenti (SAFE): nessuno spegnimento
          * "di uscita" da mode 6 da rifare dopo. */
-        stream_mode_prev = false;
     }
     else if (j5vr_setpose_tick(g_rt_loop_ticks))
     {
@@ -312,9 +304,7 @@ static void rt_loop_step(void)
                     hal_spi_last_frame_age_ms() <= SPI_FRAME_TIMEOUT_MS;
                 const bool hb_advanced =
                     (j5vr_check.vr_heartbeat != safe_entry_heartbeat);
-                /* Mode 6 non si riarma mai da solo: serve un ENABLE via UART. */
-                const bool joint_stream = (j5vr_check.mode == J5_MODE_JOINT_STREAM);
-                if (spi_fresh && hb_advanced && !joint_stream &&
+                if (spi_fresh && hb_advanced &&
                     (j5vr_check.mode != 0 || j5vr_check.vr_heartbeat > 0))
                 {
                     if (!auto_transition_done)
@@ -337,26 +327,6 @@ static void rt_loop_step(void)
                 j5vr_smooth_between_frames(&j5vr_current, k_uptime_get_32());
                 g_rt_loop_stage = 31;
 
-                if (j5vr_current.mode == J5_MODE_JOINT_STREAM)
-                {
-                    stream_mode_prev = true;
-                    g_vr_armed = 0U;
-                    g_vr_input_active = 0U;
-                    g_vr_freeze_active = 0U;
-                    if (!stream_servos_off)
-                    {
-                        servo_disable_all();
-                        stream_servos_off = true;
-                    }
-                    break;
-                }
-                if (stream_mode_prev)
-                {
-                    servo_disable_all();   /* uscita da mode 6 in IDLE: come il disarm VR */
-                    stream_mode_prev = false;
-                }
-                stream_servos_off = false;   /* re-armato al prossimo ingresso in mode 6 */
-
                 bool grip_left = false;
                 bool grip_right = false;
                 bool deadman_active = false;
@@ -375,7 +345,6 @@ static void rt_loop_step(void)
                 static uint32_t last_change_ms = 0;
                 static uint32_t last_active_ms = 0;
                 static bool servos_disabled_latched = false;
-                static bool last_freeze = false;
                 static bool last_guarded = false;
                 const uint32_t now_ms = k_uptime_get_32();
 
@@ -513,40 +482,11 @@ static void rt_loop_step(void)
                     }
                 }
 
-                /* Log controllo (rate-limited): stato gating + input */
-                {
-                    static uint32_t ctrl_log = 0;
-                    if ((ctrl_log++ % 1000U) == 0U)
-                    {
-                        RT_DBG("[CTRL] st=%u m=%u dm=%u ok=%u jx=%d jy=%d p=%d y=%d i=%u",
-                               (unsigned)state_machine_get_state(),
-                               (unsigned)j5vr_current.mode,
-                               (unsigned)(deadman_active ? 1U : 0U),
-                               (unsigned)(movement_allowed ? 1U : 0U),
-                               (int)j5vr_current.joy_x,
-                               (int)j5vr_current.joy_y,
-                               (int)j5vr_current.pitch,
-                               (int)j5vr_current.yaw,
-                               (unsigned)j5vr_current.intensity);
-                    }
-                }
-
-                /* Log mode change only on edge (no per-tick spam).
-                 * Transizione 4 (POSE_VR) -> 1 (MANUAL_VR): resetta freeze e re-arm così il robot
-                 * risponde subito senza dover uscire/rientrare o muovere lo stick per riavere l'edge. */
+                /* Log mode change only on edge (no per-tick spam). */
                 {
                     static uint8_t last_mode = 0xFF;
                     if (j5vr_current.mode != last_mode)
                     {
-                        if (last_mode == 1U && j5vr_current.mode == 2U)
-                        {
-                            last_active_ms = now_ms;
-                            if (deadman_active && movement_allowed && (j5vr_current.vr_heartbeat > 0U))
-                            {
-                                g_vr_armed = 1;
-                                servos_disabled_latched = false;
-                            }
-                        }
                         /* Ingresso in HEAD (3) o HYBRID (4): reset calibrazione testa
                          * e accumulatori EMA così l’errore parte dalla posa corrente. */
                         if (j5vr_current.mode == 3U || j5vr_current.mode == 4U || j5vr_current.mode == 5U)
@@ -559,14 +499,7 @@ static void rt_loop_step(void)
                     }
                 }
 
-                if (!deadman_active)
-                {
-                }
-                else if (!movement_allowed)
-                {
-                    /* No actuation when movement not allowed */
-                }
-                else
+                if (deadman_active && movement_allowed)
                 {
                     switch (j5vr_current.mode)
                     {
@@ -575,8 +508,8 @@ static void rt_loop_step(void)
                     case 2: /* MANUAL_VR */
                         {
                             g_rt_loop_stage = 33;
-                            /* Re-arm di riserva: in Manual VR con deadman e heartbeat ma non armato
-                             * (es. dopo Pose VR se il frame 4->1 è andato perso o c’è stato un mode 0 in mezzo). */
+                            /* Re-arm di riserva: in MANUAL con deadman e heartbeat ma non armato
+                             * (es. un mode 0 in mezzo). */
                             if (!g_vr_armed && deadman_active && movement_allowed && (j5vr_current.vr_heartbeat > 0U))
                             {
                                 g_vr_armed = 1;
@@ -585,33 +518,20 @@ static void rt_loop_step(void)
                             }
                             /* In Manual VR blocchiamo solo per freeze (200ms senza input).
                              * Non usiamo g_vr_armed qui così dopo Pose VR il robot risponde subito (deadman già richiesto per entrare nel switch). */
-                            bool freeze = false;
-                            bool guard_block = false;
-                            if (!inputs_active && (now_ms - last_active_ms) > VR_FREEZE_AFTER_MS)
-                            {
-                                freeze = true;
-                                guard_block = true;
-                            }
+                            const bool freeze = !inputs_active && (now_ms - last_active_ms) > VR_FREEZE_AFTER_MS;
 
                             g_vr_freeze_active = freeze ? 1U : 0U;
+                            g_vr_guard_active = freeze ? 1U : 0U;   /* bit 4 di diag: segue il freeze, non resta appiccicato */
 
-                            if (guard_block)
+                            if (freeze)
                             {
-                                g_vr_guard_block_count++;
                                 /* Azzera incrementi diagnostici quando blocchiamo */
                                 g_j5vr_last_inc_mdeg_yaw = 0;
                                 g_j5vr_last_inc_mdeg_pitch = 0;
                                 g_j5vr_last_inc_mdeg_spalla = 0;
                                 g_j5vr_last_inc_mdeg_gomito = 0;
 
-                                /* RUNTIME_EXPERIMENT [PR_FREEZE_NO_RELAX]: non chiamare
-                                 * servo_relax_digital() qui. Quella routine agisce solo su
-                                 * PITCH/ROLL (DIGITAL_SERVO_MASK); saltarla isola causalmente
-                                 * se il relax digitale nel freeze/guard alimenta lo stato tossico.
-                                 * Revertire questa riga per ripristinare il buzz-stop su P/R. */
-                                /* servo_relax_digital(); */
-
-                                if (!last_guarded || (freeze != last_freeze))
+                                if (!last_guarded)
                                 {
                                     RT_DBG("[GUARD] armed=%u freeze=%u input=%u stable_ms=%u",
                                            (unsigned)g_vr_armed,
@@ -620,21 +540,17 @@ static void rt_loop_step(void)
                                            (unsigned)(now_ms - last_change_ms));
                                 }
                                 last_guarded = true;
-                                last_freeze = freeze;
                             }
                             else
                             {
                                 last_guarded = false;
-                                last_freeze = false;
                                 j5vr_apply_setpoint_incremental(&j5vr_current, movement_allowed);
                             }
                             g_rt_loop_stage = 34;
                         }
                         break;
-                    case 1: /* POSE_VR: no joystick actuation; pose via one-shot TELEOPPOSE only */
-                        break;
                     case 3: /* HEAD_VR */
-                        j5vr_apply_head_tracking(&j5vr_current);
+                        j5vr_apply_head(&j5vr_current, true);
                         break;
                     case 4: /* HYBRID_VR */
                         /* HYBRID è governata dalla mode VR (4) senza consenso UART separato.
@@ -645,8 +561,7 @@ static void rt_loop_step(void)
                         j5vr_apply_mode5_arm_head(&j5vr_current);
                         break;
                     default:
-                        /* Unknown mode: safe fallback to MANUAL */
-                        j5vr_apply_setpoint_incremental(&j5vr_current, movement_allowed);
+                        /* Modo sconosciuto (anche 1 POSE e 6 JOINT_STREAM di un tempo): nessuna attuazione */
                         break;
                     }
                 }
@@ -739,7 +654,7 @@ static void rt_thread_fn(void *a, void *b, void *c)
             g_rt_loop_period_us = (uint16_t)(period_us_ewma_x16 >> 4);
         }
 
-        /* E-STOP hardware PC6 (solo G474; no-op sul F446): valutato PRIMA di
+        /* E-STOP hardware PC6: valutato PRIMA di
          * rt_loop_step() e FUORI dal suo corpo [Refactor-Phase1], cosi' viene
          * campionato a OGNI tick — anche quando lo step esce in anticipo per
          * STATE_STOPPED o SETPOSE attivo. Non-bloccante (~costo di un

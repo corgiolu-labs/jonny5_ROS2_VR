@@ -56,7 +56,6 @@ static uint8_t servo_angles[SERVO_COUNT] = {90, 90, 90, 90, 90, 90};
 static float servo_angles_f[SERVO_COUNT] = {90.0f, 90.0f, 90.0f, 90.0f, 90.0f, 90.0f};
 static uint16_t servo_last_pulse_us[SERVO_COUNT] = {0, 0, 0, 0, 0, 0};
 
-static uint8_t servo_last_sent_angle[SERVO_COUNT] = {255, 255, 255, 255, 255, 255};
 
 #define DIGITAL_SERVO_MASK ((1U << SERVO_PITCH) | (1U << SERVO_ROLL))
 
@@ -203,85 +202,9 @@ bool servo_control_init(void)
 	for (int i = 0; i < SERVO_COUNT; i++) {
 		servo_angles[i] = 90;
 		servo_angles_f[i] = 90.0f;
-		servo_last_sent_angle[i] = 255;
 	}
 
 	return driver_ready;
-}
-
-bool servo_set_angle(servo_joint_t joint, uint16_t angle_deg)
-{
-	if (joint >= SERVO_COUNT) {
-		LOG_ERR("[SERVO] Invalid joint: %d", joint);
-		printk("[SERVO_ERR] invalid_joint=%d\n", (int)joint);
-		return false;
-	}
-
-	if (!servo_ready[joint]) {
-		LOG_ERR("[SERVO] Servo %d not ready", joint);
-		printk("[SERVO_ERR] not_ready joint=%d\n", (int)joint);
-		return false;
-	}
-
-	/* Seleziona parametri del gruppo timer per questo giunto. */
-	const bool is_tim1 = (joint >= SERVO_PITCH);
-	const uint32_t min_us  = is_tim1 ? _min_us_tim1  : _min_us_tim8;
-	const uint32_t max_us  = is_tim1 ? _max_us_tim1  : _max_us_tim8;
-	const uint32_t max_deg = is_tim1 ? _max_deg_tim1 : _max_deg_tim8;
-
-	uint32_t logical_deg = (angle_deg > max_deg) ? max_deg : (uint32_t)angle_deg;
-	servo_angles[joint] = (uint8_t)CLAMP(logical_deg, 0U, 255U);
-	servo_angles_f[joint] = (float)servo_angles[joint];
-
-	/* pulse_us = min_us + (deg / max_deg) * (max_us - min_us) */
-	uint32_t span_us = (max_us > min_us) ? (max_us - min_us) : 0U;
-	uint32_t pulse_us = min_us + (logical_deg * span_us) / max_deg;
-	pulse_us = CLAMP(pulse_us, min_us, max_us);
-
-	const uint32_t period_hz = servo_get_period_hz(joint);
-	const int ret = servo_apply_pulse_us(&servo_pwms[joint], pulse_us, period_hz);
-
-	if (ret != 0) {
-		LOG_ERR("[SERVO] Failed to set PWM for joint %d: %d", joint, ret);
-		printk("[SERVO_ERR] pwm_set_fail joint=%d ret=%d pulse_us=%u cmd=%u\n", (int)joint, ret,
-		       (unsigned)pulse_us, (unsigned)angle_deg);
-		return false;
-	}
-
-	servo_last_pulse_us[joint] = (uint16_t)pulse_us;
-	servo_last_sent_angle[joint] = logical_deg;
-
-	if (joint == SERVO_YAW || joint == SERVO_PITCH || joint == SERVO_SPALLA) {
-		static uint32_t pwm_us_log = 0;
-
-		if ((pwm_us_log++ % 50U) == 0U) {
-			printk("[PWM_US] joint=%d log_deg=%u pulse_us=%u cmd=%u\n", (int)joint,
-			       (unsigned)logical_deg, (unsigned)pulse_us, (unsigned)logical_deg);
-		}
-	}
-
-	static uint8_t last_logged[SERVO_COUNT] = {255, 255, 255, 255, 255, 255};
-	static uint32_t last_log_time[SERVO_COUNT] = {0, 0, 0, 0, 0, 0};
-	static uint32_t log_time_counter = 0;
-
-	log_time_counter++;
-
-	int diff = (int)last_logged[joint] - (int)logical_deg;
-	if (diff < 0) {
-		diff = -diff;
-	}
-
-	if ((last_logged[joint] == 255 || diff >= 5) &&
-	    (log_time_counter - last_log_time[joint] >= 500)) {
-		const char *joint_names[] = {"BASE", "SPALLA", "GOMITO", "YAW", "PITCH", "ROLL"};
-
-		LOG_INF("[SERVO] %s = %u deg log (PWM: %u us)", joint_names[joint], logical_deg,
-			pulse_us);
-		last_logged[joint] = logical_deg;
-		last_log_time[joint] = log_time_counter;
-	}
-
-	return true;
 }
 
 /**
@@ -349,7 +272,6 @@ bool servo_set_angle_f(servo_joint_t joint, float angle_deg)
 		return false;
 	}
 	servo_last_pulse_us[joint] = (uint16_t)(pulse_us_f + 0.5f);
-	servo_last_sent_angle[joint] = (uint8_t)(angle_deg + 0.5f);
 	return true;
 }
 
@@ -380,7 +302,6 @@ float servo_get_angle_f(servo_joint_t joint)
 void servo_disable_all(void)
 {
 	for (int i = 0; i < SERVO_COUNT; i++) {
-		servo_last_sent_angle[i] = 255;
 
 		if (!servo_ready[i]) {
 			continue;
@@ -404,7 +325,6 @@ void servo_relax_digital(void)
 			continue;
 		}
 		(void)servo_apply_pulse_us(&servo_pwms[i], 0, servo_get_period_hz((servo_joint_t)i));
-		servo_last_sent_angle[i] = 255;
 		servo_last_pulse_us[i] = 0;
 	}
 }

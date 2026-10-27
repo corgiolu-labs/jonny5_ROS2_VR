@@ -8,18 +8,12 @@ Non compilati: `hal_spi_slave.c` (HAL/DMA), `imu.c`/`bno085.c`, `main.c`, `fatal
 ```bash
 cd firmware/stm32
 python tools/fw_sim/fw_sim.py build            # build/fw_sim.dll (Windows, gcc MinGW) o libfw_sim.so
-python -m pytest tools/fw_sim -q               # 14 test
+python -m pytest tools/fw_sim -q
 ```
 
-Test differenziale contro l'originale: estrarre i sorgenti dell'originale e indicarli in `FW_SIM_ORIG_SRC`.
-
-```bash
-git archive 22b6a46 firmware/stm32/src | tar -x -C /tmp/orig
-FW_SIM_ORIG_SRC=/tmp/orig/firmware/stm32/src python -m pytest tools/fw_sim -q
-```
-
-L'originale non ha un suo `spi_frames.c` (la logica stava in `hal_spi_slave.c` insieme all'HAL): per
-compilarlo si usa la copia congelata in `orig/spi/`, spostata parola per parola e con v2/J5IK.
+Fino al 27/10/2026 c'era anche un test differenziale contro il firmware originale (merge 22b6a46, con la copia
+congelata `orig/spi/`): i tagli del gruppo A di quel giorno (`minimal/INVENTARIO_E_TAGLI.md`) fanno divergere i due
+apposta e il confronto e' stato tolto (`git show 9a1a71f:firmware/stm32/tools/fw_sim/test_fw_sim.py` per rifarlo).
 
 Uso da Python (lo stesso che usano i test e `minimal/j5mini/test_j5mini.py`):
 

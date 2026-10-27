@@ -33,25 +33,17 @@ SOURCES = [
 ]
 
 
-def build(padded128=False, out=LIB, src=SRC, extra_sources=(), spi_frames_from=None):
-    """Build the simulator library. `src` may be another firmware tree (e.g. the original
-    firmware, for differential tests); its spi_frames.c can come from `spi_frames_from`."""
+def build(padded128=False, out=LIB, src=SRC):
+    """Build the simulator library from the firmware tree `src`."""
     BUILD.mkdir(exist_ok=True)
     out = pathlib.Path(out)
     cc = os.environ.get("CC", "gcc")
-    srcs = []
-    for s in list(SOURCES) + list(extra_sources):
-        if s == "spi/spi_frames.c" and spi_frames_from is not None:
-            srcs.append(str(pathlib.Path(spi_frames_from) / s))
-        else:
-            srcs.append(str(pathlib.Path(src) / s))
+    srcs = [str(pathlib.Path(src) / s) for s in SOURCES]
     rt = BUILD / f"sim_rt_{out.stem}.c"
     rt.write_text((HERE / "sim_rt.c").read_text(encoding="utf-8").replace(
         '#include "../../src/core/rt_loop.c"', f'#include "{(pathlib.Path(src) / "core/rt_loop.c").as_posix()}"'),
         encoding="utf-8")
     incs = ["-I", str(HERE / "include"), "-I", str(src)]
-    if spi_frames_from is not None:
-        incs += ["-I", str(spi_frames_from)]
     cmd = [cc, "-std=gnu11", "-O1", "-g", "-shared", "-fPIC", "-Wall", "-Wno-unused-function",
            "-Wno-unused-variable", "-Wno-unused-but-set-variable",
            f"-DCONFIG_J5_CANONICAL_PADDED_128_MODE={1 if padded128 else 0}",

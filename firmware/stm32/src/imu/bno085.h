@@ -2,12 +2,8 @@
  * JONNY5 - Minimal BNO085 driver (SHTP Rotation Vector su I2C2)
  *
  * Talks to a Hillcrest/CEVA BNO085 over I2C using the SHTP transport protocol.
- * Exposes only what Phase 3 needs to validate the sensor: init + rotation-vector
- * polling + readiness flag.
- *
- * Reversibility: this is a self-contained module. Nothing in imu.h / imu.c calls
- * into it. Until wired into the main IMU pipeline, it can be removed from the
- * build by simply not linking bno085.c.
+ * Exposes init + rotation-vector polling; imu.c drives it (imu_probe_bno085 +
+ * bno085_init, then bno085_poll_quat from the IMU thread).
  */
 
 #ifndef BNO085_H
@@ -45,9 +41,5 @@ int bno085_init(void);
  */
 int bno085_poll_quat(float *q_w, float *q_x, float *q_y, float *q_z,
 		     uint8_t *accuracy);
-
-/* Returns true after at least one Rotation Vector packet has been successfully
- * parsed since init. */
-bool bno085_is_ready(void);
 
 #endif /* BNO085_H */

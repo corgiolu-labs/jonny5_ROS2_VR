@@ -152,7 +152,6 @@ static void process_spi_command_build_tx(const uint8_t *rx, size_t len,
                 break;
 
             case J5_FRAME_TYPE_J5VR:
-                g_j5vr_last_rx_seq = get_rx_sequence(rx_norm);
                 if (!spi_is_dup_j5vr_apply(rx_norm)) {
                     j5vr_parse_payload(rx_frame->payload);
                     spi_mark_j5vr_applied(rx_norm);

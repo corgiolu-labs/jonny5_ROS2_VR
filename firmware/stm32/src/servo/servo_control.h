@@ -37,14 +37,6 @@ bool servo_control_init(void);
 uint32_t servo_get_period_hz(servo_joint_t joint);
 
 /**
- * Imposta angolo servo.
- * Tutti i giunti lavorano in gradi logici 0–180, con neutro a 90°.
- * Il layer di attuazione applica i limiti runtime per-giunto (per il polso: 45..135
- * di default), ma il modello PWM rimane coerente 0–180 → 500–2500 µs.
- */
-bool servo_set_angle(servo_joint_t joint, uint16_t angle_deg);
-
-/**
  * Versione float per movimento sub-degree.
  * Usata dal trajectory tick (j5vr_setpose_tick) ad alta freq (1 kHz)
  * per evitare la quantizzazione a 1° del PWM nelle interpolazioni
@@ -69,7 +61,7 @@ void servo_disable_all(void);
  * A differenza di servo_disable_all(), non tocca i servo analogici (LDX-218)
  * e non cambia lo stato logico degli angoli.
  * Da chiamare quando il robot è fermo da >200ms per eliminare il buzz.
- * Al prossimo servo_set_angle() il PWM viene automaticamente ripristinato.
+ * Al prossimo servo_set_angle_f() il PWM viene automaticamente ripristinato.
  */
 void servo_relax_digital(void);
 

@@ -1,5 +1,5 @@
 /*
- * j5vr_setpose.c — Traiettorie SETPOSE / SETPOSE_T
+ * j5vr_setpose.c — Traiettorie SETPOSE / SETPOSE_T_HR
  *
  * Implementazione estratta da j5vr_actuation.c.
  * Contiene:
@@ -7,12 +7,12 @@
  *   - Stato interno g_setpose_state (static, privato)
  *   - j5vr_setpose_tick  (tick RT loop, 1 kHz)
  *   - j5vr_go_setpose    (comando posa con vel%)
- *   - j5vr_go_setpose_time (comando posa con durata ms)
+ *   - j5vr_go_setpose_time_f (posa con durata ms, SETPOSE_T_HR)
  *
  * Dipende da:
  *   - desired_positions[] e step_accumulator[] (extern, definiti in actuation.c)
  *   - g_rt_loop_ticks (extern in core/rt_loop.h)
- *   - servo_get_angle / servo_set_angle (servo/servo_control.h)
+ *   - servo_get_angle / servo_set_angle_f (servo/servo_control.h)
  *   - uart_send_unsolicited (uart/uart_control.h)
  *
  * JONNY5-4.0 — Step 3.3 refactor (2026-02-25)
@@ -156,11 +156,6 @@ void j5vr_setpose_abort(void)
     volatile bool *pactive = &g_setpose_state.active;
     *pactive = false;
     g_setpose_state.relax_digital_on_finish = false;
-}
-
-bool j5vr_setpose_is_active(void)
-{
-    return g_setpose_state.active;
 }
 
 /* -----------------------------------------------------------------------
@@ -354,61 +349,15 @@ void j5vr_go_setpose(
 
 void j5vr_setpose_request_relax_digital_on_finish(void)
 {
-    /* Must be called strictly AFTER j5vr_go_setpose()/j5vr_go_setpose_time() so
+    /* Must be called strictly AFTER j5vr_go_setpose()/j5vr_go_setpose_time_f() so
      * the start-of-motion reset doesn't clobber the request. Safe to call even
      * if no setpose is active (the flag will just be cleared at next start). */
     g_setpose_state.relax_digital_on_finish = true;
 }
 
 /* -----------------------------------------------------------------------
- * j5vr_go_setpose_time — posa assoluta 6-DOF con durata fissa in ms
- * ----------------------------------------------------------------------- */
-void j5vr_go_setpose_time(
-    const uint32_t *q_target_deg,
-    int             count,
-    uint32_t        time_ms,
-    j5_profile_t    prof)
-{
-    if (count != SERVO_COUNT || q_target_deg == NULL) { return; }
-
-    if (time_ms < 20U)    { time_ms = 20U; }
-    if (time_ms > 60000U) { time_ms = 60000U; }
-
-    volatile bool *pactive = &g_setpose_state.active;
-    *pactive = false;
-
-    g_setpose_state.profile        = prof;
-    g_setpose_state.duration_ticks = time_ms;
-
-    /* Pre-clamp dei target */
-    float q_target_clamped[SERVO_COUNT];
-    for (int i = 0; i < SERVO_COUNT; i++) {
-        q_target_clamped[i] = sp_clamp_joint_runtime_deg(i, (float)q_target_deg[i]);
-    }
-    g_setpose_state.start_tick = g_rt_loop_ticks;
-
-    for (int i = 0; i < SERVO_COUNT; i++)
-    {
-        const float target = q_target_clamped[i];
-        const float start  = sp_clamp_joint_runtime_deg(i, desired_positions[i]);
-        g_setpose_state.q_target[i]   = target;
-        g_setpose_state.q_start[i]    = start;
-        g_setpose_state.prev_angle[i] = start;
-        g_setpose_state.prev_vel[i]   = 0.0f;
-        step_accumulator[i] = 0.0f;
-    }
-    g_setpose_state.max_velocity_deg_s = 0.0f;
-    g_setpose_state.max_accel_deg_s2   = 0.0f;
-    g_setpose_state.relax_digital_on_finish = false;
-
-    *pactive = true;
-}
-
-/* -----------------------------------------------------------------------
- * j5vr_go_setpose_time_f — variante float per setpoint sub-degree.
- * Stessa semantica di j5vr_go_setpose_time ma accetta angoli q_target in
- * float (es. 90.4°) preservando la frazione decimale. Usata dal nuovo
- * comando UART SETPOSE_T_HR (high-resolution).
+ * j5vr_go_setpose_time_f — posa assoluta 6-DOF con durata fissa in ms,
+ * angoli float (es. 90.4°): comando UART SETPOSE_T_HR.
  * ----------------------------------------------------------------------- */
 void j5vr_go_setpose_time_f(
     const float    *q_target_deg,

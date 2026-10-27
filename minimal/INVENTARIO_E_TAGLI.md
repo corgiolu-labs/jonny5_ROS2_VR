@@ -271,7 +271,11 @@ Resta senza librerie (oggi 75 KB; obiettivo < 100 KB con il tab Teleop). Grafico
   toccano i servizi video: `--roi`/`--autofocus-range` di cam_stream, ramo rpicam di `video_capture.sh`, profili
   di `start_mediamtx.sh`, spostamento di `rtp_push` in `legacy/`.
 - Editor POE **fatto** (27/10 sera): Impostazioni → Cinematica, `get_kinematics` / `save_kinematics`, anteprima 3D, gimbal riconfigurato.
-- Punti 3 e 4: non iniziati (richiedono riflash e aggiornamento dell'app Quest).
+- Punto 3 **fatto** (27/10 pomeriggio, solo sul PC): gruppi A e C, bit guard corretto, commenti stantii; build Zephyr
+  ok (Flash 76244 B, RAM 25922 B, `src/` 7093 righe), 23 test `fw_sim` verdi (nuovi: comandi rifiutati, modi
+  sconosciuti, bit guard). **Non flashato**: serve il tuo ok, poi prova del fungo e un giro ASSIST sul robot. Dettaglio
+  in `firmware/stm32/MINIMAL.md`.
+- Punto 4 (`HYBRID ENABLE`): non iniziato, richiede l'app Quest.
 
 ## 5 bis. Ordine di esecuzione proposto
 

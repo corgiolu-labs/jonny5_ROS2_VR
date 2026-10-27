@@ -4,10 +4,9 @@
  * Backend unico: il quaternione arriva gia' fuso da bno085.c via I2C2.
  *
  * NOTE:
- *   - Critical path (imu_update_orientation, imu_get_snapshot,
- *     imu_get_quaternion) NON va modificato nei refactor.
- *   - imu_i2c_scan_bus rileva il BNO085 (0x4A/0x4B) e abilita il backend:
- *     non e' diagnostica opzionale, fa parte dell'init.
+ *   - Critical path (imu_update_orientation, imu_get_snapshot) NON va
+ *     modificato nei refactor.
+ *   - imu_probe_bno085 sonda il BNO085 (0x4B) e abilita il backend.
  */
 
 #include "imu.h"
@@ -29,14 +28,6 @@ LOG_MODULE_REGISTER(imu, LOG_LEVEL_DBG);
 #if DT_NODE_EXISTS(J5_I2C_NODE)
 PINCTRL_DT_DEFINE(J5_I2C_NODE);
 #endif
-
-/* Stato quaternione IMU (BNO085) — inizialmente identità */
-static struct imu_quat g_imu_quat = {
-	.w = 1.0f,
-	.x = 0.0f,
-	.y = 0.0f,
-	.z = 0.0f,
-};
 
 /* True quando l'orientamento (quaternione BNO085) e' valido (dati freschi). */
 static bool g_imu_orientation_valid = false;
@@ -138,38 +129,20 @@ void imu_i2c_bus_recovery(void)
  * Consumed by imu_init() to select the BNO085 backend (only supported sensor). */
 static bool s_bno085_detected = false;
 
-/* Scan the I2C bus and log every address that ACKs (also sets s_bno085_detected).
- * Useful when the sensor on the bus is unknown or has been swapped (e.g. BNO085
- * at 0x4A/0x4B in place of MPU6050 at 0x68). Uses a 1-byte raw i2c_read which
- * is protocol-agnostic: any device present must ACK its address.
- */
-static void imu_i2c_scan_bus(const struct device *bus, const char *name)
+/* One probe of the BNO085 address (1-byte raw read: any device present ACKs).
+ * Sets s_bno085_detected; bno085_init() then talks SHTP to it. */
+static void imu_probe_bno085(const struct device *bus, const char *name)
 {
 	if (bus == NULL || !device_is_ready(bus)) {
-		LOG_WRN("[IMU] %s SCAN skipped: bus not ready", name);
+		LOG_WRN("[IMU] %s probe skipped: bus not ready", name);
 		return;
 	}
-	char line[160];
-	int n = snprintf(line, sizeof(line), "[IMU] %s SCAN 0x08-0x77:", name);
-	int hits = 0;
-	for (uint16_t addr = 0x08; addr <= 0x77; addr++) {
-		uint8_t b = 0;
-		int r = i2c_read(bus, &b, 1, addr);
-		if (r == 0) {
-			if (n < (int)sizeof(line) - 8) {
-				n += snprintf(line + n, sizeof(line) - n,
-					      " 0x%02X", (unsigned)addr);
-			}
-			hits++;
-			if (addr == 0x4A || addr == 0x4B) {
-				s_bno085_detected = true;
-			}
-		}
-	}
-	if (hits == 0) {
-		LOG_WRN("[IMU] %s SCAN: no devices ACKed", name);
+	uint8_t b = 0;
+	if (i2c_read(bus, &b, 1, BNO085_I2C_ADDR) == 0) {
+		s_bno085_detected = true;
+		LOG_INF("[IMU] %s: BNO085 at 0x%02X", name, BNO085_I2C_ADDR);
 	} else {
-		LOG_INF("%s  (%d device(s))", line, hits);
+		LOG_WRN("[IMU] %s: no ACK at 0x%02X", name, BNO085_I2C_ADDR);
 	}
 }
 
@@ -179,19 +152,12 @@ int imu_init(void)
 	 * end up using. Double-buffer remains stale until first publish. */
 	g_imu_orientation_valid = false;
 	g_imu_sample_counter = 0;
-	g_imu_quat.w = 1.0f;
-	g_imu_quat.x = 0.0f;
-	g_imu_quat.y = 0.0f;
-	g_imu_quat.z = 0.0f;
 
 	/* Bus recovery: good hygiene for any I2C device after reset/flash. */
 	imu_i2c_bus_recovery();
 
-	/* Diagnostic bus scan. Sets s_bno085_detected when 0x4A/0x4B ACKs.
-	 * Logs every address that responds — valuable when the sensor on the
-	 * bus changes (MPU6050 at 0x68, BNO085 at 0x4A/0x4B, etc.). */
 #if DT_NODE_EXISTS(J5_I2C_NODE)
-	imu_i2c_scan_bus(DEVICE_DT_GET(J5_I2C_NODE), J5_I2C_BUS_NAME);
+	imu_probe_bno085(DEVICE_DT_GET(J5_I2C_NODE), J5_I2C_BUS_NAME);
 #endif
 
 	/* ============================================================ *
@@ -211,7 +177,7 @@ int imu_init(void)
 	}
 
 	/* Nessun BNO085 sul bus: IMU non disponibile (backend unico BNO085). */
-	LOG_ERR("[IMU] no BNO085 detected on I2C2 (expected 0x4A/0x4B) - imu_available=0");
+	LOG_ERR("[IMU] no BNO085 detected on I2C2 (expected 0x4B) - imu_available=0");
 	imu_available = false;
 	return -ENODEV;
 }
@@ -270,12 +236,6 @@ void imu_update_orientation(float dt_s)
 		return;
 	}
 
-	/* Sync the legacy g_imu_quat (imu_get_quaternion reads it for consumers
-	 * that don't use imu_get_snapshot). */
-	g_imu_quat.w = qw;
-	g_imu_quat.x = qx;
-	g_imu_quat.y = qy;
-	g_imu_quat.z = qz;
 	g_imu_orientation_valid = true;
 
 	/* Double-buffer writer: fill the inactive buffer, then atomic flip. */
@@ -324,21 +284,6 @@ void imu_update_orientation(float dt_s)
 			s_last_bno085_acc = accuracy;
 		}
 	}
-}
-
-void imu_get_quaternion(struct imu_quat *out)
-{
-	if (out == NULL)
-	{
-		return;
-	}
-
-	/* Double-buffer reader: atomic_get garantisce visibilità, nessun retry */
-	uint32_t idx = (uint32_t)atomic_get(&g_imu_active_idx);
-	out->w = g_imu_buffers[idx].quat_w;
-	out->x = g_imu_buffers[idx].quat_x;
-	out->y = g_imu_buffers[idx].quat_y;
-	out->z = g_imu_buffers[idx].quat_z;
 }
 
 bool imu_get_snapshot(imu_snapshot_t *out)

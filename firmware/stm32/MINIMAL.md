@@ -28,11 +28,32 @@ sono rimasti parola per parola, è stato tolto solo ciò che è morto, speriment
 | blocchi di debug a 0 (`J5VR_DEBUG_VERBOSE`, `J5_PROTO_RX_DEBUG`, `UART_VR_PARAMS_DEBUG`), diagnostica fp32 | compilati fuori |
 | commenti sbagliati (TIM8/TIM1, I2C1, USART1/2, numeri dei modi, testo corrotto in `rt_loop.c`) | corretti con l'hardware reale: TIM4/TIM17/TIM3/TIM5, I2C2, USART3 controllo / USART1 console |
 
-| protocollo v2 con CRC (`TELEMETRY_V2` 0x08, contatori gap/CRC) e frame J5IK (0x05, modo 6 JOINT_STREAM, `pose_known`) | li usava solo lo stack ROS 2, tolto il 26/10 (j5mini parla v1). Un frame v2 o J5IK ora è un frame non valido: risposta STATUS 0xEE e nessun "rinfresco" del watchdog SPI. Un J5VR con modo 6 resta come prima: servo spenti in IDLE, nessun riarmo automatico |
+| protocollo v2 con CRC (`TELEMETRY_V2` 0x08, contatori gap/CRC) e frame J5IK (0x05, modo 6 JOINT_STREAM, `pose_known`) | li usava solo lo stack ROS 2, tolto il 26/10 (j5mini parla v1). Un frame v2 o J5IK ora è un frame non valido: risposta STATUS 0xEE e nessun "rinfresco" del watchdog SPI. Dal 27/10 un J5VR con modo 6 e' un modo sconosciuto come gli altri: nessuna attuazione, riarmo come sempre |
 
 | comandi `IMUON` / `IMUOFF` | la IMU è sempre accesa (era già il default all'avvio); j5mini non manda più `IMUON` e lo salta nelle configurazioni vecchie |
 
-Rimasti, anche se poco usati: IMU BNO085 (solo telemetria, sempre accesa), `HYBRID ENABLE/DISABLE` (rispondono OK, il Pi li manda), `VR?`,
+Tagli del 27/10/2026 (gruppi A e C di `minimal/INVENTARIO_E_TAGLI.md`, nessun client li usava; verificati con grep su
+j5mini, dashboard, app Quest, app telefono, test), **non ancora flashati**:
+
+| Tolto | Note |
+|---|---|
+| `SETPOSE_T` a gradi interi (`j5vr_go_setpose_time`) | resta `SETPOSE_T_HR` in decimi di grado; `SETPOSE_T ...` ora risponde `ERR UNKNOWN` |
+| `HYBRID DISABLE`, alias `RESET` di `SAFE` | `HYBRID ENABLE` resta (lo manda l'app Quest prima del modo 4) |
+| modo 1 POSE e modo 6 JOINT_STREAM nel RT loop | un modo sconosciuto non attua nulla (prima il fallback era MANUAL) e non impedisce il riarmo |
+| `servo_set_angle()` a interi con il log `[PWM_US]`, `servo_last_sent_angle[]` | resta `servo_set_angle_f()` |
+| `imu_get_quaternion()` e la copia `g_imu_quat`, `bno085_is_ready()` | `imu_get_snapshot()` e' l'unica lettura |
+| scan I2C 0x08-0x77 all'avvio | una sonda sola a 0x4B (`imu_probe_bno085`) |
+| `j5vr_apply_head_orientation_only` (copia di `j5vr_apply_head_tracking`) | una funzione, `j5vr_apply_head(s, apply_servos)` |
+| stub E-STOP per board senza alias DT (F446) | senza alias la build si ferma con `#error` |
+| campi `grip`, `safe_mask`, `target_id` del J5VR (parsati, mai letti); `priority` resta (lo legge HYBRID) | il layout del frame non cambia |
+| `j5vr_setpose_is_active`, `j5vr_horizon_is_on`, `servo_setpoint_t`, `g_j5vr_last_rx_seq`, `fill_tx_telemetry_compact`, `J5VR_PAYLOAD_LEN`, doppia `RT_LOOP_PERIOD_MS`, blocco `[CTRL]` e commenti morti in `rt_loop.c` | codice morto |
+| `CONFIG_SENSOR`, `CONFIG_ASSERT`, `CONFIG_SPI=n` / `CONFIG_WATCHDOG=n` ridondanti, `zephyr,shell-uart`, istanza PWM TIM2 "aux" | configurazione Zephyr |
+| `tools/fw_sim/orig/` e il test differenziale | il minimale diverge dall'originale apposta da qui in poi |
+
+Corretto nello stesso giro: il bit 4 di diag (`guard`) segue il freeze invece di restare a 1 (stranezza 13 qui sotto).
+Build Zephyr: Flash 76244 B, RAM 25922 B; `src/` 7093 righe; `python -m pytest tools/fw_sim -q` 23 test.
+
+Rimasti, anche se poco usati: IMU BNO085 (solo telemetria, sempre accesa), `HYBRID ENABLE` (risponde OK, lo manda l'app Quest), `VR?`,
 pulsante centrale PC13, log `J5VR_DEBUG_MINIMAL` (attivo).
 
 Spostato senza modifiche: la logica dei frame SPI (finestra, scelta del frame, risposte, contatori) da
@@ -51,13 +72,14 @@ restano HAL, DMA e thread.
 2. **Simulatore** `tools/fw_sim/`: i sorgenti veri del firmware (state machine, E-STOP, passo del RT
    loop, protocollo e frame SPI, UART, attuazione, HEAD, SETPOSE, `servo_control.c` con PWM a 1 MHz)
    compilati sul PC con stub di Zephyr; SPI emulato byte per byte come il DMA circolare.
-3. **Test differenziale**: lo stesso scenario (configurazione come il Pi, armo automatico, HOME,
+3. **Test differenziale** (fino al 27/10): lo stesso scenario (configurazione come il Pi, armo automatico, HOME,
    manuale su tutti gli assi, HEAD/HYBRID/ASSIST, payload neutro, richieste STATUS, tutte le
-   SETPOSE, PARK/TELEOPPOSE, RELAX, timeout SPI, E-STOP e bypass, J5VR in modo 6; circa 2.000
-   trasferimenti SPI, 48 comandi UART) gira sul minimale e sull'originale estratto da `22b6a46`, a 64 e
-   a 128 byte: **risposte UART, frame SPI e impulsi PWM identici**. Fino al 26/10 lo scenario copriva
-   anche v2 e J5IK (identici anche quelli); tolti dal firmware, sono usciti dallo scenario e due test
-   controllano che ora vengano rifiutati. `python -m pytest tools/fw_sim -q` (14 test).
+   SETPOSE, PARK/TELEOPPOSE, RELAX, timeout SPI, E-STOP e bypass; circa 2.000 trasferimenti SPI,
+   48 comandi UART) girava sul minimale e sull'originale estratto da `22b6a46`, a 64 e a 128 byte:
+   **risposte UART, frame SPI e impulsi PWM identici**. Con i tagli del 27/10 (tabella sopra) il
+   minimale diverge apposta e il confronto e' stato tolto; lo scenario resta come prova di corsa e i
+   test di comportamento coprono i tagli (comandi rifiutati, modi sconosciuti, bit guard).
+   `python -m pytest tools/fw_sim -q` (23 test).
 
 Non coperti dal simulatore (solo hardware): inizializzazione HAL/DMA/IRQ di SPI1, driver BNO085,
 timer TIM6, PWM reali. Questi file non sono stati toccati se non nei commenti.
@@ -125,7 +147,8 @@ Il minimale si comporta **come l'originale**, quindi anche questi restano. Ognun
     possibile scatto.
 11. Pulsante PC13: la doppia inversione fa scattare HOME probabilmente al **rilascio** (cablaggio ignoto).
 12. Il DMA SPI si riavvia ogni 3 s quando il master tace (riga di log ogni volta).
-13. Il bit 4 di diag (`guard`) resta a 1 per sempre dopo il primo freeze.
+13. ~~Il bit 4 di diag (`guard`) resta a 1 per sempre dopo il primo freeze.~~ Corretto il 27/10: segue il freeze
+    (test `test_guard_bit_follows_the_freeze`).
 
 ## Strumenti
 

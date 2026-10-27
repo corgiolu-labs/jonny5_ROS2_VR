@@ -41,10 +41,8 @@ struct j5vr_state g_j5vr_latest = {
     .pitch          = 0,
     .yaw            = 0,
     .intensity      = 0,
-    .grip           = 0,
     .vr_heartbeat   = 0,
     .priority       = 0,
-    .safe_mask      = 0,
     .quat_w         = 1.0f,
     .quat_x         = 0.0f,
     .quat_y         = 0.0f,
@@ -53,7 +51,6 @@ struct j5vr_state g_j5vr_latest = {
     .buttons_right  = 0,
     .mode5_arm_valid = 0,
     .mode5_control_flags = 0,
-    .mode5_target_id = 0,
     .mode5_arm_target_cdeg = {0, 0, 0},
 };
 
@@ -67,8 +64,6 @@ void j5vr_latest_snapshot(struct j5vr_state *out)
     *out = g_j5vr_latest;
     k_spin_unlock(&g_j5vr_lock, key);
 }
-
-volatile uint16_t g_j5vr_last_rx_seq = 0;
 
 
 /* =========================================================
@@ -109,19 +104,6 @@ static float be32_to_float(const uint8_t *p)
 }
 
 /* =========================================================
- * TX telemetry (compact, payload offset 51-53)
- * Usata solo internamente da j5_build_frame per TELEMETRY.
- * ========================================================= */
-
-static void fill_tx_telemetry_compact(uint8_t *payload)
-{
-    if (payload == NULL) { return; }
-    payload[51] = 0;
-    payload[52] = 0;
-    payload[53] = 0;
-}
-
-/* =========================================================
  * RX parsing
  * ========================================================= */
 
@@ -135,10 +117,10 @@ static void fill_tx_telemetry_compact(uint8_t *payload)
  *   [5-6]   pitch (BE s16)
  *   [7-8]   yaw   (BE s16)
  *   [9]     intensity
- *   [10]    grip (legacy)
+ *   [10]    grip (legacy, ignorato: il deadman sono i bit grip dei pulsanti)
  *   [11-12] vr_heartbeat (BE u16)
  *   [13]    priority
- *   [14-15] safe_mask (BE u16)
+ *   [14-15] safe_mask (ignorato)
  *   [16-31] quaternione W,X,Y,Z (4×float32 BE)
  *   [32-33] buttons_left  (BE u16)
  *   [34-35] buttons_right (BE u16)
@@ -156,10 +138,8 @@ void j5vr_parse_payload(const uint8_t *p)
     s.pitch         = be16_to_s16(p +  5);
     s.yaw           = be16_to_s16(p +  7);
     s.intensity     = p[9];
-    s.grip          = p[10];
     s.vr_heartbeat  = be16_to_u16(p + 11);
     s.priority      = p[13];
-    s.safe_mask     = be16_to_u16(p + 14);
     s.quat_w        = be32_to_float(p + 16);
     s.quat_x        = be32_to_float(p + 20);
     s.quat_y        = be32_to_float(p + 24);
@@ -168,7 +148,6 @@ void j5vr_parse_payload(const uint8_t *p)
     s.buttons_right = be16_to_u16(p + 34);
     s.mode5_arm_valid = 0U;
     s.mode5_control_flags = 0U;
-    s.mode5_target_id = 0U;
     s.mode5_arm_target_cdeg[0] = 0;
     s.mode5_arm_target_cdeg[1] = 0;
     s.mode5_arm_target_cdeg[2] = 0;
@@ -177,7 +156,6 @@ void j5vr_parse_payload(const uint8_t *p)
     {
         s.mode5_control_flags = p[37];
         s.mode5_arm_valid = (uint8_t)((p[37] & (1U << 0)) != 0U);
-        s.mode5_target_id = be16_to_u16(p + 38);
         s.mode5_arm_target_cdeg[0] = be16_to_s16(p + 40);
         s.mode5_arm_target_cdeg[1] = be16_to_s16(p + 42);
         s.mode5_arm_target_cdeg[2] = be16_to_s16(p + 44);
@@ -202,7 +180,7 @@ void j5vr_parse_payload(const uint8_t *p)
  *   46-47: vr_heartbeat (BE)
  *   48:    mode
  *   49:    0x00 (riservato)
- *   50-51: diag_mask BE (bit0=deadman, 1=input_active, 2=armed, 3=freeze, 4=guard_seen,
+ *   50-51: diag_mask BE (bit0=deadman, 1=input_active, 2=armed, 3=freeze, 4=guard (freeze nel ramo MANUAL),
  *          5=estop_line_active, 6=estop_bypass_active)
  *   52-53: 0x00 (riservato)
  */
@@ -224,7 +202,7 @@ void j5vr_fill_tx_telemetry(uint8_t *payload)
         if (g_vr_input_active)            { diag |= (1U << 1); }
         if (g_vr_armed)                   { diag |= (1U << 2); }
         if (g_vr_freeze_active)           { diag |= (1U << 3); }
-        if (g_vr_guard_block_count != 0U) { diag |= (1U << 4); }
+        if (g_vr_guard_active)            { diag |= (1U << 4); }
         if (estop_line_active())          { diag |= (1U << 5); }
         if (estop_bypass_active())        { diag |= (1U << 6); }
         payload[50] = (uint8_t)(diag >> 8);
@@ -311,8 +289,7 @@ void j5_build_frame(j5_frame_t *frame, j5_frame_type_t type, uint16_t seq)
     frame->payload[49] = servo_get_angle(SERVO_PITCH);
     frame->payload[50] = servo_get_angle(SERVO_ROLL);
 
-    /* Diagnostica compatta: byte 51-53 */
-    fill_tx_telemetry_compact(frame->payload);
+    /* Byte 51-53: contatore campioni IMU (LSB24); gia' a zero dal memset del frame */
     if (have_imu_sample_counter) {
         /* IMU instrumentation (debug): sample counter LSB24 in payload[51..53]. */
         frame->payload[51] = (uint8_t)((imu_sample_counter >> 16) & 0xFFu);

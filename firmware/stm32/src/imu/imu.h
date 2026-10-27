@@ -54,9 +54,6 @@ int imu_init(void);
 /* Aggiorna l'orientamento (chiamata a dt fisso dal thread IMU, 400 Hz) */
 void imu_update_orientation(float dt_s);
 
-/* Restituisce l'ultimo quaternione stimato — lettura dal double-buffer attivo */
-void imu_get_quaternion(struct imu_quat *out);
-
 /**
  * Lettura snapshot IMU completo dal double-buffer atomico.
  * Lock-free: singolo atomic_get + copia strutturale, zero retry.

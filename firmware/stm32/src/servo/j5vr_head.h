@@ -86,12 +86,9 @@ j5vr_head_state_t  *j5vr_head_get_state(void);
  * API logica HEAD
  * ----------------------------------------------------------------------- */
 
-/** Loop HEAD mode: quaternione visore → desired_positions[] → servo. */
-void j5vr_apply_head_tracking(const struct j5vr_state *s);
-
-/** Aggiorna solo giunti testa (YAW/PITCH/ROLL) senza applicare servo.
- *  Usata da HYBRID: testa HEAD + braccio MANUAL. */
-void j5vr_apply_head_orientation_only(const struct j5vr_state *s);
+/** Pipeline HEAD: quaternione visore → target YAW/PITCH/ROLL. apply_servos=true (modo 3) applica
+ *  anche i servo; false (HYBRID, ASSIST) lascia l'applicazione al chiamante, dopo il braccio. */
+void j5vr_apply_head(const struct j5vr_state *s, bool apply_servos);
 
 /** Reset calibrazione HEAD: azzera q_offset, EMA, cattura centro corrente. */
 void j5vr_reset_head_calib(void);

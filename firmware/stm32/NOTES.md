@@ -1,5 +1,10 @@
 # STM32 Firmware — Engineering Notes
 
+> Nota (27/10/2026): le voci qui sotto sono storiche e citano la Nucleo-F446RE con la console sullo ST-Link
+> (USART2). Il robot oggi ha la WeAct STM32G474 sullo shield rev3: console `printk` su USART1 (PA9/PA10),
+> controllo dal Pi su USART3 (PB10/PB11); il target F446 e il suo stub E-STOP sono stati tolti. Lo stato
+> attuale e' in `MINIMAL.md`.
+
 ## 2026-04-18 — Main-thread stack overflow (root cause of field IMU flicker + UNKNOWN cascade)
 
 ### Observed field symptoms

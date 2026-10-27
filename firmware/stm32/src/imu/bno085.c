@@ -86,7 +86,6 @@ LOG_MODULE_REGISTER(bno085, LOG_LEVEL_INF);
 /* -------------------------------------------------------------------------- */
 
 static const struct device *s_bus = NULL;
-static bool s_ready = false;
 static uint8_t s_seq_ch2 = 0;   /* our outgoing sequence on channel 2 */
 
 /* -------------------------------------------------------------------------- */
@@ -202,7 +201,6 @@ int bno085_init(void)
 #else
 	s_bus = NULL;
 #endif
-	s_ready = false;
 	s_seq_ch2 = 0;
 
 	if (s_bus == NULL || !device_is_ready(s_bus)) {
@@ -314,11 +312,5 @@ int bno085_poll_quat(float *q_w, float *q_x, float *q_y, float *q_z,
 		*accuracy = p[RV_OFF_STATUS] & 0x03;   /* bits 0..1 */
 	}
 
-	s_ready = true;
 	return 1;
-}
-
-bool bno085_is_ready(void)
-{
-	return s_ready;
 }

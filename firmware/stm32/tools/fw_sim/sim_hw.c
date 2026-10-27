@@ -122,7 +122,6 @@ static float s_imu_q[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
 static uint32_t s_imu_counter;
 int imu_init(void) { return s_imu_valid ? 0 : -1; }
 void imu_update_orientation(float dt_s) { (void)dt_s; }
-void imu_get_quaternion(struct imu_quat *out) { out->w = s_imu_q[0]; out->x = s_imu_q[1]; out->y = s_imu_q[2]; out->z = s_imu_q[3]; }
 bool imu_get_snapshot(imu_snapshot_t *out)
 {
     if (!s_imu_valid) return false;

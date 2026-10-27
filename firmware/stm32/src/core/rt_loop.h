@@ -38,7 +38,7 @@ extern volatile uint32_t g_fatal_reason;
 /* Diagnostica teleop VR gating */
 extern volatile uint8_t g_vr_armed;
 extern volatile uint8_t g_vr_freeze_active;
-extern volatile uint32_t g_vr_guard_block_count;
+extern volatile uint8_t g_vr_guard_active;   /* freeze nel ramo MANUAL, bit 4 di diag */
 extern volatile uint8_t g_vr_input_active;
 
 

@@ -277,7 +277,7 @@ function updateUi() {
     ["stato", tm.robot_state, tm.robot_state === "IDLE" ? "on" : tm.robot_state === "STOPPED" ? "alarm" : tm.robot_state === "SAFE" ? "warnv" : ""],
     ["E-STOP premuto", ...yes(tm.estop_active, true)], ["bypass E-STOP", ...yes(tm.estop_bypass, true)],
     ["deadman (2 grip)", ...yes(tm.deadman_active)], ["armato VR", ...yes(tm.vr_armed)],
-    ["input attivo", ...yes(tm.input_active)], ["freeze", ...yes(tm.vr_freeze)], ["guard (latch)", ...yes(tm.vr_guard)],
+    ["input attivo", ...yes(tm.input_active)], ["freeze", ...yes(tm.vr_freeze)], ["guard", ...yes(tm.vr_guard)],
     ["periodo RT loop", tm.rt_loop_period_us ? tm.rt_loop_period_us + " µs" : "–"],
   ]);
   const tot = tm.link || {};

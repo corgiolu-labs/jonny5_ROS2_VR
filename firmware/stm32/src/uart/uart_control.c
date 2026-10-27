@@ -1,14 +1,15 @@
 /*
  * uart_control.c — UART Control Plane
  *
- * Parser e dispatcher comandi ASCII su USART1 (PA9 TX / PA10 RX).
+ * Parser e dispatcher comandi ASCII su USART3 (PB10 TX / PB11 RX, J5_UART_NODE);
+ * USART1 e' la console printk.
  *
  * Comandi supportati:
- *   STOP, SAFE, RESET, ENABLE, STATUS?
+ *   STOP, SAFE, ENABLE, STATUS?
  *   VR?, HEADZERO   (IMUON / IMUOFF tolti: la IMU e' sempre accesa)
  *   HOME, PARK
  *   SETPOSE <B S G Y P R vel PLANNER>
- *   SETPOSE_T <B S G Y P R time_ms PLANNER>
+ *   SETPOSE_T_HR <B S G Y P R (decimi di grado) time_ms PLANNER>
  *   SET_OFFSETS <B S G Y P R>
  *   SET_JOINT_LIMITS <idx min_deg max_deg>
  *   SET_VR_PARAMS <16 float> [18 uint opzionali]
@@ -281,7 +282,7 @@ static void uart_process_command(uint32_t seq, const char *cmd)
      * funzionare anche a fungo attivo). "ESTOP_BYPASS ON [min]" ignora la
      * linea fino alla scadenza (default 30, max 120 min), "ESTOP_BYPASS OFF"
      * la riattiva subito. Dopo ON il robot resta STOPPED: recovery SAFE ->
-     * ENABLE come dopo un rilascio. Sul F446 (nessun E-STOP HW): ERR. */
+     * ENABLE come dopo un rilascio. */
     if (strcmp(cmd, "ESTOP?") == 0)
     {
         char buf[64];
@@ -341,7 +342,7 @@ static void uart_process_command(uint32_t seq, const char *cmd)
                                  * sola al ritorno in SAFE/IDLE (auto-ripresa) */
         uart_send_response_with_seq(seq, "OK STOP");
     }
-    else if (strcmp(cmd, "SAFE") == 0 || strcmp(cmd, "RESET") == 0)
+    else if (strcmp(cmd, "SAFE") == 0)
     {
         (void)state_machine_set_safe();
         j5vr_setpose_abort();   /* stessa ragione del ramo STOP: in STATE_SAFE
@@ -367,14 +368,10 @@ static void uart_process_command(uint32_t seq, const char *cmd)
         }
         uart_send_response_with_seq(seq, s);
     }
-    /* --- HYBRID mode control --- */
+    /* --- HYBRID ENABLE: lo manda ancora l'app Quest prima del modo 4; risponde OK e basta --- */
     else if (strcmp(cmd, "HYBRID ENABLE") == 0)
     {
         uart_send_response_with_seq(seq, "OK HYBRID ENABLED");
-    }
-    else if (strcmp(cmd, "HYBRID DISABLE") == 0)
-    {
-        uart_send_response_with_seq(seq, "OK HYBRID DISABLED");
     }
     /* --- Diagnostica VR --- */
     else if (strncmp(cmd, "VR?", 3) == 0)
@@ -397,7 +394,7 @@ static void uart_process_command(uint32_t seq, const char *cmd)
                  (unsigned long)(uint32_t)g_rt_loop_stage,
                  (unsigned long)(uint32_t)g_vr_armed,
                  (unsigned long)(uint32_t)g_vr_freeze_active,
-                 (unsigned long)g_vr_guard_block_count,
+                 (unsigned long)(uint32_t)g_vr_guard_active,
                  (unsigned long)(uint32_t)g_vr_input_active,
                  (unsigned long)g_imu_thread_ticks,
                  (unsigned long)(uint32_t)g_imu_thread_stage,
@@ -541,54 +538,6 @@ static void uart_process_command(uint32_t seq, const char *cmd)
         for (int i = 0; i < 6; i++) { q_target[i] = (float)args[i] / 10.0f; }
         uart_send_response_with_seq(seq, "OK SETPOSE_T_HR");
         j5vr_go_setpose_time_f(q_target, 6, (uint32_t)time_ms, prof);
-    }
-    /* --- SETPOSE_T <B S G Y P R time_ms PLANNER> --- */
-    else if (strncmp(cmd, "SETPOSE_T", 9) == 0 && cmd[9] == ' ')
-    {
-        if (state_machine_get_state() != STATE_IDLE)
-        {
-            uart_send_response_with_seq(seq, "ERR BUSY");
-            return;
-        }
-
-        const char *p = cmd + 9;
-        unsigned int args[7];
-        bool fmt_ok = true;
-        for (int i = 0; i < 7 && fmt_ok; i++)
-        {
-            fmt_ok = parse_uint(&p, &args[i]);
-        }
-        char planner_str[8] = {0};
-        if (fmt_ok) { fmt_ok = parse_alpha(&p, planner_str, sizeof(planner_str)); }
-        if (fmt_ok) { skip_spaces(&p); fmt_ok = (*p == '\0'); }
-
-        if (!fmt_ok)
-        {
-            uart_send_response_with_seq(seq, "ERR SETPOSE_T_FMT");
-            return;
-        }
-        for (int i = 0; i < 6; i++)
-        {
-            if (args[i] < 5U || args[i] > 175U)
-            {
-                uart_send_response_with_seq(seq, "ERR SETPOSE_T_RANGE");
-                return;
-            }
-        }
-        unsigned int time_ms = args[6];
-        if (time_ms < 20U) { time_ms = 20U; }
-
-        j5_profile_t prof;
-        if (!planner_from_string(planner_str, &prof))
-        {
-            uart_send_response_with_seq(seq, "ERR SETPOSE_T_PLN");
-            return;
-        }
-        uint32_t q_target[6];
-        for (int i = 0; i < 6; i++) { q_target[i] = args[i]; }
-
-        uart_send_response_with_seq(seq, "OK SETPOSE_T");
-        j5vr_go_setpose_time(q_target, 6, (uint32_t)time_ms, prof);
     }
     /* --- SETPOSE <B S G Y P R vel PLANNER> --- */
     else if (strncmp(cmd, "SETPOSE", 7) == 0 && cmd[7] == ' ')

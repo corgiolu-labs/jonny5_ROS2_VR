@@ -30,12 +30,8 @@
  * ========================================================= */
 
 #define J5_PROTOCOL_FRAME_SIZE 64   /**< Dimensione frame in byte (fissa) */
-#define J5VR_PAYLOAD_LEN       54   /**< Byte payload disponibili         */
 
 #define J5_PROTOCOL_VERSION_V1 1U
-/** Mode 6 = JOINT_STREAM di ROS 2 (tolto): un J5VR con mode 6 tiene i servo
- *  spenti in IDLE e non riarma da solo, come prima senza frame J5IK. */
-#define J5_MODE_JOINT_STREAM   6U
 
 /* =========================================================
  * Tipi
@@ -57,10 +53,8 @@ struct j5vr_state {
     int16_t  pitch;
     int16_t  yaw;
     uint8_t  intensity;
-    uint8_t  grip;          /**< Legacy — parsato ma non usato; mantenuto per compatibilità strutturale */
     uint16_t vr_heartbeat;
     uint8_t  priority;
-    uint16_t safe_mask;
     /* Quaternioni orientamento visore VR (offset 16-31, 4 × float32 BE) */
     float    quat_w;
     float    quat_x;
@@ -72,20 +66,18 @@ struct j5vr_state {
     /* Estensione mode=5 nei byte riservati 36-45 del frame J5VR:
      *   [36]    marker 'I'
      *   [37]    control_flags (bit0=valid, bit1=grip_active, bit2=hold_active)
-     *   [38-39] target_id (BE u16)
+     *   [38-39] target_id (BE u16, ignorato)
      *   [40-41] base   (BE s16, centi-gradi fisici)
      *   [42-43] spalla (BE s16, centi-gradi fisici)
      *   [44-45] gomito (BE s16, centi-gradi fisici)
      */
     uint8_t  mode5_arm_valid;
     uint8_t  mode5_control_flags;
-    uint16_t mode5_target_id;
     int16_t  mode5_arm_target_cdeg[3];
 };
 
 /** Ultimo frame J5VR ricevuto (aggiornato da j5vr_parse_payload). */
 extern struct j5vr_state g_j5vr_latest;
-extern volatile uint16_t g_j5vr_last_rx_seq;
 
 /** Frame strutturato 64 byte (packed). */
 typedef struct __attribute__((packed)) {

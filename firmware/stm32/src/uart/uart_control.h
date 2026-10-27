@@ -2,14 +2,14 @@
  * uart_control.h — UART Control Plane API
  *
  * Control plane UART ASCII per comandi di teleoperazione e configurazione.
- * Comandi supportati: STOP, SAFE, RESET, ENABLE, STATUS?,
- *   HOME, PARK, TELEOPPOSE, SETPOSE, SETPOSE_T, SET_OFFSETS,
+ * Comandi supportati: STOP, SAFE, ENABLE, STATUS?,
+ *   HOME, PARK, TELEOPPOSE, SETPOSE, SETPOSE_T_HR, SET_OFFSETS,
  *   SET_JOINT_LIMITS, SET_VR_PARAMS, VR?
  *
  * Formato richiesta: [#<seq>] <CMD> [argomenti]\n
  * Formato risposta:  [#<seq>] OK <CMD> | ERR <REASON>\n
  *
- * Connessione fisica: USART1 (PA9 TX, PA10 RX) → Raspberry Pi.
+ * Connessione fisica: USART3 (PB10 TX, PB11 RX) → Raspberry Pi.
  */
 
 #ifndef UART_CONTROL_H

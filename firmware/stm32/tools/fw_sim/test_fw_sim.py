@@ -2,11 +2,9 @@
 
     cd firmware/stm32 && python -m pytest tools/fw_sim -q
 
-1. Differential: one long scenario covering everything used in production runs on the
-   minimal firmware AND on the original (merge 22b6a46 = flashed firmware + sub-degree,
-   before any pruning), with 64-byte and 128-byte transfers; UART replies, SPI replies and PWM pulses must be identical.
-   Set FW_SIM_ORIG_SRC to an extracted original firmware/stm32/src to enable it
-   (tools/fw_sim/README.md); otherwise it is skipped.
+1. One long scenario covering everything the Pi / Quest / dashboard use (it must run through).
+   Until 27/10/2026 it was also run on the original firmware (merge 22b6a46) and compared byte
+   by byte; the group A cuts of that day (INVENTARIO_E_TAGLI.md) made the two diverge on purpose.
 2. Behaviour checks of the minimal firmware against the spec (docs in README).
 3. SPI transfer length: 64 bytes is the production setting (prj.conf); the 128-byte option
    is still built and checked, with matched and mismatched masters.
@@ -36,25 +34,6 @@ def lib():
 @pytest.fixture(scope="session")
 def lib128():
     return fw_sim.build(padded128=True, out=fw_sim.BUILD / ("fw_sim" + fw_sim.LIB.suffix))
-
-
-@pytest.fixture(scope="session")
-def lib_orig():
-    src = os.environ.get("FW_SIM_ORIG_SRC")
-    if not src:
-        pytest.skip("FW_SIM_ORIG_SRC not set (path of the original firmware/stm32/src)")
-    libs = {}
-
-    def get(padded128):
-        if padded128 not in libs:
-            name = "fw_sim_orig" + ("" if padded128 else "64") + fw_sim.LIB.suffix
-            libs[padded128] = fw_sim.build(
-                padded128=padded128, out=fw_sim.BUILD / name, src=pathlib.Path(src),
-                extra_sources=["servo/pickplace.c", "servo/motion_planner.c", "core/hw_watchdog.c",
-                               "spi/boundary_buffers.c", "spi/assist_v2_raw.c"],
-                spi_frames_from=pathlib.Path(fw_sim.__file__).parent / "orig")   # frozen, with v2/J5IK
-        return libs[padded128]
-    return get
 
 
 class Pi:
@@ -171,11 +150,11 @@ def scenario(sim):
     pi.j5vr(300, mode=5, advance_hb=False)
     snap("neutral")
     # SETPOSE forms
-    for line in ["SETPOSE 100 95 90 90 100 95 60 RTR3", "SETPOSE_T 95 90 95 92 98 96 800 BB",
+    for line in ["SETPOSE 100 95 90 90 100 95 60 RTR3", "SETPOSE_T_HR 950 900 950 920 980 960 800 BB",
                  "SETPOSE_T_HR 1005 905 955 905 1105 955 600 B-C-B", "SETPOSE_T_HR 1000 900 950 900 1100 950 10 RTR5",
                  "PARK", "TELEOPPOSE"]:
         cmd(line, 10)
-        pi.j5vr(1500, mode=1)
+        pi.j5vr(1500, mode=0)
         snap("pose:" + line.split()[0])
     cmd("RELAX_DIGITAL")
     snap("relax")
@@ -187,7 +166,7 @@ def scenario(sim):
     pi.j5vr(200, mode=2)
     sim.estop(True); sim.run(50)
     snap("estop")
-    for line in ["ENABLE", "HOME", "SETPOSE_T 90 90 90 90 90 90 500 RTR5", "ESTOP?", "STATUS?"]:
+    for line in ["ENABLE", "HOME", "SETPOSE_T_HR 900 900 900 900 900 900 500 RTR5", "ESTOP?", "STATUS?"]:
         cmd(line)
     sim.estop(False); sim.run(50)
     for line in ["ESTOP?", "STATUS?", "SAFE"]:
@@ -199,14 +178,6 @@ def scenario(sim):
         cmd(line)
     sim.estop(False); sim.run(30)
     cmd("SAFE")
-    # mode 6 in a J5VR (the ROS 2 joint stream, removed): no automatic re-arm, outputs off even after ENABLE
-    pi.j5vr(200, mode=6)
-    snap("mode6-safe")
-    cmd("ENABLE")
-    pi.j5vr(300, mode=6, btn_l=GRIP, btn_r=GRIP, joy_x=20000)
-    snap("mode6")
-    pi.j5vr(200, mode=2)
-    snap("leave-mode6")
     cmd("STOP")
     snap("stop")
     cmd("SAFE")
@@ -221,16 +192,6 @@ def test_scenario_runs(lib):
     states = {e[0]: e[2] for e in log if e[0] not in ("uart", "boot", "spi")}
     assert states["auto-idle"] == "IDLE" and states["spi-timeout"] == "SAFE"
     assert states["estop"] == "STOPPED" and states["stop"] == "STOPPED"
-
-
-@pytest.mark.parametrize("padded128", [False, True], ids=["64B", "128B"])
-def test_identical_to_original_firmware(padded128, lib, lib128, lib_orig):
-    """The minimal firmware must answer and actuate exactly like the original one, at both lengths."""
-    a = scenario(Sim(lib128 if padded128 else lib))
-    b = scenario(Sim(lib_orig(padded128)))
-    assert len(a) == len(b)
-    for ea, eb in zip(a, b):
-        assert ea == eb, f"differs at {ea[0]}: minimal={ea!r}\noriginal={eb!r}"
 
 
 # ------------------------------------------------------------------ behaviour (minimal firmware)
@@ -258,7 +219,11 @@ def test_uart_seq_prefix_and_errors(lib):
     assert s.command("FOO") == ["ERR UNKNOWN"]
     assert s.command("PP1 50") == ["ERR UNKNOWN"]            # pick&place removed (no hardware on the G474)
     assert s.command("HOME") == ["ERR BUSY"]                 # not IDLE
-    assert s.command("HYBRID ENABLE") == ["OK HYBRID ENABLED"]
+    assert s.command("HYBRID ENABLE") == ["OK HYBRID ENABLED"]   # still sent by the Quest app before mode 4
+    # removed 27/10/2026 (nobody sent them): integer SETPOSE_T, HYBRID DISABLE, the RESET alias of SAFE
+    assert s.command("SETPOSE_T 90 90 90 90 90 90 500 RTR5") == ["ERR UNKNOWN"]
+    assert s.command("HYBRID DISABLE") == ["ERR UNKNOWN"]
+    assert s.command("RESET") == ["ERR UNKNOWN"]
 
 
 def test_reply_type_follows_request_and_lags_one_transfer(lib):
@@ -343,14 +308,51 @@ def test_ros2_frames_are_rejected(lib):
     assert r[3] == 0x03 and r[8] == 0xEE                         # reply to the J5IK frame
 
 
-def test_mode6_keeps_outputs_off_even_after_enable(lib):
+@pytest.mark.parametrize("mode", [1, 6, 7])
+def test_unknown_modes_never_actuate(lib, mode):
+    """Mode 1 (POSE) and 6 (the ROS 2 joint stream) were removed on 27/10/2026: like any other unknown
+    mode they neither move anything (the old fallback was MANUAL) nor keep the firmware from re-arming."""
     s = booted(lib)
+    for line in PI_BOOT_PUSH:
+        s.command(line)
     pi = Pi(s)
-    pi.j5vr(300, mode=6)
-    assert s.state() == "SAFE"                                   # mode 6 never re-arms by itself
-    assert s.command("ENABLE") == ["OK ENABLE"]
-    pi.j5vr(500, mode=6, btn_l=GRIP, btn_r=GRIP, joy_x=20000)
-    assert list(s.pwm()[0]) == [0] * 6                           # servo outputs off
+    pi.j5vr(100, mode=2)
+    s.command("HOME", 10)
+    pi.j5vr(4000, mode=2)
+    home = s.angles()
+    pi.j5vr(500, mode=mode, btn_l=GRIP, btn_r=GRIP, joy_x=30000, yaw=20000)
+    assert s.state() == "IDLE" and s.angles() == home
+    pi.j5vr(500, mode=2, btn_l=GRIP, btn_r=GRIP, joy_x=30000)   # back in MANUAL it moves again
+    assert s.angles() != home
+
+
+def diag_bits(pi, **kw):
+    """diag_mask as j5mini reads it: payload 50-51 BE of the STATUS reply (j5vr_fill_tx_telemetry), which
+    arrives with the transfer after the STATUS request; `kw` = the J5VR frame sent meanwhile."""
+    pi.status()
+    pi.j5vr(10, **kw)
+    return struct.unpack_from(">H", pi.replies[-1], 8 + 50)[0]
+
+
+def test_guard_bit_follows_the_freeze(lib):
+    """Quirk 13 of MINIMAL.md, fixed 27/10/2026: bit 4 (guard) stayed at 1 for ever after the first freeze."""
+    s = booted(lib)
+    for line in PI_BOOT_PUSH:
+        s.command(line)
+    pi = Pi(s)
+    pi.j5vr(100, mode=2)
+    s.command("HOME", 10)
+    pi.j5vr(4000, mode=2)
+    moving = dict(mode=2, joy_x=20000, btn_l=GRIP, btn_r=GRIP)
+    still = dict(mode=2, btn_l=GRIP, btn_r=GRIP)
+    pi.j5vr(300, **moving)                                       # moving: no freeze, no guard
+    assert diag_bits(pi, **moving) & 0x18 == 0
+    pi.j5vr(400, **still)                                        # > 200 ms without input: freeze + guard
+    assert diag_bits(pi, **still) & 0x18 == 0x18
+    pi.j5vr(300, **moving)                                       # input again: both clear
+    assert diag_bits(pi, **moving) & 0x18 == 0
+    pi.j5vr(100, mode=2)                                         # deadman released
+    assert diag_bits(pi, mode=2) & 0x18 == 0
 
 
 # ------------------------------------------------------------------ SPI transfer length

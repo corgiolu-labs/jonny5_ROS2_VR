@@ -1,5 +1,5 @@
 /*
- * j5vr_setpose.h — Traiettorie SETPOSE / SETPOSE_T
+ * j5vr_setpose.h — Traiettorie SETPOSE / SETPOSE_T_HR
  *
  * Modulo estratto da j5vr_actuation.c: pianificazione e tick di traiettorie
  * punto-punto con profili RTR3/RTR5/BB/BCB.
@@ -16,7 +16,7 @@
 #ifndef J5VR_SETPOSE_H
 #define J5VR_SETPOSE_H
 
-#include "servo/j5vr_actuation.h"   /* j5_profile_t, servo_setpoint_t */
+#include "servo/j5vr_actuation.h"   /* j5_profile_t */
 #include "servo/servo_control.h"    /* SERVO_COUNT, servo_joint_t */
 #include <stdint.h>
 #include <stdbool.h>
@@ -56,9 +56,6 @@ bool j5vr_setpose_tick(uint32_t rt_tick);
  */
 void j5vr_setpose_abort(void);
 
-/** true se una traiettoria SETPOSE/HOME/PARK e' in esecuzione. */
-bool j5vr_setpose_is_active(void);
-
 /**
  * Posa assoluta 6-DOF con velocità percentuale e profilo di moto.
  */
@@ -71,16 +68,6 @@ void j5vr_go_setpose(
     uint8_t roll_deg,
     uint8_t vel_pct,
     j5_profile_t profile
-);
-
-/**
- * Variante a tempo fisso: esegue la posa in esattamente time_ms millisecondi.
- */
-void j5vr_go_setpose_time(
-    const uint32_t *q_target_deg,
-    int             count,
-    uint32_t        time_ms,
-    j5_profile_t    prof
 );
 
 /**

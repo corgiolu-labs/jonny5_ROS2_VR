@@ -2,12 +2,12 @@
  * j5vr_actuation.h — API pubblica del modulo j5vr_actuation
  *
  * Espone:
- *   - Tipi: j5_profile_t, servo_setpoint_t
+ *   - Tipi: j5_profile_t
  *   - Inizializzazione e utility servo
  *   - Modalità MANUAL e HYBRID (mode 2 e 4)
  *   - Modulo HEAD (via include di j5vr_head.h per retrocompatibilità
  *     dei chiamanti uart_control.c e rt_loop.c)
- *   - Modulo SETPOSE (j5vr_setpose_tick, j5vr_go_setpose, j5vr_go_setpose_time)
+ *   - Modulo SETPOSE (j5vr_setpose_tick, j5vr_go_setpose, j5vr_go_setpose_time_f)
  */
 
 #ifndef J5VR_ACTUATION_H
@@ -35,19 +35,6 @@ typedef enum {
     J5_PROFILE_BB   = 2,
     J5_PROFILE_BCB  = 3,
 } j5_profile_t;
-
-/**
- * servo_setpoint_t — setpoint angolare a 6 giunti [0–180 gradi].
- * Prodotta da j5vr_to_servo_setpoint() come validazione input nel RT loop.
- */
-typedef struct {
-    uint8_t base;
-    uint8_t spalla;
-    uint8_t gomito;
-    uint8_t roll;
-    uint8_t pitch;
-    uint8_t yaw;
-} servo_setpoint_t;
 
 /* =========================================================
  * DIAGNOSTICA RUNTIME (extern — letta da uart_control.c)
@@ -87,7 +74,6 @@ void j5vr_smooth_between_frames(struct j5vr_state *s, uint32_t now_ms);
  * dalla IMU (lato Pi). Entra/esce in HORIZON_RAMP_S.
  */
 void j5vr_horizon_set(bool on, const float dirs[6], float trim_deg);
-bool j5vr_horizon_is_on(void);
 
 /** Aggiorna i limiti per-giunto a runtime. Clamp automatico ai limiti fisici. */
 void j5vr_set_joint_limits(int joint, float lim_min, float lim_max);
@@ -97,10 +83,10 @@ void j5vr_set_joint_limits(int joint, float lim_min, float lim_max);
  * API — modalità di teleop (chiamate da rt_loop.c)
  * ========================================================= */
 
-/** MANUAL mode (1): incrementa desired_positions[] dai joystick/pulsanti. */
+/** MANUAL mode (2): incrementa desired_positions[] dai joystick/pulsanti. */
 bool j5vr_apply_setpoint_incremental(const struct j5vr_state *j5vr, bool movement_allowed);
 
-/** HYBRID mode (3): testa open-loop + joystick. Sperimentale. */
+/** HYBRID mode (4): testa HEAD + braccio dagli stick. */
 void j5vr_apply_hybrid(const struct j5vr_state *s);
 
 /**
@@ -109,7 +95,7 @@ void j5vr_apply_hybrid(const struct j5vr_state *s);
  */
 void j5vr_apply_mode5_arm_head(const struct j5vr_state *s);
 
-/* HEAD mode (2): j5vr_apply_head_closed_loop, j5vr_reset_head_calib,
+/* HEAD mode (3): j5vr_apply_head, j5vr_reset_head_calib,
  * j5vr_set_vr_params — dichiarate in servo/j5vr_head.h.
  * Incluso qui per retrocompatibilità di uart_control.c e rt_loop.c. */
 #include "servo/j5vr_head.h"
@@ -140,21 +126,6 @@ void j5vr_go_setpose(
 );
 
 /**
- * j5vr_go_setpose_time — variante a durata fissa.
- *
- *   q_target_deg : array di 6 angoli [deg], ordine B S G Y P R
- *   count        : deve essere SERVO_COUNT (6)
- *   time_ms      : durata totale [20, 60000] ms
- *   prof         : profilo di pianificazione
- */
-void j5vr_go_setpose_time(
-    const uint32_t *q_target_deg,
-    int             count,
-    uint32_t        time_ms,
-    j5_profile_t    prof
-);
-
-/**
  * j5vr_setpose_tick — tick SETPOSE, chiamato dal RT loop a 1 kHz.
  *
  * Ritorna true  se un SETPOSE è attivo (il RT loop non deve eseguire VR).
@@ -165,14 +136,14 @@ bool j5vr_setpose_tick(uint32_t rt_tick);
 /**
  * j5vr_setpose_abort — annulla la traiettoria SETPOSE in corso (se presente).
  * Vedi j5vr_setpose.h per la semantica completa. Usata da E-STOP e dai rami
- * UART STOP/SAFE/RESET: nessuna auto-ripresa della traiettoria dopo uno stop.
+ * UART STOP/SAFE: nessuna auto-ripresa della traiettoria dopo uno stop.
  */
 void j5vr_setpose_abort(void);
 
 /**
- * j5vr_go_setpose_time_f — variante HR (setpoint float sub-degree) di
- * j5vr_go_setpose_time. Vedi j5vr_setpose.h. Dichiarata anche qui perche'
- * uart_control.c (SETPOSE_T_HR) include questo header.
+ * j5vr_go_setpose_time_f — posa a durata fissa, setpoint float sub-degree.
+ * Vedi j5vr_setpose.h. Dichiarata anche qui perche' uart_control.c
+ * (SETPOSE_T_HR) include questo header.
  */
 void j5vr_go_setpose_time_f(
     const float    *q_target_deg,

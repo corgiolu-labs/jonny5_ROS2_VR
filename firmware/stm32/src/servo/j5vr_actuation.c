@@ -7,9 +7,9 @@
  *   - Helper interni: safe_increment, apply_desired, update_max_vel,
  *     j5_clampf, j5_angle_to_u8.
  *   - MANUAL mode (mode 2): j5vr_apply_setpoint_incremental.
- *   - HYBRID mode (mode 3): j5vr_apply_hybrid — sperimentale.
- *   - API pubblica: init, center, teleop-pose, set_joint_limits,
- *     j5vr_to_servo_setpoint.
+ *   - HYBRID mode (mode 4): j5vr_apply_hybrid.
+ *   - ASSIST mode (mode 5): j5vr_apply_mode5_arm_head.
+ *   - API pubblica: init, center, teleop-pose, set_joint_limits, horizon.
  *
  * Moduli estratti (non toccare qui):
  *   HEAD    → j5vr_head.c/.h
@@ -108,7 +108,7 @@ LOG_MODULE_REGISTER(j5vr_actuation, LOG_LEVEL_INF);
  *                               Limiti per-giunto a runtime [deg]. Più restrittivi del
  *                               SERVO_SAFETY_MIN/MAX globale. Scrivibili via
  *                               j5vr_set_joint_limits(). Letti da safe_increment() e
- *                               j5vr_apply_head_tracking() (in j5vr_head.c).
+ *                               j5vr_apply_head() (in j5vr_head.c).
  *
  *  joint_max_vel_deg_s[]        Cap di velocità per-giunto [deg/s]. 0 = usa il
  *                               valore globale current_max_velocity_deg_per_sec.
@@ -188,9 +188,9 @@ float joint_lpf_alpha[SERVO_COUNT] = {
  *  Condiviso con j5vr_head.c. */
 float current_max_velocity_deg_per_sec = MAX_VELOCITY_DEG_PER_SEC_DEFAULT;
 
-/** @brief Cap velocità polso [YAW,PITCH,ROLL] per mode HEAD/HYBRID (2/3). 0 = usa globale. */
+/** @brief Cap velocità polso [YAW,PITCH,ROLL] per mode HEAD/HYBRID (3/4). 0 = usa globale. */
 static float joint_max_vel_deg_s_wrist_head[3] = { 0.0f, 0.0f, 0.0f };
-/** @brief Cap velocità braccio [BASE,SPALLA,GOMITO] per mode HEAD/HYBRID (2/3). 0 = usa cap manuale/globale. */
+/** @brief Cap velocità braccio [BASE,SPALLA,GOMITO] per mode HEAD/HYBRID (3/4). 0 = usa cap manuale/globale. */
 static float joint_max_vel_deg_s_arm_head[3] = { 0.0f, 0.0f, 0.0f };
 
 /* Diagnostica runtime (letta via UART) */
@@ -268,7 +268,7 @@ void j5vr_actuation_update_max_vel_buttons(const struct j5vr_state *j5vr)
 }
 
 /**
- * j5vr_actuation_set_wrist_vel_head — imposta cap velocità polso per HEAD/HYBRID (mode 2/3).
+ * j5vr_actuation_set_wrist_vel_head — imposta cap velocità polso per HEAD/HYBRID (mode 3/4).
  * Chiamato da j5vr_set_vr_params. 0 = usa current_max_velocity_deg_per_sec.
  */
 void j5vr_actuation_set_wrist_vel_head(float yaw_deg_s, float pitch_deg_s, float roll_deg_s)
@@ -323,11 +323,6 @@ void j5vr_horizon_set(bool on, const float dirs[6], float trim_deg)
     }
     hz.trim_rad = j5_clampf(trim_deg, -15.0f, 15.0f) * HORIZON_DEG2RAD;
     hz.on = on;
-}
-
-bool j5vr_horizon_is_on(void)
-{
-    return hz.on;
 }
 
 static void horizon_apply(void)
@@ -916,16 +911,16 @@ void j5vr_apply_mode5_arm_head(const struct j5vr_state *s)
         }
     }
 
-    j5vr_apply_head_orientation_only(s);
+    j5vr_apply_head(s, false);
     j5vr_actuation_apply_desired(s);
 }
 
 /* =========================================================
- * MODE DISPATCH — HYBRID (mode 3) — sperimentale
+ * MODE DISPATCH — HYBRID (mode 4)
  * ========================================================= */
 
 /**
- * j5vr_apply_hybrid — HYBRID mode (3).
+ * j5vr_apply_hybrid — HYBRID mode (4).
  * Combina orientamento testa (open-loop, dal quaternione visore)
  * con joystick per i giunti non controllati dalla testa.
  *
@@ -990,7 +985,7 @@ void j5vr_apply_hybrid(const struct j5vr_state *s)
     }
 
     /* Testa: YAW/PITCH/ROLL con la stessa pipeline del mode HEAD. */
-    j5vr_apply_head_orientation_only(s);
+    j5vr_apply_head(s, false);
 
     j5vr_actuation_apply_desired(s);
 }

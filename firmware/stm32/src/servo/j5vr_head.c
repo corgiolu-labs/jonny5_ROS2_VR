@@ -215,15 +215,16 @@ void j5vr_set_vr_params(float yaw_gain, float pitch_gain, float roll_gain,
 }
 
 /* -----------------------------------------------------------------------
- * j5vr_apply_head_tracking
+ * j5vr_apply_head
  * -----------------------------------------------------------------------
- * Loop principale HEAD mode (mode 2):
+ * Pipeline HEAD (modo 3). Con apply_servos=false aggiorna solo i target
+ * YAW/PITCH/ROLL: HYBRID e ASSIST applicano poi testa e braccio insieme.
  *   1) Quaternione visore → errore rispetto alla posa di calibrazione
  *   2) Errore → yaw/pitch/roll con segni configurabili
  *   3) Filtro EMA adattivo + deadzone
  *   4) Controllo diretto desired_positions[] → servo
  * ----------------------------------------------------------------------- */
-void j5vr_apply_head_tracking(const struct j5vr_state *s)
+void j5vr_apply_head(const struct j5vr_state *s, bool apply_servos)
 {
     j5vr_head_params_t *p  = j5vr_head_get_params();
     j5vr_head_state_t  *st = j5vr_head_get_state();
@@ -233,7 +234,10 @@ void j5vr_apply_head_tracking(const struct j5vr_state *s)
         return;
     }
 
-    j5vr_actuation_update_max_vel_buttons(s);
+    if (apply_servos)
+    {
+        j5vr_actuation_update_max_vel_buttons(s);
+    }
 
     quat_t q_vis = quat_normalize(quat_from_j5vr(s));
     quat_t q_err = j5vr_head_compute_error_quat(q_vis, p, st);
@@ -303,90 +307,8 @@ void j5vr_apply_head_tracking(const struct j5vr_state *s)
 
 #undef CLAMP_F
 
-    j5vr_actuation_apply_desired(s);
-}
-
-/* -----------------------------------------------------------------------
- * j5vr_apply_head_orientation_only
- * -----------------------------------------------------------------------
- * Aggiorna solo i target testa (YAW/PITCH/ROLL) senza applicare subito
- * ai servo. Usata da HYBRID per combinare testa HEAD con braccio MANUAL.
- * ----------------------------------------------------------------------- */
-void j5vr_apply_head_orientation_only(const struct j5vr_state *s)
-{
-    j5vr_head_params_t *p  = j5vr_head_get_params();
-    j5vr_head_state_t  *st = j5vr_head_get_state();
-
-    if (s == NULL)
+    if (apply_servos)
     {
-        return;
+        j5vr_actuation_apply_desired(s);
     }
-
-    quat_t q_vis = quat_normalize(quat_from_j5vr(s));
-    quat_t q_err = j5vr_head_compute_error_quat(q_vis, p, st);
-
-    float yaw_err_deg = 0.0f, pitch_err_deg = 0.0f, roll_err_deg = 0.0f;
-    quat_to_twist_ypr_deg(q_err.w, q_err.x, q_err.y, q_err.z,
-                          &yaw_err_deg, &pitch_err_deg, &roll_err_deg);
-    yaw_err_deg   *= p->sign_yaw;
-    pitch_err_deg *= p->sign_pitch;
-    roll_err_deg  *= p->sign_roll;
-
-    const float deadzone = p->deadzone_deg;
-    const float g_small  = p->alpha_small;
-    const float g_large  = p->alpha_large;
-
-    const float g_y = (fabsf(yaw_err_deg)   < deadzone) ? g_small : g_large;
-    const float g_p = (fabsf(pitch_err_deg) < deadzone) ? g_small : g_large;
-    const float g_r = (fabsf(roll_err_deg)  < deadzone) ? g_small : g_large;
-
-    st->ema_yaw   = (1.0f - g_y) * st->ema_yaw   + g_y * yaw_err_deg;
-    st->ema_pitch = (1.0f - g_p) * st->ema_pitch + g_p * pitch_err_deg;
-    st->ema_roll  = (1.0f - g_r) * st->ema_roll  + g_r * roll_err_deg;
-
-    const float ye = j5vr_head_apply_soft_deadzone(st->ema_yaw,   deadzone);
-    const float pe = j5vr_head_apply_soft_deadzone(st->ema_pitch, deadzone);
-    const float re = j5vr_head_apply_soft_deadzone(st->ema_roll,  deadzone);
-
-    const float err_src[3] = { ye, pe, re };
-    const int sr = (p->src_roll  >= 0 && p->src_roll  < 3) ? p->src_roll  : 2;
-    const int sp = (p->src_pitch >= 0 && p->src_pitch < 3) ? p->src_pitch : 1;
-    const int sy = (p->src_yaw   >= 0 && p->src_yaw   < 3) ? p->src_yaw   : 0;
-
-    const float sens = p->head_sensitivity;
-
-#define CLAMP_F(_v, _lo, _hi) (((_v) < (_lo)) ? (_lo) : (((_v) > (_hi)) ? (_hi) : (_v)))
-
-    if (p->en_roll)
-    {
-        const float ctrl = err_src[sr];
-        if (fabsf(ctrl) > 1e-6f)
-        {
-            float target = st->center_roll + p->gain_roll * (sens * ctrl);
-            desired_positions[SERVO_ROLL] = CLAMP_F(target,
-                joint_min_deg[SERVO_ROLL], joint_max_deg[SERVO_ROLL]);
-        }
-    }
-    if (p->en_pitch)
-    {
-        const float ctrl = err_src[sp];
-        if (fabsf(ctrl) > 1e-6f)
-        {
-            float target = st->center_pitch + p->gain_pitch * (sens * ctrl);
-            desired_positions[SERVO_PITCH] = CLAMP_F(target,
-                joint_min_deg[SERVO_PITCH], joint_max_deg[SERVO_PITCH]);
-        }
-    }
-    if (p->en_yaw)
-    {
-        const float ctrl = err_src[sy];
-        if (fabsf(ctrl) > 1e-6f)
-        {
-            float target = st->center_yaw + p->gain_yaw * (sens * ctrl);
-            desired_positions[SERVO_YAW] = CLAMP_F(target,
-                joint_min_deg[SERVO_YAW], joint_max_deg[SERVO_YAW]);
-        }
-    }
-
-#undef CLAMP_F
 }
