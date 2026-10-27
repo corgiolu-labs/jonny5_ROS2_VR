@@ -622,9 +622,16 @@ function fillSettings() {
       <td><select id="s-dir${i}"><option value="1"${c.dirs[i] === 1 ? " selected" : ""}>+1</option><option value="-1"${c.dirs[i] === -1 ? " selected" : ""}>−1</option></select></td>
       <td><input type="number" id="s-min${i}" min="0" max="180" value="${c.limits[i][0]}" inputmode="numeric"></td>
       <td><input type="number" id="s-max${i}" min="0" max="180" value="${c.limits[i][1]}" inputmode="numeric"></td>
-      <td>${lo.toFixed(0)}..${hi.toFixed(0)}</td></tr>`;
+      <td>${lo.toFixed(0)}..${hi.toFixed(0)}</td>
+      <td><button type="button" class="tiny" data-off="${i}" title="prende l'angolo fisico misurato adesso come offset: porta prima il giunto dritto con gli slider (Braccio, 'segui gli slider')">← fisico</button></td></tr>`;
   });
-  $("set-joints").innerHTML = `<tr><th></th><th>offset (HOME)</th><th>dir</th><th>min fisico</th><th>max fisico</th><th>virtuale</th></tr>` + rows.join("");
+  $("set-joints").innerHTML = `<tr><th></th><th>offset (HOME)</th><th>dir</th><th>min fisico</th><th>max fisico</th><th>virtuale</th><th></th></tr>` + rows.join("");
+  $("set-joints").querySelectorAll("button[data-off]").forEach(b => b.onclick = () => {
+    const i = Number(b.dataset.off), v = S.tm && S.tm[SK[i]];
+    if (typeof v !== "number") return toast("nessuna telemetria", true);
+    $("s-off" + i).value = v;
+    toast(`${JN[i]}: offset = ${v}° (fisico misurato). Poi Applica, controlla in HOME, Salva`);
+  });
   $("set-vr").value = c.vr_params || "";
   $("set-pwm").value = c.pwm_config || "";
   const pose = (key, name) => `<tr><td>${name}</td>` +
@@ -658,6 +665,10 @@ $("set-apply").onclick = async () => {
   if (s.pwm_config) lines.push(s.pwm_config);
   const out = [];
   for (const l of lines) { const r = await uart(l); out.push(`${r.ok ? "OK " : "ERR"}  ${l}  →  ${r.response}`); }
+  if ($("set-home").checked) {                  // the arm goes to the new HOME at once: you see the offsets live
+    if (S.tm && S.tm.robot_state !== "IDLE") out.push(`HOME non inviato: robot in ${S.tm.robot_state} (serve IDLE)`);
+    else { const r = await uart("HOME"); out.push(`${r.ok ? "OK " : "ERR"}  HOME  →  ${r.response}`); }
+  }
   $("set-out").textContent = out.join("\n") + "\n\nApplicato solo al firmware acceso: per tenerlo, Salva in j5mini.json (le pose si salvano soltanto).";
 };
 

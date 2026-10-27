@@ -250,7 +250,10 @@
       <div class="card wide">
         <h3>Giunti</h3>
         <p class="note">Offset = angolo fisico del servo in HOME. Dir = verso del servo rispetto all'angolo virtuale
-          (solo lato Pi/app). Limiti in gradi fisici: il firmware non supera questi valori in nessun modo.</p>
+          (solo lato Pi/app). Limiti in gradi fisici: il firmware non supera questi valori in nessun modo.
+          <b>Allineamento dal vivo:</b> cambia un offset e premi "Applica": con "poi HOME" il braccio va subito nella
+          nuova HOME e vedi se il giunto è dritto; ripeti finché torna. Oppure porta il giunto dritto con gli slider
+          (Braccio, "segui gli slider") e premi "← fisico" sulla sua riga.</p>
         <table id="set-joints" class="set"></table>
       </div>
       <div class="card wide">
@@ -293,6 +296,7 @@
         </details>
         <div class="row">
           <button id="set-apply" class="motion">Applica al firmware</button>
+          <label class="chk" title="dopo Applica manda HOME: il braccio si porta nella nuova HOME e vedi subito l'effetto degli offset"><input type="checkbox" id="set-home" checked> poi HOME</label>
           <button id="set-save" class="primary">Salva in j5mini.json</button>
           <button id="set-reload">Ricarica</button>
         </div>
