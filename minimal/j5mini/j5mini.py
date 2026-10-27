@@ -79,23 +79,6 @@ def find_frame_window(prev: bytes, rx: bytes):
     return None
 
 
-def find_frame(rx: bytes):
-    """Canonical 64-byte frame in a transfer (rule of the Pi's spi_transport_mode.py)."""
-    def ok(o):
-        f = rx[o:o + 64]
-        return (len(f) == 64 and f[:2] == b"J5" and f[2] == 1 and f[6] == 64 and f[7] == 0
-                and f[3] in (1, 2, 3, 4, 5))
-    if len(rx) <= 64:
-        return rx if ok(0) else None
-    other = None
-    for o in range(0, len(rx) - 63):
-        if ok(o):
-            if o in (0, 64):
-                return rx[o:o + 64]
-            other = other if other is not None else rx[o:o + 64]
-    return other
-
-
 def _axis(v):
     if isinstance(v, bool):
         return None
@@ -1039,9 +1022,6 @@ class Assist:
             return None
         r = self.g._quat_to_mat(tm["imu_q_w"], tm["imu_q_x"], tm["imu_q_y"], tm["imu_q_z"])
         return [float(v) for v in m @ (r.T @ self.g.np.array([0.0, 0.0, 1.0]))]
-
-    def horizon_lock(self) -> bool:
-        return self.g.horizon_lock()
 
     def headzero_external(self):
         self.g.notify_headzero_external()

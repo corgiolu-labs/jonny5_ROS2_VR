@@ -258,7 +258,18 @@ Il server HTTPS di j5mini (443) accetta anche l'`Upgrade: websocket` su `/ws` e 
 
 Resta senza librerie (oggi 75 KB; obiettivo < 100 KB con il tab Teleop). Grafico e 3D su canvas 2D. Telemetria a 20 Hz applicata al DOM con `requestAnimationFrame`, grafico ridisegnato 1 volta al secondo, log limitato a 600 righe, video WHEP fermato uscendo dal tab Camere, nitidezza calcolata su 320×180. Su telefono il peso vero è la decodifica WebRTC dei due occhi, non la pagina.
 
-## 5. Ordine di esecuzione proposto
+## 5. Stato (27/10/2026, sera)
+
+- Punto 1 **fatto**: dashboard nuova + j5mini (tunnel `/ws`, posa del visore in telemetria, pose e velocità in
+  `save_config`), 39 test verdi, app telefono 0.4 compilata. Da fare appena il robot è acceso: deploy sul Pi
+  (diff + riavvio di `jonny5-j5mini`), installazione dell'app via adb, prova dal PC e dal telefono.
+- Punto 2 **fatto** per la parte Python (`find_frame`, `horizon_lock` doppio, sonda di debug del gimbal, parametri
+  inutili di `configure`, `export_config.py`, docstring). **Rimandati** a un giro con il robot acceso, perché
+  toccano i servizi video: `--roi`/`--autofocus-range` di cam_stream, ramo rpicam di `video_capture.sh`, profili
+  di `start_mediamtx.sh`, spostamento di `rtp_push` in `legacy/`.
+- Punti 3 e 4: non iniziati (richiedono riflash e aggiornamento dell'app Quest).
+
+## 5 bis. Ordine di esecuzione proposto
 
 1. **Dashboard + j5mini** (nessun riflash): tunnel `/ws`, telemetria del visore e `horizon_trim`/`spi_shift`/`smoothed`, `save_config` con pose/velocità, tab Teleop, nuova grafica, `?app=phone`, test pytest aggiornati, deploy sul Pi con diff. Poi il viewer (palette + URL), build e installazione via adb.
 2. **Tagli sul Pi** (gruppo sicuro, stesso deploy).

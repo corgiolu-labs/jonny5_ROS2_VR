@@ -343,7 +343,7 @@ def test_settings_round_trip_rebuilds_the_boot_lines():
     assert s["offsets"] == CFG["settings"]["offsets"] and s["dirs"] == CFG["settings"]["dirs"]
     assert s["limits"][5] == [68, 128] and s["vr_params"].startswith("SET_VR_PARAMS ")
     lines, err = j5mini.boot_lines_from_settings(s)
-    assert err is None and lines == CFG["boot_commands"]          # same lines, same order as export_config
+    assert err is None and lines == CFG["boot_commands"]          # same lines, same order as the Pi's
 
 
 @pytest.mark.parametrize("change, msg", [

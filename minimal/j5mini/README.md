@@ -36,15 +36,8 @@ IMU. Altri messaggi sono ignorati con una riga di log.
 ## Configurazione
 
 `j5mini.json` (non versionato, accanto a `j5mini.py`). I percorsi relativi partono dalla sua cartella.
-`raspberry/setup_pi.sh` lo crea da `j5mini.example.json` se manca, ma con offset e limiti di default:
-sul robot con lo stack vecchio ancora installato conviene esportare quelli calibrati, con il codice del
-Pi stesso (righe identiche a quelle di oggi):
-
-```bash
-cd ~/JONNY5_ROS2/minimal/j5mini            # la cartella di questo file nel checkout del Pi
-~/raspberry5/.venv/bin/python3 export_config.py ~/raspberry5 > j5mini.json
-cp ~/raspberry5/config_runtime/robot/controller_mappings.json .
-```
+`raspberry/setup_pi.sh` lo crea da `j5mini.example.json` se manca; offset, versi, limiti, pose PARK/VR, velocità
+e parametri VR si modificano poi dalla dashboard (Impostazioni e Teleop → "Salva in j5mini.json", con copia `.bak`).
 
 Sull'Aura: `"spi": {"device": "/dev/spidev1.0"}`, `"uart": {"device": "/dev/ttyS4"}` e il sender avviato
 **senza** `--spi`/`--uart` (un solo proprietario per bus).

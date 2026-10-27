@@ -6,8 +6,8 @@ Requests come over j5mini (wss://127.0.0.1:8557, relayed from the app):
     {"type": "vision_request", "action": "analyze" | "point", "req": <id>}
   analyze: detection + stereo distance + OCR of the target            (~1.5-2 s on the Pi 5 CPU)
   analyze_hd: the same, the text read from a full-resolution still of cam0 (left video pauses ~1 s)
-  point:   detection + stereo distance only, result with "aim": true  (~0.6 s). The old ws-teleop moved the arm
-           towards the target (ASSIST gimbal); j5mini has no gimbal and answers vision_point ok=false.
+  point:   detection + stereo distance only, result with "aim": true  (~0.6 s); j5mini's ASSIST gimbal then
+           moves the arm towards the target (grips held) and broadcasts vision_point.
 Reply: {"type": "vision_result", "req", "action", "ok", "why"?, "aim"?, "zoom", "objects": [...],
         "target": {"label", "label_it", "conf", "box": [x0, y0, x1, y1] | null, "center": [u, v], "dist_mm",
                    "cam_xyz_mm": [X right, Y down, Z forward] (cam0 frame, zoom-1 geometry),

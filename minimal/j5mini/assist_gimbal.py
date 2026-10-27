@@ -91,20 +91,16 @@ _LIMIT_ORDER = ("base", "spalla", "gomito", "yaw", "pitch", "roll")
 _glue = {"telemetry": lambda: {}, "screws": None}
 
 
-def configure(offsets, dirs, screws=None, telemetry=None, mount_path=None, campaign_dir=None):
+def configure(offsets, dirs, screws=None, telemetry=None):
     """offsets / dirs: j5mini settings; screws: 6 screw axes [w, v] (dashboard kinematics.json "S", m);
     telemetry(): the latest firmware telemetry dict (imu_valid, imu_q_*)."""
-    global _MOUNT_PATH, CAMPAIGN_DIR, _ARM_GEOM
+    global _ARM_GEOM
     settings_manager.current = {"offsets": [float(v) for v in offsets], "dirs": [1 if float(d) >= 0 else -1 for d in dirs]}
     if screws is not None:
         _glue["screws"] = [list(map(float, s)) for s in screws]
         _ARM_GEOM = None
     if telemetry is not None:
         _glue["telemetry"] = telemetry
-    if mount_path:
-        _MOUNT_PATH = mount_path
-    if campaign_dir:
-        CAMPAIGN_DIR = campaign_dir
 
 
 class settings_manager:  # noqa: N801 - stands in for the old module (three calls)
@@ -437,10 +433,8 @@ class GimbalState:
         self.q23_ref = None          # shoulder / elbow (rad) at engage: preferred posture for the IK
         self.z_off = 0.0             # height reference offset (m): end-of-range ratchet + pitch help
         self.dpsi = 0.0              # camera yaw - head yaw at engage (maps head displacement to the robot)
-        self.pos_dbg = None
         self.target_id = 0
         self.last_t = 0.0
-        self.last_log = 0.0
         self.last_full_v = None      # last commanded pose, virtual deg [6] (planning base for request_point)
         self.v_lims = None           # (virtual lo[6], virtual hi[6]) of the last step
         self.goal = None             # request_point motion in progress
@@ -466,10 +460,6 @@ _state = GimbalState()
 def set_horizon_lock(on: bool) -> bool:
     _state.horizon = bool(on)
     logger.info("[GIMBAL] horizon lock %s", "on" if on else "off")
-    return _state.horizon
-
-
-def horizon_lock() -> bool:
     return _state.horizon
 
 
@@ -939,7 +929,6 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     st.arm_v[0] = float(np.clip(st.arm_v[0] + step_b, a_lo[0], a_hi[0]))
     pcfg = pos_cfg or {}
     p_now = _head_pos(intent) if pcfg.get("enable", True) else None
-    st.pos_dbg = None
     if p_now is not None and st.p_ref is not None:
         # ---- head position -> wrist centre (shoulder + elbow)
         if st.p_last is not None and float(np.linalg.norm(p_now - st.p_last)) > POS_JUMP_M:
@@ -995,7 +984,6 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
             st.arm_v[1] = float(np.clip(st.arm_v[1] + rest, a_lo[1], a_hi[1]))
             z_new = wc_rz(math.radians(st.arm_v[1] - 90.0), math.radians(st.arm_v[2] - 90.0))[1]
             st.z_off += z_new - z_t
-        st.pos_dbg = (dr, dz, r_t, z_t)
     else:
         step_p = max(-max_step, min(max_step, frac * ov_pitch))
         g_new = float(np.clip(st.arm_v[2] + step_p, a_lo[2], a_hi[2]))
@@ -1017,21 +1005,6 @@ def step(intent: dict, *, physical_six, limits_src: dict, vr_params: list[str], 
     arm_phys, _, _, _ = _emit(st, intent, full_v, offsets, dirs, vr_params, send_quat)
     _campaign_log(st, intent, full_v, r_target, tel_raw, r_target_raw)
 
-    if now - st.last_log >= 1.0:
-        st.last_log = now
-        fk = np.degrees(_rot_to_ypr(cam_rotation(np.radians(np.asarray(full_v) - 90.0))))
-        tg = np.degrees(_rot_to_ypr(r_target))
-        pos_txt = ""
-        if st.pos_dbg is not None:
-            dr, dz, r_t, z_t = st.pos_dbg
-            r_c, z_c = wc_rz(math.radians(st.arm_v[1] - 90.0), math.radians(st.arm_v[2] - 90.0))
-            pos_txt = " pos d[r z] %+.0f %+.0f mm wc tgt [%.0f %.0f] cmd [%.0f %.0f] mm" % (
-                dr * 1000, dz * 1000, r_t * 1000, z_t * 1000, r_c * 1000, z_c * 1000)
-        logger.info("[GIMBAL] target ypr %s cam(cmd) ypr %s wrist virt %s%s arm virt %s dt %.0f ms pred %.1f deg%s",
-                    [round(float(v), 1) for v in tg], [round(float(v), 1) for v in fk],
-                    [round(float(v), 1) for v in w_cmd],
-                    " (clamped)" if any(abs(w_cmd[i] - w_deg[i]) > 0.05 for i in range(3)) else "",
-                    [round(float(v), 1) for v in st.arm_v], dt * 1000.0, st.pred_deg, pos_txt)
     return arm_phys, True, False, st.target_id
 
 
