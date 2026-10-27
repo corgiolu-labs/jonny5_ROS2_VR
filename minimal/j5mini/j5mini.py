@@ -922,6 +922,11 @@ class Server:
             with self.lock:
                 self.assist.configure(self.kin["S"])
 
+    # A client that stops reading (headset asleep, phone in the pocket) fills its socket; without a limit the
+    # broadcast waited for it and the whole asyncio loop froze (27/10/2026: 6 minutes without telemetry, dashboard
+    # and STOP, the Quest app paused with 87 KB queued). A send that takes longer than this drops the client.
+    SEND_TIMEOUT_S = 0.5
+
     async def handler(self, ws):
         self.clients.add(ws)
         try:
@@ -931,8 +936,27 @@ class Server:
                 except ValueError:
                     continue
                 await self.on_message(ws, msg)
+        except websockets.exceptions.ConnectionClosed:
+            pass                                     # dropped without a close frame: normal for apps and phones
         finally:
             self.clients.discard(ws)
+
+    async def send_to(self, ws, data: str):
+        """One client, bounded: a slow one is dropped instead of holding the others."""
+        try:
+            await asyncio.wait_for(ws.send(data), self.SEND_TIMEOUT_S)
+        except (asyncio.TimeoutError, Exception) as e:
+            if ws in self.clients:
+                self.clients.discard(ws)
+                why = "send blocked > %.1f s" % self.SEND_TIMEOUT_S if isinstance(e, asyncio.TimeoutError) else type(e).__name__
+                self.core.log(f"[j5mini] client {getattr(ws, 'remote_address', '?')} dropped: {why}")
+                try:
+                    asyncio.get_running_loop().create_task(ws.close(code=1011, reason="slow client"))
+                except RuntimeError:
+                    pass
+
+    async def send_all(self, data: str, but=None):
+        await asyncio.gather(*(self.send_to(c, data) for c in list(self.clients) if c is not but))
 
     async def on_message(self, ws, msg: dict):
         typ = msg.get("type")
@@ -1005,8 +1029,7 @@ class Server:
             await ws.send(json.dumps({"type": "ws_pong", "id": msg.get("id"), "ts_client": msg.get("ts_client"),
                                       "ts_server": time.time()}))
         elif typ in self.RELAY:
-            data = json.dumps(msg)
-            await asyncio.gather(*(c.send(data) for c in list(self.clients) if c is not ws), return_exceptions=True)
+            await self.send_all(json.dumps(msg), but=ws)
             if typ == "vision_result" and msg.get("aim"):
                 # right trigger in ASSIST: the vision service measured the object under the crosshair, the gimbal
                 # moves the arm to point cam0 at it (grips held); the outcome goes to every client
@@ -1039,8 +1062,7 @@ class Server:
         self.core.log(f"[j5mini] {cmd} -> {line}")
 
     async def broadcast(self, obj: dict):
-        data = json.dumps(obj)
-        await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
+        await self.send_all(json.dumps(obj))
 
     def save_config(self, msg: dict) -> dict:
         """Dashboard settings -> boot lines (validated) -> j5mini.json (+ .bak) and the running config. The
@@ -1124,8 +1146,7 @@ class Server:
             self.write_telemetry_file(msgs[0])
             if self.clients:
                 for m in msgs:
-                    data = json.dumps(m)
-                    await asyncio.gather(*(c.send(data) for c in list(self.clients)), return_exceptions=True)
+                    await self.send_all(json.dumps(m))
 
 
 # ------------------------------------------------------------------ ASSIST (mode 5): the old Pi's gimbal
@@ -1402,10 +1423,11 @@ async def serve(core: Core, lock: threading.Lock, cfg: dict, cams: Cameras):
         ssl_ctx.load_cert_chain(ws_cfg["cert"], ws_cfg["key"])
     srv = Server(core, lock, cfg, cams)
     local = int(ws_cfg.get("local_port") or 0)        # plain ws on loopback for the HTTPS server's /ws tunnel
-    async with websockets.serve(srv.handler, ws_cfg.get("host", "0.0.0.0"), ws_cfg.get("port", 8557), ssl=ssl_ctx):
+    async with websockets.serve(srv.handler, ws_cfg.get("host", "0.0.0.0"), ws_cfg.get("port", 8557), ssl=ssl_ctx,
+                                ping_interval=5, ping_timeout=5):
         core.log(f"[j5mini] {'wss' if ssl_ctx else 'ws'}://0.0.0.0:{ws_cfg.get('port', 8557)} ready")
         if local:
-            async with websockets.serve(srv.handler, "127.0.0.1", local):
+            async with websockets.serve(srv.handler, "127.0.0.1", local, ping_interval=5, ping_timeout=5):
                 core.log(f"[j5mini] dashboard WebSocket tunnel: /ws on the HTTPS port -> 127.0.0.1:{local}")
                 await srv.broadcast_loop()
         else:

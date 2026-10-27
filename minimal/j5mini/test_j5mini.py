@@ -1033,3 +1033,37 @@ def test_demo_steps_are_saved_with_the_config(tmp_path):
     bad = srv.save_config({**base, "demo": [{"angles": [90] * 6, "speed_pct": 0, "profile": "BB"}]})
     assert not bad["ok"] and "velocità" in bad["error"]
 
+
+class StuckWs:
+    """A client whose socket never drains (the headset asleep): send() waits for ever."""
+    def __init__(self):
+        self.closed = False
+
+    async def send(self, data):
+        await asyncio.Event().wait()
+
+    async def close(self, code=1000, reason=""):
+        self.closed = True
+
+
+def test_a_client_that_stops_reading_is_dropped_and_the_others_still_get_telemetry():
+    """27/10/2026 on the robot: the Quest app paused with 87 KB queued on its socket and j5mini's broadcast waited
+    for it for 6 minutes: no telemetry, no dashboard, no STOP. Now a send longer than 0.5 s drops that client."""
+    cfg = json.loads(json.dumps(CFG))
+    core = j5mini.Core(cfg, None, None, clock=lambda: 0.0, log=lambda m: None)
+    srv = j5mini.Server(core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+    good, stuck = FakeWs(), StuckWs()
+    srv.clients.update([good, stuck])
+
+    async def run():
+        t0 = time.monotonic()
+        await srv.broadcast({"type": "telemetry", "n": 1})
+        dt = time.monotonic() - t0
+        await asyncio.sleep(0.05)                      # the close task
+        await srv.broadcast({"type": "telemetry", "n": 2})
+        return dt
+    dt = asyncio.run(run())
+    assert dt < 1.5, dt
+    assert stuck not in srv.clients and good in srv.clients and stuck.closed
+    assert [m["n"] for m in good.sent] == [1, 2]
+
