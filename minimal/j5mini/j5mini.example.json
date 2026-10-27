@@ -77,91 +77,103 @@
      90,
      90
     ],
-    "speed_pct": 33,
+    "speed_pct": 10,
     "profile": "RTR5"
    },
    {
     "angles": [
      90,
-     123,
-     143,
-     90,
-     90,
-     90
-    ],
-    "speed_pct": 23,
-    "profile": "RTR3"
-   },
-   {
-    "angles": [
-     46,
-     103,
-     123,
-     71,
+     100,
      95,
-     76
-    ],
-    "speed_pct": 34,
-    "profile": "BCB"
-   },
-   {
-    "angles": [
-     90,
-     53,
-     63,
      90,
      75,
      90
     ],
-    "speed_pct": 24,
+    "speed_pct": 10,
     "profile": "RTR5"
    },
    {
     "angles": [
-     136,
-     103,
-     123,
-     107,
+     70,
+     95,
+     100,
      85,
-     106
-    ],
-    "speed_pct": 37,
-    "profile": "BCB"
-   },
-   {
-    "angles": [
-     90,
-     113,
-     168,
-     90,
-     90,
+     80,
      90
     ],
-    "speed_pct": 23,
-    "profile": "RTR3"
-   },
-   {
-    "angles": [
-     121,
-     78,
-     103,
-     112,
-     80,
-     66
-    ],
-    "speed_pct": 48,
+    "speed_pct": 10,
     "profile": "RTR5"
    },
    {
     "angles": [
-     56,
-     78,
-     103,
-     65,
+     62,
+     102,
+     118,
      80,
-     116
+     95,
+     90
     ],
-    "speed_pct": 48,
+    "speed_pct": 10,
+    "profile": "RTR5"
+   },
+   {
+    "angles": [
+     90,
+     105,
+     120,
+     90,
+     95,
+     90
+    ],
+    "speed_pct": 10,
+    "profile": "RTR5"
+   },
+   {
+    "angles": [
+     118,
+     102,
+     118,
+     100,
+     95,
+     90
+    ],
+    "speed_pct": 10,
+    "profile": "RTR5"
+   },
+   {
+    "angles": [
+     110,
+     95,
+     100,
+     95,
+     80,
+     90
+    ],
+    "speed_pct": 10,
+    "profile": "RTR5"
+   },
+   {
+    "angles": [
+     90,
+     115,
+     150,
+     90,
+     85,
+     90
+    ],
+    "speed_pct": 8,
+    "profile": "RTR5"
+   },
+   {
+    "angles": [
+     90,
+     95,
+     100,
+     90,
+     70,
+     90
+    ],
+    "speed_pct": 10,
     "profile": "RTR5"
    }
   ]

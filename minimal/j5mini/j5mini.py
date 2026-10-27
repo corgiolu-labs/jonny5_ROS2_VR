@@ -555,14 +555,15 @@ POSE_DEFAULTS = {            # the robot's j5_settings.json (virtual degrees, 90
                                  # fast on the robot, 26/10/2026)
     "profile": "RTR5",
 }
-DEMO_DEFAULT = [{"angles": [90, 90, 90, 90, 90, 90], "speed_pct": 33, "profile": "RTR5"},
-                {"angles": [90, 123, 143, 90, 90, 90], "speed_pct": 23, "profile": "RTR3"},
-                {"angles": [46, 103, 123, 71, 95, 76], "speed_pct": 34, "profile": "BCB"},
-                {"angles": [90, 53, 63, 90, 75, 90], "speed_pct": 24, "profile": "RTR5"},
-                {"angles": [136, 103, 123, 107, 85, 106], "speed_pct": 37, "profile": "BCB"},
-                {"angles": [90, 113, 168, 90, 90, 90], "speed_pct": 23, "profile": "RTR3"},
-                {"angles": [121, 78, 103, 112, 80, 66], "speed_pct": 48, "profile": "RTR5"},
-                {"angles": [56, 78, 103, 65, 80, 116], "speed_pct": 48, "profile": "RTR5"}]   # the old Pi's demo_steps (vel deg/s -> %)
+DEMO_DEFAULT = [{"angles": [90, 90, 90, 90, 90, 90], "speed_pct": 10, "profile": "RTR5"},
+                {"angles": [90, 100, 95, 90, 75, 90], "speed_pct": 10, "profile": "RTR5"},
+                {"angles": [70, 95, 100, 85, 80, 90], "speed_pct": 10, "profile": "RTR5"},
+                {"angles": [62, 102, 118, 80, 95, 90], "speed_pct": 10, "profile": "RTR5"},
+                {"angles": [90, 105, 120, 90, 95, 90], "speed_pct": 10, "profile": "RTR5"},
+                {"angles": [118, 102, 118, 100, 95, 90], "speed_pct": 10, "profile": "RTR5"},
+                {"angles": [110, 95, 100, 95, 80, 90], "speed_pct": 10, "profile": "RTR5"},
+                {"angles": [90, 115, 150, 90, 85, 90], "speed_pct": 8, "profile": "RTR5"},
+                {"angles": [90, 95, 100, 90, 70, 90], "speed_pct": 10, "profile": "RTR5"}]   # 27/10/2026: forward only, slow (camera always in front of the base, POE-checked)
 
 
 
