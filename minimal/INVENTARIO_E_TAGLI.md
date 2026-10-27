@@ -189,7 +189,7 @@ Stima: ~250 righe sicure (+520 opzionali spostate), nessun riflash: basta scp co
 | Temp IMU | no | il driver minimo non la legge; i 28 byte accel/gyro/temp sono a zero |
 | **Comandi principali in home** (ENABLE=SAFE+ENABLE, STOP, HOME, PARK, VR pose) | solo nel tab Comandi | **da riportare in home** |
 | IMU on/off | no | IMU sempre accesa nel minimale |
-| **Demo** (sequenza di pose dal Pi) | no | lasciata fuori di proposito; **da ridecidere** (vedi 3.2) |
+| **Demo** (sequenza di pose dal Pi) | **sì** (27/10 sera) | pulsante Demo nella fascia, passi in Impostazioni → Demo, `settings.demo` in j5mini.json |
 | Calibra IMU (world bias) | no | nel minimale il visore non usa l'IMU del robot; l'IMU serve a Orizzonte e ASSIST con `imu_ee_mount.json`. Non serve più |
 | IMU rpy relativa a HOME ("Display Ref") | no, solo grezza | **da riportare** (azzeramento al SETPOSE_DONE di HOME, lato client) |
 | Posa del visore (rpy/quat) e heartbeat | solo modo e età dell'intent | **da riportare**: 4 float in più nella telemetria |
@@ -211,7 +211,7 @@ Funzioni del 26/10 che oggi si usano **solo dal Quest o a mano** e che la dashbo
 
 ### 3.2 Demo
 
-Nel vecchio Pi la demo era una lista `demo_steps` in `j5_settings.json` eseguita dal Pi come SETPOSE in sequenza. Nel minimale esiste già `pose_command()` (PARK/VR) e la dashboard ha "esegui sequenza" dalle pose salvate nel browser. Riportarla lato j5mini costa ~40 righe (`demo_steps` in `j5mini.json`, messaggio `demo start/stop`, stato in telemetria). La propongo come voce opzionale: dimmi se la vuoi.
+Nel vecchio Pi la demo era una lista `demo_steps` in `j5_settings.json` eseguita dal Pi come SETPOSE in sequenza. Nel minimale esiste già `pose_command()` (PARK/VR) e la dashboard ha "esegui sequenza" dalle pose salvate nel browser. Riportarla lato j5mini costa ~40 righe (`demo_steps` in `j5mini.json`, messaggio `demo start/stop`, stato in telemetria). Rimessa il 27/10 sera su richiesta (vedi README di j5mini e della dashboard).
 
 ## 4. Progetto della nuova dashboard
 

@@ -18,6 +18,7 @@ parla con l'app Quest come ws-teleop e con lo STM32 come il Pi.
 | Ritardi braccio/polso | dalla campagna IMU del 26/10: la base risponde in ~0,09 s, il polso in ~0,17 s. Il polso viene risolto sul braccio *voluto* e il comando B/S/G esce in ritardo di 0,08 s (`ARM_DELAY_S`), così arrivano alla camera insieme (prima la camera seguiva la base per ~0,2 s a ogni partenza) |
 | Campagna IMU | `{"type": "imu_campaign", "on": true, "label": "..."}` registra desiderato/comandato/firmware/IMU in `logs/imu_campaign/*.jsonl` (per misurare gli scatti) |
 | Stato robot | `STATUS?` ogni 2 s |
+| Demo | `{"type": "demo", "on": true}` dalla dashboard: i passi di `settings.demo` (posa virtuale, velocità %, profilo; default la vecchia `demo_steps` del Pi) come `SETPOSE` uno alla volta, il successivo a `SETPOSE_DONE`, in ciclo. Si ferma con `on: false` (fermandosi dov'è), quando il robot esce da IDLE (STOP, SAFE, fungo), se un passo è rifiutato o resta senza `SETPOSE_DONE` per 15 s. `demo` in telemetria (`{step, n}` o `null`), messaggi `demo` con `on`/`reason` |
 | PARK / VR pose | `PARK` e `TELEOPPOSE` dai client diventano un `SETPOSE` alle pose salvate (`settings.park` / `settings.vr`, gradi virtuali, default quelle del robot; velocità `speed_pct`, default 40 % come HOME), come ws-teleop: le PARK/TELEOPPOSE del firmware vanno tutte e due a una posa di fabbrica. Risposta con il comando del client e `teleop_pose_ack` (l'app del visore lo aspetta fino a 5 s) |
 | Telemetria ai client | 20 Hz: `robot_state`, `servo_deg_B..R`, quaternione IMU, `deadman_active`, `vr_armed`, `estop_active`, `estop_bypass`, contatori del link, stato telecamere |
 | Telecamere (app Quest) | `vr_zoom_state`, `cam_exposure`, `cam_mode`, `cam_focus` → `raspberry/tools/cam_stream.py` via UDP 5600/5601 come ws-teleop (zoom e luminosità rimandati ogni secondo); in telemetria `cam_zoom`, `cam_mode`, `cam_hfov`, `cam_fps`, `cam_ev`, `vr_zoom0/1` |
@@ -30,7 +31,7 @@ parla con l'app Quest come ws-teleop e con lo STM32 come il Pi.
 | Video della dashboard | `POST /whep/cam0` e `/whep/cam1` sulla porta HTTPS inoltrati al WHEP di MediaMTX (`https.whep`, default `http://127.0.0.1:8889`), così una pagina https può aprire il WebRTC; `cam_autofocus` = autofocus su tutte e due le camere |
 | Simulatore | `--sim`: il firmware vero compilato per il PC al posto di SPI e UART, dashboard su `http://localhost:8558` (`--http-port`) |
 
-**Non fa** (apposta): twin, pagine della dashboard del vecchio Pi, ROS 2, captive portal, demo e self-test
+**Non fa** (apposta): twin, pagine della dashboard del vecchio Pi, ROS 2, captive portal, self-test
 IMU. Altri messaggi sono ignorati con una riga di log.
 
 ## Configurazione

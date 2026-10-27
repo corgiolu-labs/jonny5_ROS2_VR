@@ -15,6 +15,8 @@ What it does (and nothing else):
   - UART owner: commands from the clients with #seq replies; on BOOT_READY (or 1.5 s after
     start) pushes the configuration lines from the config file, in order, with retries;
     STATUS? every 2 s for the robot state; ESTOP / SETPOSE_DONE lines forwarded.
+  - Demo: the pose sequence saved in j5mini.json (settings.demo), one SETPOSE per step, the next at SETPOSE_DONE,
+    round and round until the dashboard stops it, the robot leaves IDLE (STOP / SAFE / E-STOP) or a step fails.
   - On entering HEAD/HYBRID/ASSIST (mode 3/4/5) re-sends SET_VR_PARAMS (2.5 s throttle), as ws-teleop.
   - Telemetry to the clients at 20 Hz: robot_state, servo_deg_*, IMU quaternion, deadman/armed/E-STOP.
   - Optional clock set from the headset (time_sync), the robot has no RTC and no internet.
@@ -227,6 +229,7 @@ class Core:
         self.telemetry: dict = {}
         self.diag: dict = {}
         self.events: list[dict] = []        # unsolicited lines, uart responses (drained by the server)
+        self.demo: dict | None = None       # running pose sequence (demo_start), see _demo_next
         self.stats = dict(spi_tx=0, spi_rx_ok=0, spi_rx_bad=0, neutral=0, uart_tx=0, uart_rx=0, uart_timeouts=0,
                           spi_shift=0, smoothed=0)
 
@@ -335,6 +338,10 @@ class Core:
         if line.startswith("STATUS:"):
             self.robot_state = line[7:].strip()
             return
+        if self.demo and line.startswith("SETPOSE_DONE") and self.demo["moving"]:
+            self._demo_next()
+        elif self.demo and line.startswith("ESTOP") and line != "ESTOP_CLEAR":
+            self.demo_stop("fungo")
         self.events.append({"type": "uart_unsolicited", "line": line})
         if line == "BOOT_READY":
             self.log("[j5mini] STM32 BOOT_READY: pushing configuration")
@@ -439,12 +446,69 @@ class Core:
         self._spi_tick()
         self._uart_poll()
         now = self.clock()
+        self._demo_tick(now)
         if not self.boot_done and now - self.t0 >= self.BOOT_FALLBACK_S:
             self.log("[j5mini] no BOOT_READY seen: pushing configuration anyway")
             self._start_boot_push()
         if now >= self.next_state_poll:
             self.next_state_poll = now + self.STATE_POLL_S
             self.uart_send("STATUS?")
+
+    # ---------------- demo: the saved pose sequence, looped (dashboard "Demo") ----------------
+    DEMO_STEP_TIMEOUT_S = 15.0
+
+    def demo_start(self, lines: list[str]) -> tuple[bool, str]:
+        """SETPOSE lines one at a time, the next one at SETPOSE_DONE, round and round until demo_stop(), the robot
+        leaves IDLE (STOP / SAFE / E-STOP), a refused line or a step without SETPOSE_DONE for 15 s."""
+        if not lines:
+            return False, "nessun passo"
+        if self.robot_state != "IDLE":
+            return False, f"robot in {self.robot_state}: serve IDLE"
+        self.demo = {"lines": list(lines), "i": -1, "deadline": 0.0, "moving": False}
+        self._demo_next()
+        return True, ""
+
+    def demo_stop(self, reason: str, hold: bool = False):
+        """hold: stop where the arm is (a 120 ms trajectory to the measured angles replaces the running one)."""
+        d = self.demo
+        if not d:
+            return
+        self.demo = None
+        if hold and d["moving"] and all(k in self.telemetry for k in SERVO_KEYS):
+            self.uart_send("SETPOSE_T_HR " + " ".join(str(int(round(self.telemetry[k] * 10))) for k in SERVO_KEYS)
+                           + " 120 RTR3")
+        self.events.append({"type": "demo", "on": False, "reason": reason})
+        self.log(f"[j5mini] demo stopped ({reason})")
+
+    def demo_status(self) -> dict | None:
+        d = self.demo
+        return {"step": d["i"] + 1, "n": len(d["lines"])} if d else None
+
+    def _demo_next(self):
+        d = self.demo
+        d["i"] = (d["i"] + 1) % len(d["lines"])
+        d["moving"] = False
+        line = d["lines"][d["i"]]
+
+        def sent(ok, resp):                  # the firmware's reply to this step's SETPOSE
+            if self.demo is not d:
+                return
+            if not ok:
+                self.demo_stop(f"passo {d['i'] + 1} rifiutato: {resp}")
+                return
+            d["moving"] = True
+            d["deadline"] = self.clock() + self.DEMO_STEP_TIMEOUT_S
+        self.uart_send(line, sent)
+        self.events.append({"type": "demo", "on": True, "step": d["i"] + 1, "n": len(d["lines"])})
+
+    def _demo_tick(self, now: float):
+        d = self.demo
+        if not d:
+            return
+        if self.robot_state != "IDLE":
+            self.demo_stop(f"robot in {self.robot_state}")
+        elif d["moving"] and now > d["deadline"]:
+            self.demo_stop(f"passo {d['i'] + 1} senza SETPOSE_DONE entro {self.DEMO_STEP_TIMEOUT_S:.0f} s")
 
     def telemetry_message(self) -> dict:
         intent_age = self.clock() - self.payload_t
@@ -460,7 +524,7 @@ class Core:
                 # mode echoed by the firmware in its STATUS reply
                 "vr_q": [round(v, 4) for v in self.samples[-1][2]] if live and self.samples else None,
                 "vr_heartbeat": self.last_hb if live else None, "mode_echo": self.diag.get("mode_echo"),
-                "link": dict(self.stats)}
+                "demo": self.demo_status(), "link": dict(self.stats)}
 
 
 # ------------------------------------------------------------------ settings (dashboard)
@@ -475,22 +539,42 @@ POSE_DEFAULTS = {            # the robot's j5_settings.json (virtual degrees, 90
                                  # fast on the robot, 26/10/2026)
     "profile": "RTR5",
 }
+DEMO_DEFAULT = [{"angles": [90, 90, 90, 90, 90, 90], "speed_pct": 33, "profile": "RTR5"},
+                {"angles": [90, 123, 143, 90, 90, 90], "speed_pct": 23, "profile": "RTR3"},
+                {"angles": [46, 103, 123, 71, 95, 76], "speed_pct": 34, "profile": "BCB"},
+                {"angles": [90, 53, 63, 90, 75, 90], "speed_pct": 24, "profile": "RTR5"},
+                {"angles": [136, 103, 123, 107, 85, 106], "speed_pct": 37, "profile": "BCB"},
+                {"angles": [90, 113, 168, 90, 90, 90], "speed_pct": 23, "profile": "RTR3"},
+                {"angles": [121, 78, 103, 112, 80, 66], "speed_pct": 48, "profile": "RTR5"},
+                {"angles": [56, 78, 103, 65, 80, 116], "speed_pct": 48, "profile": "RTR5"}]   # the old Pi's demo_steps (vel deg/s -> %)
 
 
-def pose_setpose_line(cfg: dict, name: str) -> str:
-    """ws-teleop's PARK / TELEOPPOSE: the saved virtual pose -> physical (offsets, dirs, [5, 175], joint limits)
-    -> "SETPOSE b s g y p r vel% profile"."""
+
+def setpose_line(cfg: dict, virtual, speed_pct, profile) -> str:
+    """A virtual pose -> physical (offsets, dirs, [5, 175], joint limits) -> "SETPOSE b s g y p r vel% profile"."""
     s = settings_from_config(cfg)
-    st = cfg.get("settings", {})
-    virtual = st.get(name, POSE_DEFAULTS[name])
     phys = []
     for i in range(6):
         d = -1 if s["dirs"][i] < 0 else 1
         v = max(5, min(175, int(s["offsets"][i] + d * (float(virtual[i]) - 90))))
         lo, hi = s["limits"][i]
         phys.append(max(lo, min(hi, v)))
-    pct = max(1, min(100, int(st.get("speed_pct", POSE_DEFAULTS["speed_pct"]))))
-    return "SETPOSE " + " ".join(str(v) for v in phys) + f" {pct} {st.get('profile', POSE_DEFAULTS['profile'])}"
+    pct = max(1, min(100, int(speed_pct)))
+    return "SETPOSE " + " ".join(str(v) for v in phys) + f" {pct} {profile}"
+
+
+def pose_setpose_line(cfg: dict, name: str) -> str:
+    """ws-teleop's PARK / TELEOPPOSE: the saved virtual pose at the saved speed and profile."""
+    st = cfg.get("settings", {})
+    return setpose_line(cfg, st.get(name, POSE_DEFAULTS[name]), st.get("speed_pct", POSE_DEFAULTS["speed_pct"]),
+                        st.get("profile", POSE_DEFAULTS["profile"]))
+
+
+def demo_lines(cfg: dict) -> list[str]:
+    """The demo steps of the settings as SETPOSE lines."""
+    return [setpose_line(cfg, x["angles"], x.get("speed_pct", POSE_DEFAULTS["speed_pct"]),
+                         x.get("profile", POSE_DEFAULTS["profile"]))
+            for x in cfg.get("settings", {}).get("demo", DEMO_DEFAULT)]
 
 
 def settings_from_config(cfg: dict) -> dict:
@@ -511,10 +595,11 @@ def settings_from_config(cfg: dict) -> dict:
 
 
 def poses_from_settings(st: dict) -> dict:
-    """PARK / VR poses (virtual degrees), SETPOSE speed and profile used by pose_command()."""
+    """PARK / VR poses (virtual degrees), SETPOSE speed and profile used by pose_command(), the demo steps."""
     return {"park": list(st.get("park", POSE_DEFAULTS["park"])), "vr": list(st.get("vr", POSE_DEFAULTS["vr"])),
             "speed_pct": int(st.get("speed_pct", POSE_DEFAULTS["speed_pct"])),
-            "profile": str(st.get("profile", POSE_DEFAULTS["profile"]))}
+            "profile": str(st.get("profile", POSE_DEFAULTS["profile"])),
+            "demo": [dict(x) for x in st.get("demo", DEMO_DEFAULT)]}
 
 
 def poses_from_settings_msg(s: dict) -> tuple[dict | None, str | None]:
@@ -537,6 +622,22 @@ def poses_from_settings_msg(s: dict) -> tuple[dict | None, str | None]:
         if s["profile"] not in ("RTR5", "RTR3", "BCB", "BB"):
             return None, "profile: RTR5, RTR3, BCB o BB"
         out["profile"] = s["profile"]
+    if s.get("demo") is not None:
+        steps = s["demo"]
+        if not isinstance(steps, list) or len(steps) > 40:
+            return None, "demo: lista di al massimo 40 passi"
+        out["demo"] = []
+        for k, step in enumerate(steps):
+            a = step.get("angles") if isinstance(step, dict) else None
+            if not (isinstance(a, list) and len(a) == 6 and
+                    all(isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x <= 180 for x in a)):
+                return None, f"demo passo {k + 1}: 6 angoli virtuali 0..180"
+            pct, prof = step.get("speed_pct", POSE_DEFAULTS["speed_pct"]), step.get("profile", POSE_DEFAULTS["profile"])
+            if not (isinstance(pct, (int, float)) and not isinstance(pct, bool) and 1 <= pct <= 100):
+                return None, f"demo passo {k + 1}: velocità 1..100"
+            if prof not in ("RTR5", "RTR3", "BCB", "BB"):
+                return None, f"demo passo {k + 1}: profilo RTR5, RTR3, BCB o BB"
+            out["demo"].append({"angles": [round(float(x), 1) for x in a], "speed_pct": int(pct), "profile": prof})
     return out, None
 
 
@@ -868,6 +969,14 @@ class Server:
                 with self.lock:
                     res = self.assist.g.set_campaign(bool(msg.get("on")), str(msg.get("label", "")))
             await ws.send(json.dumps({"type": "imu_campaign", **res}))
+        elif typ == "demo":                          # dashboard "Demo": the saved pose sequence, looped
+            with self.lock:
+                if msg.get("on"):
+                    ok, err = self.core.demo_start(demo_lines(self.cfg))
+                else:
+                    self.core.demo_stop("dashboard", hold=True)
+                    ok, err = True, ""
+            await ws.send(json.dumps({"type": "demo", "ok": ok, "on": bool(msg.get("on")) and ok, "error": err or None}))
         elif typ == "horizon_lock":                  # "Orizzonte": the image stays level in every mode
             on = bool(msg.get("on"))
             with self.lock:

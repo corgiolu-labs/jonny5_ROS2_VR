@@ -123,6 +123,13 @@ function onMessage(m) {
     case "stereo_collimation": S.col = m; S.colAt = Date.now(); break;
     case "ws_pong": if (S.onPong) S.onPong(m); break;
     case "horizon_lock": S.horizon = !!m.on; horizonButtons(); toast(S.horizon ? "Orizzonte acceso" : "Orizzonte spento"); break;
+    case "demo":
+      if (m.ok === false) toast("demo: " + m.error, true);
+      else if (m.on && m.step === 1 && !m.reason) { /* step messages: the Demo button shows step/n */ }
+      else if (m.on && !m.step) toast("demo avviata");
+      else if (m.reason && m.reason !== "dashboard") toast("demo fermata: " + m.reason, true);
+      else if (m.reason === "dashboard") toast("demo fermata");
+      break;
     case "error": toast("j5mini: " + m.error, true); log("errore: " + m.error, "err"); break;
     case "imu_campaign":
       S.camp = !!m.on; $("tp-camp").classList.toggle("on", S.camp);
@@ -251,11 +258,18 @@ function badges() {
   b("b-teleop", live ? `visore: ${MODES[tm.teleop_mode] || "modo " + tm.teleop_mode}` : "visore: no", live ? "warn" : "dim");
   b("b-horizon", S.horizon ? "orizzonte ON" : "orizzonte off", S.horizon ? "teal" : "dim");
   document.body.classList.toggle("teleop-live", live);
+  demoButton();
   $("hero-sub").textContent = !S.connected ? "in attesa del collegamento con j5mini…" :
     `${st === "IDLE" ? "pronto (IDLE)" : st === "SAFE" ? "servo spenti (SAFE)" : st === "STOPPED" ? "fermo (STOPPED): SAFE poi ENABLE per ripartire" : "stato " + st}` +
     ` · fungo ${tm.estop_bypass ? "in bypass" : tm.estop_active ? "PREMUTO" : "ok"}` +
     ` · ${live ? "visore in " + (MODES[tm.teleop_mode] || tm.teleop_mode) : "visore assente"}` +
     (tm.link && S.tmRate ? ` · SPI ${S.lastSpiRate ?? "–"}/s` : "");
+}
+
+function demoButton() {
+  const d = S.tm && S.tm.demo;
+  $("h-demo").textContent = d ? `Demo ${d.step}/${d.n} ■` : "Demo";
+  $("h-demo").classList.toggle("on", !!d);
 }
 
 function horizonButtons() {
@@ -379,6 +393,12 @@ for (const [id, cmd] of [["h-home", "HOME"], ["h-park", "PARK"], ["h-vr", "TELEO
     if (!r.ok) toast(`${cmd} rifiutato: ${r.response}`, true);
   };
 }
+$("h-demo").onclick = () => {
+  if (S.tm && S.tm.demo) { send({ type: "demo", on: false }); return; }
+  if (!motionAllowed()) return;
+  if (S.tm && S.tm.robot_state !== "IDLE") return toast(`robot in ${S.tm.robot_state}: serve IDLE (ENABLE)`, true);
+  if (!send({ type: "demo", on: true })) toast("non collegato", true);
+};
 $("h-horizon").onclick = $("tp-horizon").onclick = () => {
   if (!send({ type: "horizon_lock", on: !S.horizon })) toast("non collegato", true);
 };
@@ -648,7 +668,38 @@ function fillSettings() {
   });
   $("set-speed").value = c.speed_pct ?? 40;
   $("set-prof").value = c.profile || "RTR5";
+  S.demoSteps = (c.demo || []).map(x => ({ angles: [...x.angles], speed_pct: x.speed_pct ?? 30, profile: x.profile || "RTR5" }));
+  fillDemo();
 }
+const PROFILES = ["RTR5", "RTR3", "BCB", "BB"];
+/** Impostazioni → Demo: one row per step (virtual pose, % speed, profile); S.demoSteps is the working copy. */
+function fillDemo() {
+  const row = (x, k) => `<tr><td>${k + 1}</td>` +
+    x.angles.map((v, i) => `<td><input type="number" class="pose" id="s-demo${k}-${i}" min="0" max="180" step="0.5" value="${v}" inputmode="decimal"></td>`).join("") +
+    `<td><input type="number" class="pose" id="s-demo${k}-pct" min="1" max="100" value="${x.speed_pct}" inputmode="numeric"></td>` +
+    `<td><select id="s-demo${k}-prof">${PROFILES.map(p => `<option${p === x.profile ? " selected" : ""}>${p}</option>`).join("")}</select></td>` +
+    `<td><button type="button" class="tiny" data-demo-target="${k}" title="copia gli slider della scheda Braccio">← target</button><button type="button" class="tiny" data-demo-del="${k}" title="togli il passo">✕</button></td></tr>`;
+  $("set-demo").innerHTML = `<tr><th>#</th>${JN.map(n => `<th>${n.replace(" polso", "")}</th>`).join("")}<th>%</th><th>profilo</th><th></th></tr>` +
+    S.demoSteps.map(row).join("");
+  $("set-demo").querySelectorAll("button[data-demo-target]").forEach(b => b.onclick = () => {
+    S.target.forEach((v, i) => { $(`s-demo${b.dataset.demoTarget}-${i}`).value = v; });
+  });
+  $("set-demo").querySelectorAll("button[data-demo-del]").forEach(b => b.onclick = () => {
+    readDemo(); S.demoSteps.splice(Number(b.dataset.demoDel), 1); fillDemo();
+  });
+}
+function readDemo() {
+  S.demoSteps = S.demoSteps.map((_, k) => ({
+    angles: JN.map((_, i) => Number($(`s-demo${k}-${i}`).value)),
+    speed_pct: Number($(`s-demo${k}-pct`).value), profile: $(`s-demo${k}-prof`).value,
+  }));
+  return S.demoSteps;
+}
+$("demo-add").onclick = () => {
+  readDemo();
+  S.demoSteps.push({ angles: (S.target || [90, 90, 90, 90, 90, 90]).map(v => Math.round(v * 2) / 2), speed_pct: 30, profile: "RTR5" });
+  fillDemo();
+};
 /** SETPOSE_T_HR from PHYSICAL degrees (the settings page reasons in servo angles). */
 function setposePhysCmd(phys, ms, prof = "RTR5") {
   return `SETPOSE_T_HR ${phys.map(p => Math.round(p * 10)).join(" ")} ${Math.round(ms)} ${prof}`;
@@ -693,6 +744,7 @@ function readSettings() {
     vr_params: $("set-vr").value.trim().replace(/\s+/g, " "), pwm_config: $("set-pwm").value.trim().replace(/\s+/g, " "),
     park: JN.map((_, i) => num("s-park" + i)), vr: JN.map((_, i) => num("s-vr" + i)),
     speed_pct: num("set-speed"), profile: $("set-prof").value,
+    demo: readDemo(),
   };
 }
 $("set-reload").onclick = () => send({ type: "get_config" });

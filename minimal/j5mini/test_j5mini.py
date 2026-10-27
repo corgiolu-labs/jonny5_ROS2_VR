@@ -959,3 +959,77 @@ def test_kinematics_editor_validates_saves_and_reconfigures_the_gimbal(tmp_path)
         assert srv.assist.g._glue["screws"][1][3] == -0.15 and srv.assist.g._ARM_GEOM is None
         assert abs(srv.assist.g._arm_geom()[0] - 0.15) < 1e-9       # shoulder height from the new screw
 
+
+class FakeWs:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, data):
+        self.sent.append(json.loads(data))
+
+
+def test_demo_loops_the_saved_sequence_and_stops(lib):
+    """Dashboard "Demo" (27/10/2026, the old Pi's demo_steps): one SETPOSE per step, the next at SETPOSE_DONE,
+    round and round; the dashboard stops it where it is, STOP / SAFE / E-STOP end it as well."""
+    cfg = json.loads(json.dumps(CFG))
+    cfg["settings"]["demo"] = [{"angles": [90, 90, 90, 90, 90, 90], "speed_pct": 60, "profile": "RTR5"},
+                               {"angles": [100, 90, 90, 90, 90, 90], "speed_pct": 60, "profile": "RTR3"}]
+    r = Rig(lib, cfg)
+    r.run(1000)
+    r.run(2200, intent())                                   # IDLE, and a STATUS? poll has seen it
+    assert r.core.robot_state == "IDLE"
+    srv = j5mini.Server(r.core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+    ws = FakeWs()
+
+    def msg(m):
+        asyncio.run(srv.on_message(ws, m))
+
+    msg({"type": "demo", "on": True})
+    assert ws.sent[-1] == {"type": "demo", "ok": True, "on": True, "error": None}
+    r.run(6000, intent())
+    steps = [e["step"] for e in r.core.events if e["type"] == "demo" and e.get("on")]
+    assert steps[:4] == [1, 2, 1, 2], steps                 # it loops
+    assert r.core.telemetry_message()["demo"] in ({"step": 1, "n": 2}, {"step": 2, "n": 2})
+    sent = [e for e in r.core.events if e["type"] == "uart_response" and e["cmd"].startswith("SETPOSE ")]
+    assert sent and all(e["ok"] for e in sent)
+    assert sent[0]["cmd"] == "SETPOSE 88 85 83 90 90 98 60 RTR5"      # virtual 90 = the offsets
+    assert sent[1]["cmd"] == "SETPOSE 98 85 83 90 90 98 60 RTR3"      # base +10 (dir +1)
+    msg({"type": "demo", "on": False})
+    r.run(500, intent())
+    assert r.core.demo is None and r.core.telemetry_message()["demo"] is None
+    ends = [e for e in r.core.events if e["type"] == "demo" and not e.get("on")]
+    assert ends and ends[-1]["reason"] == "dashboard"
+    hold = [e for e in r.core.events if e["type"] == "uart_response" and e["cmd"].startswith("SETPOSE_T_HR ")]
+    assert hold and hold[-1]["ok"]                          # stopped where it was (120 ms hold trajectory)
+    # STOP from any client ends it: the next STATUS? poll sees STOPPED
+    r.core.events = []
+    msg({"type": "demo", "on": True})
+    r.run(300, intent())
+    msg({"type": "uart", "cmd": "STOP"})
+    r.run(2500, intent())
+    assert r.core.demo is None
+    assert [e for e in r.core.events if e["type"] == "demo" and not e.get("on")][-1]["reason"] == "robot in STOPPED"
+    # not in IDLE: refused
+    msg({"type": "demo", "on": True})
+    assert ws.sent[-1]["ok"] is False and "IDLE" in ws.sent[-1]["error"]
+
+
+def test_demo_steps_are_saved_with_the_config(tmp_path):
+    cfg = json.loads(json.dumps(CFG))
+    path = tmp_path / "j5mini.json"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    cfg["_path"] = str(path)
+    core = j5mini.Core(cfg, None, None, clock=lambda: 0.0, log=lambda m: None)
+    srv = j5mini.Server(core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+    base = j5mini.settings_from_config(cfg)
+    assert len(base["demo"]) == len(j5mini.DEMO_DEFAULT)
+    steps = [{"angles": [95, 90, 90, 90, 90, 90], "speed_pct": 25, "profile": "BB"}]
+    out = srv.save_config({**base, "demo": steps})
+    assert out["ok"], out
+    assert json.loads(path.read_text(encoding="utf-8"))["settings"]["demo"] == steps
+    assert j5mini.demo_lines(cfg) == ["SETPOSE 93 85 83 90 90 98 25 BB"]
+    bad = srv.save_config({**base, "demo": [{"angles": [1, 2, 3], "speed_pct": 25, "profile": "BB"}]})
+    assert not bad["ok"] and "passo 1" in bad["error"]
+    bad = srv.save_config({**base, "demo": [{"angles": [90] * 6, "speed_pct": 0, "profile": "BB"}]})
+    assert not bad["ok"] and "velocità" in bad["error"]
+

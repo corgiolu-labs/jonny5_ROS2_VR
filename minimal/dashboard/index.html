@@ -50,6 +50,7 @@
         <button id="h-home" class="motion" title="HOME: tutti i giunti agli offset (90° virtuali)">HOME</button>
         <button id="h-park" class="motion" title="posa di parcheggio (Impostazioni → Pose)">PARK</button>
         <button id="h-vr" class="motion" title="posa di partenza della teleoperazione (Impostazioni → Pose)">VR pose</button>
+        <button id="h-demo" class="motion toggle" title="Demo: la sequenza di pose di Impostazioni → Pose, in ciclo; di nuovo per fermarla">Demo</button>
         <button id="h-horizon" class="toggle" title="Orizzonte: tiene l'immagine delle camere orizzontale in ogni modo">Orizzonte</button>
       </div>
     </div>
@@ -268,6 +269,14 @@
           <label>profilo <select id="set-prof"><option>RTR5</option><option>RTR3</option><option>BCB</option><option>BB</option></select></label>
         </div>
         <p class="note">Le pose valgono subito dopo "Salva" (le esegue j5mini, non servono al firmware). "← target" copia gli slider della scheda Braccio.</p>
+      </div>
+      <div class="card wide">
+        <h3>Demo <small>sequenza di pose in ciclo (pulsante Demo nella scheda Stato)</small></h3>
+        <table id="set-demo" class="set"></table>
+        <div class="row">
+          <button type="button" id="demo-add" class="tiny">+ passo</button>
+          <span class="note">ogni passo: posa in gradi virtuali, velocità %, profilo; j5mini manda un SETPOSE per passo e aspetta SETPOSE_DONE. Si ferma con Demo, STOP, SAFE o il fungo. Vale dopo "Salva".</span>
+        </div>
       </div>
       <div class="card wide">
         <h3>Cinematica (POE) <small>assi di vite S, posa M e punti di disegno; lunghezze in millimetri</small></h3>
