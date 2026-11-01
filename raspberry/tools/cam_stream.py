@@ -254,13 +254,14 @@ def main():
     ap.add_argument("--zoom", type=float, default=1.0, help="initial zoom")
     ap.add_argument("--hires", type=int, default=1, help="1: main = sensor size for snapshots, video from lores")
     ap.add_argument("-o", "--output", required=True, help="rtsp://127.0.0.1:8554/camN")
+    ap.add_argument("--tuning", default="", help="libcamera tuning JSON (Picamera2 drops LIBCAMERA_RPI_TUNING_FILE; the IMX415 AF modules need their own tuning with an rpi.af section)")
     args = ap.parse_args()
 
     cam = args.camera
     sw0, sh0 = (int(v) for v in args.sensor.lower().split("x"))
     MODES["tele"]["sensor"] = (sw0, sh0)
     MODES["tele"]["fps"] = float(args.fps)
-    picam2 = Picamera2(cam)
+    picam2 = Picamera2(cam, tuning=Picamera2.load_tuning_file(args.tuning) if args.tuning else None)
     geo = {"mode": args.mode, "sw": sw0, "sh": sh0, "fps": float(args.fps), "hfov": MODES[args.mode]["hfov"],
            "full": None, "smin": None, "k": 1.0, "period_ns": 1e9 / float(args.fps), "hires": False}
     ctrl = {"FrameRate": args.fps, "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off}
