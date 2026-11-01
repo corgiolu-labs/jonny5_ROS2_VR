@@ -50,6 +50,7 @@ import time
 import av  # noqa: F401  (PyAV, used by the encoder)
 import numpy as np
 from libcamera import controls
+from libcamera import Transform
 from picamera2 import Picamera2
 from picamera2.encoders import LibavH264Encoder
 from picamera2.outputs import PyavOutput
@@ -254,6 +255,7 @@ def main():
     ap.add_argument("--zoom", type=float, default=1.0, help="initial zoom")
     ap.add_argument("--hires", type=int, default=1, help="1: main = sensor size for snapshots, video from lores")
     ap.add_argument("-o", "--output", required=True, help="rtsp://127.0.0.1:8554/camN")
+    ap.add_argument("--rotate180", action="store_true", help="module mounted upside down: flip both axes in the sensor")
     ap.add_argument("--tuning", default="", help="libcamera tuning JSON (Picamera2 drops LIBCAMERA_RPI_TUNING_FILE; the IMX415 AF modules need their own tuning with an rpi.af section)")
     args = ap.parse_args()
 
@@ -298,6 +300,7 @@ def main():
         cfg = picam2.create_video_configuration(
             **streams,
             sensor={"output_size": (sw, sh), "bit_depth": 10},
+            transform=Transform(hflip=args.rotate180, vflip=args.rotate180),
             controls=ctrl, buffer_count=6)
         picam2.configure(cfg)
         # crop limits of this sensor mode (sensor pixel array coordinates)
