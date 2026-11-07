@@ -139,7 +139,7 @@ function onMessage(m) {
       $("tp-camp-out").textContent = (S.camp ? "registro in " : "ferma") + (m.path ? `: ${m.path}` : "") +
         (m.why ? `\n${m.why}` : "") + (m.n != null ? `\ncampioni: ${m.n}` : "");
       break;
-    case "vision_result": showVision(m); break;
+    case "vision_result": showVision(m); camTest.onVisionResult(m); break;
     case "vision_point":
       $("tp-vision-out").textContent += `\npuntamento ${m.label || ""}: ${m.ok ? (m.done ? "arrivato" : "in corso") : "no"}` +
         (m.why ? ` (${m.why})` : "") + (m.T_s ? `, ${Number(m.T_s).toFixed(1)} s` : "");

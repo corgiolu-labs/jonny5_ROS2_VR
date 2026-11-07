@@ -56,6 +56,11 @@ export class CamTest {
     const $ = id => document.getElementById(id);
     $("cam-start").onclick = () => (this.pcs.some(Boolean) ? this.stop() : this.start());
     $("cam-af").onclick = () => { this.send({ type: "cam_autofocus" }); this.toast("autofocus su tutte e due le camere"); };
+    $("cam-analyze").onclick = () => {
+      this.visionReq = (this.visionReq || 0) + 1;
+      if (!this.send({ type: "vision_request", action: "analyze", req: "cam" + this.visionReq })) return this.toast("non collegato", true);
+      $("cam-vision").textContent = "analizzo...";
+    };
     $("cam-mode").onchange = e => this.send({ type: "cam_mode", mode: e.target.value });
     $("cam-zoom").onchange = e => { const z = Number(e.target.value); this.send({ type: "vr_zoom_state", camera: true, zoom0: z, zoom1: z }); };
     $("cam-ev").oninput = e => { $("cam-ev-v").textContent = Number(e.target.value).toFixed(1) + " EV"; };
@@ -79,11 +84,31 @@ export class CamTest {
     this.render();
   }
 
+  /** Risposta di "Analizza" (vision_result di j5mini: box NPU + collimatore): riga sotto i video e bersaglio in
+   *  arancione sul canvas per 4 s. */
+  onVisionResult(m) {
+    const t = m.target;
+    const lines = [];
+    if (!m.ok) lines.push("analisi fallita: " + (m.why || "nessun risultato"));
+    else {
+      if (t) lines.push(`sotto il mirino: ${t.label_it || t.label || "oggetto"}` + (t.dist_mm ? ` a ${(t.dist_mm / 10).toFixed(1)} cm` : "") + (t.conf ? ` (conf. ${Number(t.conf).toFixed(2)})` : ""));
+      if (Array.isArray(m.objects) && m.objects.length) lines.push("oggetti: " + m.objects.slice(0, 8).map(o => (o.label_it || o.label || "?") + (o.conf ? ` ${Math.round(o.conf * 100)}%` : "")).join(", "));
+      else lines.push("nessun oggetto riconosciuto");
+      if (m.infer_us) lines.push(`NPU ${(m.infer_us / 1000).toFixed(0)} ms`);
+    }
+    document.getElementById("cam-vision").textContent = lines.join("\n");
+    this.visionTarget = t && t.box ? { box: t.box, label: lines[0] } : null;
+    this.visionAt = Date.now();
+    if (this.visionTarget && !this.dets) { this.dets = { boxes: [], w: 1920, h: 1080 }; this.detsAt = Date.now(); }
+    if (!this.ovRunning && this.pcs[0]) { this.ovRunning = true; this.ovFrame(); }
+  }
+
   ovFrame() {
     const cv = document.getElementById("cam-ov0"), v = document.getElementById("cam-v0");
     const wrap = cv && cv.parentElement;
     if (!cv || !v) { this.ovRunning = false; return; }
-    const fresh = this.dets && Date.now() - this.detsAt < 1500 && this.pcs[0];
+    const tgt = this.visionTarget && Date.now() - this.visionAt < 4000 ? this.visionTarget : null;
+    const fresh = ((this.dets && Date.now() - this.detsAt < 1500) || tgt) && this.pcs[0];
     if (!fresh) {                       // back to the plain video
       cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
       cv.style.display = "none"; wrap.classList.remove("det");
@@ -95,15 +120,25 @@ export class CamTest {
     cv.style.display = "block"; wrap.classList.add("det");
     const g = cv.getContext("2d");
     if (v.videoWidth) g.drawImage(v, 0, 0, W, H); else { g.fillStyle = "#000"; g.fillRect(0, 0, W, H); }
-    const sx = W / (this.dets.w || 1920), sy = H / (this.dets.h || 1080), k = W / 960;
+    const dets = this.dets || { boxes: [], w: 1920, h: 1080 };
+    const sx = W / (dets.w || 1920), sy = H / (dets.h || 1080), k = W / 960;
     g.lineWidth = 2 * k; g.font = `bold ${Math.round(15 * k)}px system-ui, sans-serif`; g.textBaseline = "top";
-    for (const b of this.dets.boxes || []) {
+    for (const b of dets.boxes || []) {
       const name = COCO[b.cls] || ("cls " + b.cls), label = `${name} ${Math.round(b.score * 100)}%`;
       const x = b.x * sx, y = b.y * sy, w = b.w * sx, h = b.h * sy;
       g.strokeStyle = "rgba(30, 200, 165, 0.95)"; g.strokeRect(x, y, w, h);
       const tw = g.measureText(label).width + 10 * k, th = 20 * k, ly = y >= th ? y - th : y + 2 * k;
       g.fillStyle = "rgba(0, 0, 0, 0.7)"; g.fillRect(x, ly, tw, th);
       g.fillStyle = "#1EC8A5"; g.fillText(label, x + 5 * k, ly + 2 * k);
+    }
+    if (tgt) {   // bersaglio dell'analisi: arancione, più spesso, con la riga del risultato
+      const [x0, y0, x1, y1] = tgt.box;
+      const x = x0 * sx, y = y0 * sy, w = (x1 - x0) * sx, h = (y1 - y0) * sy;
+      g.lineWidth = 4 * k; g.strokeStyle = "rgba(255, 150, 30, 0.95)"; g.strokeRect(x, y, w, h);
+      g.font = `bold ${Math.round(17 * k)}px system-ui, sans-serif`;
+      const tw = g.measureText(tgt.label).width + 10 * k, th = 24 * k, ly = y + h + th <= H ? y + h + 2 * k : y - th;
+      g.fillStyle = "rgba(0, 0, 0, 0.75)"; g.fillRect(x, ly, tw, th);
+      g.fillStyle = "#FFBE5A"; g.fillText(tgt.label, x + 5 * k, ly + 3 * k);
     }
     requestAnimationFrame(() => this.ovFrame());
   }

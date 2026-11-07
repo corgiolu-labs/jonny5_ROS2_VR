@@ -146,6 +146,7 @@
       <div class="row">
         <button id="cam-start" class="primary">Avvia video</button>
         <button id="cam-af">Autofocus</button>
+        <button id="cam-analyze" title="oggetti riconosciuti dalla NPU e distanza al mirino">Analizza</button>
         <label>sensore <select id="cam-mode"><option value="tele">tele 47°, 90 fps</option><option value="wide">grandangolo 66°, 56 fps</option></select></label>
         <label>zoom <select id="cam-zoom"><option>1</option><option>1.5</option><option>2</option><option>3</option><option>4</option></select></label>
         <label>fuoco <select id="cam-focus"><option value="auto">auto</option><option value="0">∞</option><option value="0.5">2 m</option>
@@ -159,6 +160,7 @@
           <video id="cam-v1" autoplay muted playsinline poster="data:image/gif;base64,R0lGODlhAQABAAAAACw="></video><pre id="cam-s1" class="small">fermo</pre></div>
       </div>
       <pre id="cam-cmp" class="small"></pre>
+      <pre id="cam-vision" class="small"></pre>
       <h4>Distanza stereo</h4>
       <div class="row">
         <span id="cal-now" class="live">collimatore: nessun dato</span>
