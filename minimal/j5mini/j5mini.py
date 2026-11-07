@@ -1015,6 +1015,7 @@ class Server:
         self.cams = cams or Cameras()
         self.clients = set()
         self.ignored = set()
+        self.board = None           # BoardMeta when the stereo head's meta mirror is listened to
         self.kin_path = kin_path
         self.kin = load_kinematics(kin_path) or {}      # POE: the dashboard draws with it, the ASSIST gimbal solves with it
         self.assist = Assist.create(core, lock, cfg)
@@ -1130,6 +1131,12 @@ class Server:
                                       "ts_server": time.time()}))
         elif typ in self.RELAY:
             await self.send_all(json.dumps(msg), but=ws)
+            if typ == "vision_request" and self.board is not None and self.board.n:
+                # stereo head board: no vision_service, the answer comes from the NPU boxes + collimator
+                res = self.board.vision_result(msg)
+                self.core.log(f"[j5mini] vision_request {msg.get('action')} -> board: {len(res['objects'])} objects, "
+                              f"target {res['target'] and res['target'].get('label_it')} {res['target'] and res['target'].get('dist_mm')} mm")
+                await self.broadcast(res)
             if typ == "vision_result" and msg.get("aim"):
                 # right trigger in ASSIST: the vision service measured the object under the crosshair, the gimbal
                 # moves the arm to point cam0 at it (grips held); the outcome goes to every client
@@ -1524,8 +1531,56 @@ class BoardMeta(asyncio.DatagramProtocol):
     Little-endian, header = magic 0x4A35 u16, type u8, version u8, ts_us u32 (sender/src/protocol.hpp)."""
     MAGIC, T_META, T_COLLIM = 0x4A35, 4, 13
 
+    COCO_IT = ["persona", "bicicletta", "auto", "moto", "aereo", "autobus", "treno", "camion", "barca", "semaforo",
+               "idrante", "stop", "parchimetro", "panchina", "uccello", "gatto", "cane", "cavallo", "pecora", "mucca",
+               "elefante", "orso", "zebra", "giraffa", "zaino", "ombrello", "borsa", "cravatta", "valigia", "frisbee",
+               "sci", "snowboard", "palla", "aquilone", "mazza da baseball", "guanto da baseball", "skateboard",
+               "tavola da surf", "racchetta", "bottiglia", "bicchiere", "tazza", "forchetta", "coltello", "cucchiaio",
+               "ciotola", "banana", "mela", "panino", "arancia", "broccolo", "carota", "hot dog", "pizza", "ciambella",
+               "torta", "sedia", "divano", "pianta", "letto", "tavolo", "water", "tv", "portatile", "mouse",
+               "telecomando", "tastiera", "cellulare", "microonde", "forno", "tostapane", "lavandino", "frigorifero",
+               "libro", "orologio", "vaso", "forbici", "orsacchiotto", "asciugacapelli", "spazzolino"]
+
     def __init__(self, srv: "Server", loop: asyncio.AbstractEventLoop):
         self.srv, self.loop, self.n, self.last_det = srv, loop, 0, 0.0
+        self.boxes, self.boxes_at, self.infer_us = [], 0.0, 0
+        self.collim, self.collim_at = None, 0.0
+        srv.board = self
+
+    def vision_result(self, req: dict) -> dict:
+        """Answer to the dashboard's / headset's `vision_request` built from the board's own data: the YOLO boxes
+        (last 2 s) and the collimator (distance under the crosshair). Same shape as vision_service.py's result,
+        without OCR ("texts" empty)."""
+        now = time.monotonic()
+        boxes = self.boxes if now - self.boxes_at < 2.0 else []
+        col = self.collim if self.collim and now - self.collim_at < 2.0 else None
+        W, H = 1920, 1080
+        objs = []
+        for b in boxes:
+            name = self.COCO_IT[b["cls"]] if 0 <= b["cls"] < len(self.COCO_IT) else f"classe {b['cls']}"
+            objs.append({"box": [b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]], "label_it": name,
+                         "label": name, "conf": b["score"], "cls": b["cls"]})
+        # target = the box that contains the crosshair (image centre), else the nearest one to it
+        cx, cy = W / 2, H / 2
+        def dist2(o):
+            x0, y0, x1, y1 = o["box"]
+            if x0 <= cx <= x1 and y0 <= cy <= y1:
+                return 0.0
+            dx = max(x0 - cx, 0, cx - x1); dy = max(y0 - cy, 0, cy - y1)
+            return dx * dx + dy * dy
+        target = None
+        if objs:
+            t = min(objs, key=dist2)
+            target = dict(t, target=True, center=[(t["box"][0] + t["box"][2]) / 2, (t["box"][1] + t["box"][3]) / 2])
+        elif col and col.get("lock"):
+            target = {"label_it": "oggetto", "label": "object", "center": [cx, cy]}
+        if target is not None and col and col.get("lock"):
+            target.update({"dist_mm": col.get("dist_mm"), "dx": col.get("dx"), "dy": col.get("dy")})
+        ok = bool(objs) or bool(col and col.get("lock"))
+        return {"type": "vision_result", "action": req.get("action", "analyze"), "req": req.get("req"), "ok": ok,
+                "why": None if ok else "nessun oggetto riconosciuto (NPU) e collimatore non agganciato",
+                "objects": objs, "target": target, "texts": [], "zoom": 1.0, "infer_us": self.infer_us,
+                "src": "board", "ts": time.time()}
 
     def datagram_received(self, data: bytes, addr):
         if len(data) < 8 or struct.unpack_from("<H", data, 0)[0] != self.MAGIC:
@@ -1543,6 +1598,8 @@ class BoardMeta(asyncio.DatagramProtocol):
                     break
                 x, y, w, h, cls, score = struct.unpack_from("<HHHHBB", data, o)
                 boxes.append({"x": x, "y": y, "w": w, "h": h, "cls": cls, "score": round(score / 255.0, 2)})
+            if boxes:
+                self.boxes, self.boxes_at, self.infer_us = boxes, time.monotonic(), infer_us
             if not boxes and time.monotonic() - self.last_det < 1.0:
                 return            # the board's empty heartbeat: nothing new to draw
             self.last_det = time.monotonic()
@@ -1550,9 +1607,10 @@ class BoardMeta(asyncio.DatagramProtocol):
                                                        "infer_us": infer_us, "w": 1920, "h": 1080, "boxes": boxes}))
         elif typ == self.T_COLLIM and len(data) >= 16:
             dx, dy, dist, score, flags = struct.unpack_from("<hhHBB", data, 8)
-            asyncio.ensure_future(self.srv.broadcast({"type": "stereo_collimation", "lock": bool(flags & 1),
-                                                       "dx": dx / 16.0, "dy": dy / 16.0, "score": round(score / 255.0, 2),
-                                                       "dist_mm": dist if dist else None, "src": "board"}))
+            self.collim = {"type": "stereo_collimation", "lock": bool(flags & 1), "dx": dx / 16.0, "dy": dy / 16.0,
+                           "score": round(score / 255.0, 2), "dist_mm": dist if dist else None, "src": "board"}
+            self.collim_at = time.monotonic()
+            asyncio.ensure_future(self.srv.broadcast(self.collim))
 
 
 async def serve(core: Core, lock: threading.Lock, cfg: dict, cams: Cameras):
