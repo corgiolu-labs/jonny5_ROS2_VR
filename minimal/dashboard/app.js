@@ -121,6 +121,7 @@ function onMessage(m) {
       if (/^SETPOSE_DONE/.test(m.line) && S.homePending) { S.homePending = false; setTimeout(() => imuReference("HOME"), 500); }
       break;
     case "stereo_collimation": S.col = m; S.colAt = Date.now(); break;
+    case "npu_detections": camTest.onDetections(m); break;
     case "ws_pong": if (S.onPong) S.onPong(m); break;
     case "horizon_lock": S.horizon = !!m.on; horizonButtons(); toast(S.horizon ? "Orizzonte acceso" : "Orizzonte spento"); break;
     case "auto_park": toast(`PARK automatico: ${m.after_s} s senza grip`); log("⇠ auto-park " + m.line, "uns"); break;

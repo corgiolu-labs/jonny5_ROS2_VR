@@ -4,6 +4,14 @@
 
 const CAMS = ["cam0", "cam1"];
 const MIN_FPS = 20;
+// classi COCO di yolo11n sulla NPU della testa stereo (indice = cls del box)
+const COCO = ["person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light","fire hydrant",
+  "stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack",
+  "umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball","kite","baseball bat","baseball glove",
+  "skateboard","surfboard","tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple",
+  "sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed","dining table",
+  "toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven","toaster","sink","refrigerator","book",
+  "clock","vase","scissors","teddy bear","hair drier","toothbrush"];
 
 /** Varianza del laplaciano 4-vicini su un'immagine in scala di grigi: cresce con i dettagli a fuoco. */
 export function sharpness(gray, w, h) {
@@ -57,6 +65,47 @@ export class CamTest {
       this.send(v === "auto" ? { type: "cam_focus", auto: true } : { type: "cam_focus", dioptres: Number(v) });
     };
     CAMS.forEach((c, i) => { $(`cam-shot${i}`).onclick = () => this.snapshot(i); });
+  }
+
+  /** Rilevazioni YOLO della NPU della testa stereo (j5mini "npu_detections", box in pixel dell'occhio sinistro).
+   *  Un elemento sopra al <video> lo rende nero in Chromium (il video perde il piano hardware), quindi finché
+   *  arrivano rilevazioni il riquadro sinistro è un canvas che ridisegna il video (drawImage) con i box sopra;
+   *  1,5 s dopo l'ultima rilevazione si torna al <video> nudo. */
+  onDetections(m) {
+    this.dets = m; this.detsAt = Date.now();
+    if (!this.ovRunning) { this.ovRunning = true; this.ovFrame(); }
+    clearTimeout(this.detsTimer);
+    this.detsTimer = setTimeout(() => { this.dets = null; this.render(); }, 1500);
+    this.render();
+  }
+
+  ovFrame() {
+    const cv = document.getElementById("cam-ov0"), v = document.getElementById("cam-v0");
+    const wrap = cv && cv.parentElement;
+    if (!cv || !v) { this.ovRunning = false; return; }
+    const fresh = this.dets && Date.now() - this.detsAt < 1500 && this.pcs[0];
+    if (!fresh) {                       // back to the plain video
+      cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+      cv.style.display = "none"; wrap.classList.remove("det");
+      this.ovRunning = false; return;
+    }
+    const dpr = Math.min(2, window.devicePixelRatio || 1), r = v.getBoundingClientRect();
+    const W = Math.max(2, Math.round(r.width * dpr)), H = Math.max(2, Math.round(r.height * dpr));
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    cv.style.display = "block"; wrap.classList.add("det");
+    const g = cv.getContext("2d");
+    if (v.videoWidth) g.drawImage(v, 0, 0, W, H); else { g.fillStyle = "#000"; g.fillRect(0, 0, W, H); }
+    const sx = W / (this.dets.w || 1920), sy = H / (this.dets.h || 1080), k = W / 960;
+    g.lineWidth = 2 * k; g.font = `bold ${Math.round(15 * k)}px system-ui, sans-serif`; g.textBaseline = "top";
+    for (const b of this.dets.boxes || []) {
+      const name = COCO[b.cls] || ("cls " + b.cls), label = `${name} ${Math.round(b.score * 100)}%`;
+      const x = b.x * sx, y = b.y * sy, w = b.w * sx, h = b.h * sy;
+      g.strokeStyle = "rgba(30, 200, 165, 0.95)"; g.strokeRect(x, y, w, h);
+      const tw = g.measureText(label).width + 10 * k, th = 20 * k, ly = y >= th ? y - th : y + 2 * k;
+      g.fillStyle = "rgba(0, 0, 0, 0.7)"; g.fillRect(x, ly, tw, th);
+      g.fillStyle = "#1EC8A5"; g.fillText(label, x + 5 * k, ly + 2 * k);
+    }
+    requestAnimationFrame(() => this.ovFrame());
   }
 
   async start() {
@@ -177,6 +226,8 @@ export class CamTest {
     }
     cmp.push(`sensore: ${tm.cam_mode ? `${tm.cam_mode}, ${tm.cam_fps ?? "–"} fps, ${tm.cam_hfov ?? "–"}°, zoom ${tm.cam_zoom ?? "–"}×` : "nessun dato da cam_stream"}`);
     cmp.push(`collimatore: ${col ? (col.lock ? `agganciato, ${col.dist_mm ? (col.dist_mm / 10).toFixed(1) + " cm" : "distanza –"}` : "cerca...") : "nessun dato"}`);
+    const d = this.dets && Date.now() - this.detsAt < 2000 ? this.dets : null;
+    cmp.push(`NPU: ${d ? `${d.boxes.length} oggett${d.boxes.length === 1 ? "o" : "i"} (${d.boxes.slice(0, 4).map(b => COCO[b.cls] || b.cls).join(", ")}), ${(d.infer_us / 1000).toFixed(0)} ms` : "nessuna rilevazione"}`);
     document.getElementById("cam-cmp").textContent = cmp.join("\n");
   }
 

@@ -1515,6 +1515,46 @@ def control_thread(core: Core, lock: threading.Lock, stop: threading.Event, peri
             nxt = time.monotonic()
 
 
+class BoardMeta(asyncio.DatagramProtocol):
+    """Stereo head board (jonny5-stereo-head sender, `--meta-mirror 127.0.0.1:<port>`): copies of the UDP meta
+    datagrams it sends to the headset. Parsed here into dashboard messages:
+      kCtrlVideoMeta (4): VideoMeta(frame_id u32, eye u8, count u8, infer_us u16) + DetBox(x,y,w,h u16, cls u8,
+                           score u8)[count] -> {"type": "npu_detections", ...} (boxes in left-eye 1920x1080 px)
+      kCtrlCollimation (13): dx_q4 i16, dy_q4 i16, dist_mm u16, score u8, flags u8 -> {"type": "stereo_collimation", ...}
+    Little-endian, header = magic 0x4A35 u16, type u8, version u8, ts_us u32 (sender/src/protocol.hpp)."""
+    MAGIC, T_META, T_COLLIM = 0x4A35, 4, 13
+
+    def __init__(self, srv: "Server", loop: asyncio.AbstractEventLoop):
+        self.srv, self.loop, self.n, self.last_det = srv, loop, 0, 0.0
+
+    def datagram_received(self, data: bytes, addr):
+        if len(data) < 8 or struct.unpack_from("<H", data, 0)[0] != self.MAGIC:
+            return
+        typ = data[2]
+        self.n += 1
+        if self.n == 1:
+            self.srv.core.log(f"[j5mini] stereo head meta from {addr[0]}:{addr[1]}")
+        if typ == self.T_META and len(data) >= 16:
+            frame_id, eye, count, infer_us = struct.unpack_from("<IBBH", data, 8)
+            boxes = []
+            for i in range(min(count, 32)):
+                o = 16 + i * 10
+                if o + 10 > len(data):
+                    break
+                x, y, w, h, cls, score = struct.unpack_from("<HHHHBB", data, o)
+                boxes.append({"x": x, "y": y, "w": w, "h": h, "cls": cls, "score": round(score / 255.0, 2)})
+            if not boxes and time.monotonic() - self.last_det < 1.0:
+                return            # the board's empty heartbeat: nothing new to draw
+            self.last_det = time.monotonic()
+            asyncio.ensure_future(self.srv.broadcast({"type": "npu_detections", "frame_id": frame_id, "eye": eye,
+                                                       "infer_us": infer_us, "w": 1920, "h": 1080, "boxes": boxes}))
+        elif typ == self.T_COLLIM and len(data) >= 16:
+            dx, dy, dist, score, flags = struct.unpack_from("<hhHBB", data, 8)
+            asyncio.ensure_future(self.srv.broadcast({"type": "stereo_collimation", "lock": bool(flags & 1),
+                                                       "dx": dx / 16.0, "dy": dy / 16.0, "score": round(score / 255.0, 2),
+                                                       "dist_mm": dist if dist else None, "src": "board"}))
+
+
 async def serve(core: Core, lock: threading.Lock, cfg: dict, cams: Cameras):
     if websockets is None:
         raise SystemExit("websockets non installato")
@@ -1524,6 +1564,11 @@ async def serve(core: Core, lock: threading.Lock, cfg: dict, cams: Cameras):
         ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_ctx.load_cert_chain(ws_cfg["cert"], ws_cfg["key"])
     srv = Server(core, lock, cfg, cams)
+    meta_port = int(cfg.get("board", {}).get("meta_port", 5603))   # stereo head meta mirror (0 = off)
+    if meta_port:
+        loop = asyncio.get_running_loop()
+        await loop.create_datagram_endpoint(lambda: BoardMeta(srv, loop), local_addr=("127.0.0.1", meta_port))
+        core.log(f"[j5mini] stereo head meta listener on udp/127.0.0.1:{meta_port}")
     local = int(ws_cfg.get("local_port") or 0)        # plain ws on loopback for the HTTPS server's /ws tunnel
     async with websockets.serve(srv.handler, ws_cfg.get("host", "0.0.0.0"), ws_cfg.get("port", 8557), ssl=ssl_ctx,
                                 ping_interval=5, ping_timeout=5):
