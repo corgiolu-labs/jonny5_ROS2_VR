@@ -33,7 +33,7 @@ export function toGray(rgba, w, h) {
 /** Esito di un occhio da statistiche di un secondo. */
 export function verdict(s) {
   if (!s || !s.connected) return { ok: false, why: "nessun video" };
-  if (s.fps < MIN_FPS) return { ok: false, why: `${s.fps.toFixed(0)} fps (< ${MIN_FPS})` };
+  if (s.fps < MIN_FPS - 1) return { ok: false, why: `${s.fps.toFixed(0)} fps (< ${MIN_FPS})` };   // -1: 19,99 misurati a 20 fps nominali
   if (s.lossPct > 1) return { ok: false, why: `perdite ${s.lossPct.toFixed(1)} %` };
   return { ok: true, why: "ok" };
 }
@@ -81,7 +81,20 @@ export class CamTest {
     out.textContent = "collegamento...";
     const pc = new RTCPeerConnection({ iceServers: [] });
     this.pcs[i] = pc;
-    pc.addTransceiver("video", { direction: "recvonly" });
+    const tr = pc.addTransceiver("video", { direction: "recvonly" });
+    // MediaMTX risponde con il PRIMO H.264 dell'offerta e Chrome decodifica solo se quel profilo
+    // corrisponde all'SPS del flusso: Main (4d001f) per primo (testa stereo: VENC in profilo Main;
+    // x264 del Pi: High, che Chrome accetta comunque con Main negoziato), poi High, poi il resto.
+    try {
+      const caps = RTCRtpReceiver.getCapabilities("video").codecs;
+      const rank = c => {
+        const f = c.sdpFmtpLine || "";
+        if (c.mimeType !== "video/H264") return 9;
+        if (!f.includes("packetization-mode=1")) return 8;
+        return f.includes("profile-level-id=4d00") ? 0 : f.includes("profile-level-id=6400") ? 1 : 2;
+      };
+      tr.setCodecPreferences([...caps].sort((a, b) => rank(a) - rank(b)));
+    } catch { /* browser senza setCodecPreferences: ordine di default */ }
     pc.ontrack = ev => { document.getElementById(`cam-v${i}`).srcObject = ev.streams[0] || new MediaStream([ev.track]); };
     try {
       await pc.setLocalDescription(await pc.createOffer());
