@@ -950,27 +950,96 @@ class Cameras:
 # ------------------------------------------------------------------ hardware backends
 
 class SpidevBackend:
+    """SPI master, mode 0, 8 bits. Uses the spidev module when installed, otherwise the kernel's spidev ioctl
+    directly (stdlib only: the stereo head's Debian image has neither spidev nor the headers to build it)."""
+
+    _IOC_MESSAGE_1 = 0x40206B00   # SPI_IOC_MESSAGE(1) = _IOW('k', 0, struct spi_ioc_transfer[1]) (32 bytes)
+    _IOC_WR_MODE = 0x40016B01
+    _IOC_WR_BITS = 0x40016B03
+    _IOC_WR_SPEED = 0x40046B04
+
     def __init__(self, device: str, speed_hz: int):
-        import spidev
-        bus, dev = device.replace("/dev/spidev", "").split(".")
-        self.s = spidev.SpiDev()
-        self.s.open(int(bus), int(dev))
-        self.s.mode, self.s.bits_per_word, self.s.max_speed_hz = 0, 8, speed_hz
+        self.speed = speed_hz
+        try:
+            import spidev
+        except ImportError:
+            spidev = None
+        if spidev is not None:
+            bus, dev = device.replace("/dev/spidev", "").split(".")
+            self.s = spidev.SpiDev()
+            self.s.open(int(bus), int(dev))
+            self.s.mode, self.s.bits_per_word, self.s.max_speed_hz = 0, 8, speed_hz
+            self.fd = None
+            return
+        import fcntl, struct
+        self.s = None
+        self.fd = os.open(device, os.O_RDWR)
+        fcntl.ioctl(self.fd, self._IOC_WR_MODE, struct.pack("B", 0))
+        fcntl.ioctl(self.fd, self._IOC_WR_BITS, struct.pack("B", 8))
+        fcntl.ioctl(self.fd, self._IOC_WR_SPEED, struct.pack("I", speed_hz))
 
     def transfer(self, data: bytes) -> bytes:
-        return bytes(self.s.xfer2(list(data)))
+        if self.s is not None:
+            return bytes(self.s.xfer2(list(data)))
+        import ctypes, fcntl, struct
+        n = len(data)
+        tx = ctypes.create_string_buffer(bytes(data), n)
+        rx = ctypes.create_string_buffer(n)
+        # struct spi_ioc_transfer: u64 tx_buf, u64 rx_buf, u32 len, u32 speed_hz, u16 delay_usecs,
+        # u8 bits_per_word, u8 cs_change, u8 tx_nbits, u8 rx_nbits, u8 word_delay_usecs, u8 pad
+        xfer = struct.pack("QQIIHBBBBBB", ctypes.addressof(tx), ctypes.addressof(rx), n, self.speed, 0, 8,
+                           0, 0, 0, 0, 0)
+        fcntl.ioctl(self.fd, self._IOC_MESSAGE_1, xfer)
+        return rx.raw[:n]
 
 
 class SerialBackend:
+    """Non-blocking 8N1 serial port: pyserial when installed, otherwise termios (stdlib only)."""
+
     def __init__(self, device: str, baud: int):
-        import serial
-        self.s = serial.Serial(device, baud, timeout=0)
+        try:
+            import serial
+        except ImportError:
+            serial = None
+        if serial is not None:
+            self.s = serial.Serial(device, baud, timeout=0)
+            self.fd = None
+            return
+        import termios
+        self.s = None
+        self.fd = os.open(device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        speed = getattr(termios, f"B{baud}")
+        attr = termios.tcgetattr(self.fd)
+        attr[0] = 0                                                     # iflag: raw
+        attr[1] = 0                                                     # oflag: raw
+        attr[2] = termios.CS8 | termios.CREAD | termios.CLOCAL          # cflag: 8N1, no modem lines
+        attr[3] = 0                                                     # lflag: no echo, no canonical mode
+        attr[4] = attr[5] = speed
+        attr[6][termios.VMIN] = 0
+        attr[6][termios.VTIME] = 0
+        termios.tcsetattr(self.fd, termios.TCSANOW, attr)
+        termios.tcflush(self.fd, termios.TCIOFLUSH)
 
     def write(self, data: bytes):
-        self.s.write(data)
+        if self.s is not None:
+            self.s.write(data)
+            return
+        view = memoryview(data)
+        while view:
+            try:
+                n = os.write(self.fd, view)
+            except BlockingIOError:
+                time.sleep(0.001)
+                continue
+            view = view[n:]
 
     def read(self) -> bytes:
-        return self.s.read(4096)
+        if self.s is not None:
+            return self.s.read(4096)
+        try:
+            return os.read(self.fd, 4096)
+        except BlockingIOError:
+            return b""
 
 
 class SimRobot:
