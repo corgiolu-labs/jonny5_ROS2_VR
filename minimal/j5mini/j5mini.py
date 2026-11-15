@@ -1077,7 +1077,8 @@ class Server:
     # forwarded as they are to the other clients, like ws-teleop; the optional services on the robot
     # (raspberry/tools/stereo_collimator.py, vision_service.py) are clients of this server too
     RELAY = ("cameras_refocus_triggered", "vr_session_state", "vr_zoom_command",
-             "stereo_collimation", "stereo_calibrate", "vision_request", "vision_result")
+             "stereo_collimation", "stereo_calibrate", "vision_request", "vision_result",
+             "voice_command")   # stereo head: tools/voice/j5_voice.py -> headset app (it executes them)
 
     def __init__(self, core: Core, lock: threading.Lock, cfg: dict, cams: Cameras | None = None, kin_path=KIN_PATH):
         self.core, self.lock, self.cfg = core, lock, cfg
