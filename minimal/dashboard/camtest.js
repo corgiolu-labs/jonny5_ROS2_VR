@@ -76,6 +76,20 @@ export class CamTest {
       this.send(v === "auto" ? { type: "cam_focus", auto: true } : { type: "cam_focus", dioptres: Number(v) });
     };
     CAMS.forEach((c, i) => { $(`cam-shot${i}`).onclick = () => this.snapshot(i); });
+    // Mirino (21/11/2026): il centro dell'occhio sinistro, dove il collimatore misura la distanza. Disegnato sul
+    // canvas che ridisegna il video (un elemento sopra al <video> lo rende nero in Chromium, vedi onDetections).
+    this.crosshair = true;
+    try { this.crosshair = localStorage.getItem("j5.cam.crosshair") !== "0"; } catch { /* private mode */ }
+    $("cam-cross").checked = this.crosshair;
+    $("cam-cross").onchange = e => {
+      this.crosshair = e.target.checked;
+      try { localStorage.setItem("j5.cam.crosshair", this.crosshair ? "1" : "0"); } catch { /* private mode */ }
+      this.kickOverlay();
+    };
+  }
+
+  kickOverlay() {
+    if (!this.ovRunning && this.pcs[0]) { this.ovRunning = true; this.ovFrame(); }
   }
 
   /** Rilevazioni YOLO della NPU della testa stereo (j5mini "npu_detections", box in pixel dell'occhio sinistro).
@@ -114,7 +128,7 @@ export class CamTest {
     const wrap = cv && cv.parentElement;
     if (!cv || !v) { this.ovRunning = false; return; }
     const tgt = this.visionTarget && Date.now() - this.visionAt < 4000 ? this.visionTarget : null;
-    const fresh = ((this.dets && Date.now() - this.detsAt < 1500) || tgt) && this.pcs[0];
+    const fresh = ((this.dets && Date.now() - this.detsAt < 1500) || tgt || this.crosshair) && this.pcs[0];
     if (!fresh) {                       // back to the plain video
       cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
       cv.style.display = "none"; wrap.classList.remove("det");
@@ -146,7 +160,31 @@ export class CamTest {
       g.fillStyle = "rgba(0, 0, 0, 0.75)"; g.fillRect(x, ly, tw, th);
       g.fillStyle = "#FFBE5A"; g.fillText(tgt.label, x + 5 * k, ly + 3 * k);
     }
+    if (this.crosshair) this.drawCrosshair(g, W, H, k);
     requestAnimationFrame(() => this.ovFrame());
+  }
+
+  /** Mirino al centro: verde con la distanza quando il collimatore è agganciato, giallo quando cerca. */
+  drawCrosshair(g, W, H, k) {
+    const col = this.getCol(), lock = !!(col && col.lock);
+    const cx = W / 2, cy = H / 2, r = 26 * k, gap = 7 * k, arm = 22 * k;
+    const color = lock ? "#3CE68C" : "#FFD24A";
+    const line = (w, c) => {
+      g.lineWidth = w; g.strokeStyle = c; g.beginPath();
+      g.arc(cx, cy, r, 0, 2 * Math.PI);
+      g.moveTo(cx - r - arm, cy); g.lineTo(cx - gap, cy); g.moveTo(cx + gap, cy); g.lineTo(cx + r + arm, cy);
+      g.moveTo(cx, cy - r - arm); g.lineTo(cx, cy - gap); g.moveTo(cx, cy + gap); g.lineTo(cx, cy + r + arm);
+      g.stroke();
+    };
+    line(5 * k, "rgba(0, 0, 0, 0.6)");          // contorno scuro: si vede anche su fondo chiaro
+    line(2 * k, color);
+    g.fillStyle = color; g.beginPath(); g.arc(cx, cy, 2 * k, 0, 2 * Math.PI); g.fill();
+    const label = !col ? "collimatore: nessun dato" : lock && col.dist_mm ? (col.dist_mm >= 1000 ?
+      (col.dist_mm / 1000).toFixed(2).replace(".", ",") + " m" : (col.dist_mm / 10).toFixed(1).replace(".", ",") + " cm") : "cerca…";
+    g.font = `bold ${Math.round(18 * k)}px system-ui, sans-serif`; g.textBaseline = "top";
+    const tw = g.measureText(label).width + 12 * k, th = 26 * k, lx = cx + r + 8 * k, ly = cy + r - th / 2;
+    g.fillStyle = "rgba(0, 0, 0, 0.7)"; g.fillRect(lx, ly, tw, th);
+    g.fillStyle = color; g.fillText(label, lx + 6 * k, ly + 4 * k);
   }
 
   async start() {
@@ -233,6 +271,7 @@ export class CamTest {
         framesDecoded: inb.framesDecoded || 0, bytesReceived: inb.bytesReceived, totalDecodeTime: inb.totalDecodeTime || 0 };
       this.measure(i);
     }
+    if (this.crosshair) this.kickOverlay();
     this.render();
   }
 
