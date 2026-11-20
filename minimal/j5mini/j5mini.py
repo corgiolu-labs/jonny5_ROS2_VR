@@ -1030,7 +1030,7 @@ class Cameras:
     PORT_BASE = 5600
     STATE_PATH = "/dev/shm/jonny5_cam0_zoom.json"
     # stereo head (jonny5-stereo-head sender/src/protocol.hpp): ControlHeader + payload on its control port
-    J5_MAGIC, CTRL_EXPOSURE, CTRL_FOCUS = 0x4A35, 14, 15
+    J5_MAGIC, CTRL_EXPOSURE, CTRL_FOCUS, CTRL_COLLIM_CAL = 0x4A35, 14, 15, 16
     FOCUS_AUTO, FOCUS_ONESHOT, FOCUS_FIXED, FOCUS_HOLD = 0, 1, 2, 3
 
     def __init__(self, state_path: str = STATE_PATH, clock: Callable[[], float] = time.monotonic, sendto=None,
@@ -1051,6 +1051,19 @@ class Cameras:
     def _board(self, typ: int, payload: bytes):
         hdr = struct.pack("<HBBI", self.J5_MAGIC, typ, 0, int(time.monotonic() * 1e6) & 0xFFFFFFFF)
         self._sendto(hdr + payload, self.board_port)
+
+    def collim_calibrate(self, msg: dict) -> bool:
+        """Dashboard "calibra a questa distanza" on the stereo head: kCtrlCollimCal to the sender, which pairs the
+        distance with its recent locked dx, refits dx_inf / f_px, saves them and answers with kCtrlCollimCalResult
+        (BoardMeta -> "stereo_calibration"). reset: forget the previous points (alone, or before this one)."""
+        if not self.board_port:
+            return False
+        mm = msg.get("distance_mm", 0)
+        reset = bool(msg.get("reset"))
+        if not self._num(mm) or not (mm == 0 and reset or 100 <= mm <= 10000):
+            return False
+        self._board(self.CTRL_COLLIM_CAL, struct.pack("<HBB", int(mm), 1 if reset else 0, 0))
+        return True
 
     def _board_focus(self, mode: int, dioptres: float = 0.0):
         self._board(self.CTRL_FOCUS, struct.pack("<BBH", mode, 0, int(round(max(0.0, min(16.0, dioptres)) * 256))))
@@ -1445,6 +1458,8 @@ class Server:
                                       "ts_server": time.time()}))
         elif typ in self.RELAY:
             await self.send_all(json.dumps(msg), but=ws)
+            if typ == "stereo_calibrate":
+                self.cams.collim_calibrate(msg)          # stereo head: the sender calibrates (no-op on the Pi)
             if typ == "vision_request" and self.board is not None and self.board.n:
                 # stereo head board: no vision_service, the answer comes from the NPU boxes + collimator
                 res = self.board.vision_result(msg)
@@ -1842,8 +1857,11 @@ class BoardMeta(asyncio.DatagramProtocol):
       kCtrlVideoMeta (4): VideoMeta(frame_id u32, eye u8, count u8, infer_us u16) + DetBox(x,y,w,h u16, cls u8,
                            score u8)[count] -> {"type": "npu_detections", ...} (boxes in left-eye 1920x1080 px)
       kCtrlCollimation (13): dx_q4 i16, dy_q4 i16, dist_mm u16, score u8, flags u8 -> {"type": "stereo_collimation", ...}
+      kCtrlCollimCalResult (17): dx_inf_q4 i16, f_px_q2 u16, distance_mm u16, dx_q4 i16, points u8, status u8
+                           -> {"type": "stereo_calibration", ...} (answer to the dashboard's stereo_calibrate)
     Little-endian, header = magic 0x4A35 u16, type u8, version u8, ts_us u32 (sender/src/protocol.hpp)."""
-    MAGIC, T_META, T_COLLIM = 0x4A35, 4, 13
+    MAGIC, T_META, T_COLLIM, T_CAL = 0x4A35, 4, 13, 17
+    CAL_STATUS = ("offset", "full", "reset", "no_lock", "fit_rejected", "bad_distance")
 
     COCO_IT = ["persona", "bicicletta", "auto", "moto", "aereo", "autobus", "treno", "camion", "barca", "semaforo",
                "idrante", "stop", "parchimetro", "panchina", "uccello", "gatto", "cane", "cavallo", "pecora", "mucca",
@@ -1925,6 +1943,16 @@ class BoardMeta(asyncio.DatagramProtocol):
                            "score": round(score / 255.0, 2), "dist_mm": dist if dist else None, "src": "board"}
             self.collim_at = time.monotonic()
             asyncio.ensure_future(self.srv.broadcast(self.collim))
+        elif typ == self.T_CAL and len(data) >= 18:
+            dxi, fpx, mm, dx, n, st = struct.unpack_from("<hHHhBB", data, 8)
+            status = self.CAL_STATUS[st] if st < len(self.CAL_STATUS) else str(st)
+            msg = {"type": "stereo_calibration", "ok": status in ("offset", "full", "reset", "fit_rejected"),
+                   "status": status, "dx_inf": dxi / 16.0, "f_px": fpx / 4.0, "distance_mm": mm,
+                   "dx": dx / 16.0 if status not in ("no_lock", "reset", "bad_distance") else None, "points": n,
+                   "src": "board"}
+            self.srv.core.log(f"[j5mini] collimator calibration {mm} mm: {status}, dx_inf {msg['dx_inf']:.2f}, "
+                              f"f_px {msg['f_px']:.1f}, {n} point(s)")
+            asyncio.ensure_future(self.srv.broadcast(msg))
 
 
 async def serve(core: Core, lock: threading.Lock, cfg: dict, cams: Cameras):

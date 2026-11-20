@@ -1241,3 +1241,37 @@ def test_stereo_head_camera_controls_are_binary_datagrams():
     assert cams.on_message({"type": "cam_mode", "mode": "wide"})
     cams.telemetry()
     assert len(sent) == n                                               # nothing else, no periodic re-send
+
+
+def test_stereo_head_calibration_goes_to_the_sender_and_back():
+    """Dashboard "calibra a questa distanza" on the stereo head (20/11/2026): kCtrlCollimCal to the sender, its
+    kCtrlCollimCalResult from the meta mirror becomes a "stereo_calibration" message for the clients."""
+    sent = []
+    cams = j5mini.Cameras("/nonexistent", sendto=lambda d, p: sent.append((d, p)), board_ctrl_port=5601)
+    assert cams.collim_calibrate({"type": "stereo_calibrate", "distance_mm": 690})
+    d, p = sent[-1]
+    assert p == 5601 and struct.unpack("<HBBI", d[:8])[:2] == (0x4A35, 16) and d[8:] == struct.pack("<HBB", 690, 0, 0)
+    assert cams.collim_calibrate({"type": "stereo_calibrate", "distance_mm": 0, "reset": True})
+    assert sent[-1][0][8:] == struct.pack("<HBB", 0, 1, 0)
+    assert not cams.collim_calibrate({"type": "stereo_calibrate", "distance_mm": 0})          # 0 without reset
+    assert not j5mini.Cameras("/nonexistent", sendto=lambda d, p: None).collim_calibrate({"distance_mm": 690})
+
+    class Srv:
+        def __init__(self):
+            self.out, self.logs = [], []
+            self.core = type("C", (), {"log": self.logs.append})()
+
+        async def broadcast(self, m):
+            self.out.append(m)
+    srv = Srv()
+
+    async def run():
+        bm = j5mini.BoardMeta(srv, asyncio.get_running_loop())
+        pkt = struct.pack("<HBBI", 0x4A35, 17, 0, 0) + struct.pack("<hHHhBB", int(34.07 * 16), 981 * 4, 1590,
+                                                                     int(-4.8 * 16), 2, 1)
+        bm.datagram_received(pkt, ("127.0.0.1", 5602))
+        await asyncio.sleep(0)
+    asyncio.run(run())
+    m = srv.out[-1]
+    assert m["type"] == "stereo_calibration" and m["status"] == "full" and m["ok"] and m["points"] == 2
+    assert m["distance_mm"] == 1590 and abs(m["dx_inf"] - 34.06) < 0.05 and m["f_px"] == 981 and abs(m["dx"] + 4.8) < 0.1

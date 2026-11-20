@@ -177,7 +177,9 @@
         <span id="cal-now" class="live">collimatore: nessun dato</span>
         <label>distanza reale al mirino <input type="number" id="cal-mm" value="460" min="100" max="5000" step="10" inputmode="numeric"> mm</label>
         <button id="cal-go">calibra a questa distanza</button>
+        <button id="cal-reset" title="dimentica i punti salvati (per esempio dopo aver spostato o ruotato le camere)">azzera i punti</button>
       </div>
+      <div id="cal-res" class="note"></div>
       <p class="note">Video WebRTC da MediaMTX sul robot (lo stesso flusso delle app, che lo ricevono in RTSP). Esito OK con
         almeno 20 fps e meno dell'1 % di pacchetti persi. La nitidezza (varianza del laplaciano) serve a confrontare le due
         camere sulla stessa scena: inquadra un oggetto con dettagli. Zoom, fuoco e luminosità cambiano anche ciò che vede

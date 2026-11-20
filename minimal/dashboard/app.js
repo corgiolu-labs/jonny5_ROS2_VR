@@ -121,6 +121,7 @@ function onMessage(m) {
       if (/^SETPOSE_DONE/.test(m.line) && S.homePending) { S.homePending = false; setTimeout(() => imuReference("HOME"), 500); }
       break;
     case "stereo_collimation": S.col = m; S.colAt = Date.now(); break;
+    case "stereo_calibration": showCalibration(m); break;
     case "npu_detections": camTest.onDetections(m); break;
     case "ws_pong": if (S.onPong) S.onPong(m); break;
     case "horizon_lock": S.horizon = !!m.on; horizonButtons(); toast(S.horizon ? "Orizzonte acceso" : "Orizzonte spento"); break;
@@ -616,6 +617,23 @@ $("pose-import").onchange = async e => {
 };
 
 // ------------------------------------------------------------------ camera tab extras (the video test is camtest.js)
+const CAL_TEXT = {
+  offset: "corretto lo spostamento all'infinito (un punto: la scala resta quella di prima, aggiungi un punto a distanza diversa)",
+  full: "corretti spostamento e scala (punti a distanze diverse)",
+  reset: "punti azzerati: i parametri restano quelli di prima finché non aggiungi un punto",
+  no_lock: "nessuna misura stabile nell'ultimo secondo: tieni il mirino fermo su un oggetto con dettagli (collimatore agganciato) e riprova",
+  fit_rejected: "i punti non sono coerenti fra loro: corretto solo lo spostamento con l'ultimo punto; azzera i punti e rifalli",
+  bad_distance: "distanza fuori campo (100-10000 mm)",
+};
+function showCalibration(m) {
+  const txt = CAL_TEXT[m.status] || m.status;
+  const nums = `spostamento all'infinito ${m.dx_inf.toFixed(1)} px, focale ${m.f_px.toFixed(0)} px, ${m.points} punt${m.points === 1 ? "o" : "i"} salvat${m.points === 1 ? "o" : "i"}`;
+  $("cal-res").textContent = (m.distance_mm ? `${m.distance_mm} mm` + (m.dx != null ? ` (dx ${m.dx.toFixed(1)} px)` : "") + ": " : "") + txt + ". " + nums;
+  toast(m.ok ? "calibrazione: " + (m.status === "reset" ? "punti azzerati" : "fatta") : "calibrazione non fatta: " + txt, !m.ok);
+}
+$("cal-reset").onclick = () => {
+  if (send({ type: "stereo_calibrate", distance_mm: 0, reset: true })) toast("azzero i punti di calibrazione");
+};
 $("cal-go").onclick = () => {
   const mm = Number($("cal-mm").value);
   if (!(mm >= 100 && mm <= 5000)) return toast("distanza fra 100 e 5000 mm", true);
