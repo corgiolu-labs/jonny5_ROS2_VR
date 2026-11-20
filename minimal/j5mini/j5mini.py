@@ -15,8 +15,10 @@ What it does (and nothing else):
   - UART owner: commands from the clients with #seq replies; on BOOT_READY (or 1.5 s after
     start) pushes the configuration lines from the config file, in order, with retries;
     STATUS? every 2 s for the robot state; ESTOP / SETPOSE_DONE lines forwarded.
-  - Demo: the pose sequence saved in j5mini.json (settings.demo), one SETPOSE per step, the next at SETPOSE_DONE,
-    round and round until the dashboard stops it, the robot leaves IDLE (STOP / SAFE / E-STOP) or a step fails.
+  - Demo: the pose sequence saved in j5mini.json (settings.demo), round and round until the dashboard stops it, the
+    robot leaves IDLE (STOP / SAFE / E-STOP) or a step fails. settings.demo_style "smooth" (default, 20/11/2026):
+    one continuous curve through the poses (PCHIP, no stops) plus a roll oscillation (settings.demo_roll_deg),
+    streamed as SETPOSE_T_HR every 40 ms; "steps": one SETPOSE per pose, the next at SETPOSE_DONE.
   - On entering HEAD/HYBRID/ASSIST (mode 3/4/5) re-sends SET_VR_PARAMS (2.5 s throttle), as ws-teleop.
   - Telemetry to the clients at 20 Hz: robot_state, servo_deg_*, IMU quaternion, deadman/armed/E-STOP.
   - Optional clock set from the headset (time_sync), the robot has no RTC and no internet.
@@ -351,7 +353,13 @@ class Core:
         if line.startswith("STATUS:"):
             self.robot_state = line[7:].strip()
             return
-        if self.demo and line.startswith("SETPOSE_DONE") and self.demo["moving"]:
+        if self.demo and line.startswith("SETPOSE_DONE") and self.demo.get("style") == "smooth":
+            d = self.demo
+            if d["run"]:
+                return                                # the end of one 40 ms segment: not news for the clients
+            if d["moving"]:                           # at the start of the curve: stream from now on
+                d["run"], d["next"], d["last"] = True, self.clock(), self.clock()
+        elif self.demo and line.startswith("SETPOSE_DONE") and self.demo["moving"]:
             self._demo_next()
         elif self.demo and line.startswith("ESTOP") and line != "ESTOP_CLEAR":
             self.demo_stop("fungo")
@@ -374,6 +382,8 @@ class Core:
             self._boot_next()
         if cb:
             cb(ok, resp)
+        if ok and cmd.startswith("SETPOSE_T_HR ") and self.demo and self.demo.get("run"):
+            return                                    # 25 a second while the smooth demo runs
         self.events.append({"type": "uart_response", "cmd": cmd, "ok": ok, "response": resp})
 
     def _start_boot_push(self, booted: bool = False):
@@ -506,11 +516,69 @@ class Core:
         self._demo_next()
         return True, ""
 
+    def demo_start_smooth(self, path: "DemoPath") -> tuple[bool, str]:
+        """The continuous demo: a SETPOSE to the start of the curve, then from its SETPOSE_DONE one SETPOSE_T_HR
+        every DEMO_STREAM_S along it (each lasting DEMO_STREAM_S, so the next one starts where it ends). The
+        playback speed ramps up from 0 at the start and back to 0 when the dashboard stops it."""
+        if self.robot_state != "IDLE":
+            return False, f"robot in {self.robot_state}: serve IDLE"
+        self.demo = {"style": "smooth", "path": path, "lines": [None] * path.n, "i": 0, "moving": False,
+                     "deadline": 0.0, "run": False, "tau": 0.0, "ramp": 0.0, "stopping": None, "next": 0.0,
+                     "last": 0.0}
+        d = self.demo
+
+        def sent(ok, resp):
+            if self.demo is not d:
+                return
+            if not ok:
+                self.demo_stop(f"partenza rifiutata: {resp}")
+                return
+            d["moving"] = True
+            d["deadline"] = self.clock() + self.DEMO_STEP_TIMEOUT_S
+        self.uart_send(path.start_line([self.telemetry.get(k) for k in SERVO_KEYS]), sent)
+        self.events.append({"type": "demo", "on": True, "step": 1, "n": path.n})
+        return True, ""
+
+    DEMO_STREAM_S = 0.04      # 25 segments a second: 0.1 deg of ripple from each segment's own S-curve at 30 deg/s
+    DEMO_RAMP_S = 1.5         # playback speed 0 -> 1 at the start, 1 -> 0 at a dashboard stop
+
+    def _demo_stream(self, now: float):
+        d = self.demo
+        if now < d["next"]:
+            return
+        dt = min(0.2, now - d["last"])
+        d["last"] = now
+        d["next"] = max(d["next"] + self.DEMO_STREAM_S, now + self.DEMO_STREAM_S * 0.5)
+        d["ramp"] += (-dt if d["stopping"] else dt) / self.DEMO_RAMP_S
+        if d["stopping"] and d["ramp"] <= 0.0:
+            self._demo_end(d["stopping"])                # already still: nothing to hold
+            return
+        d["ramp"] = max(0.0, min(1.0, d["ramp"]))
+        rate = d["ramp"] * d["ramp"] * (3.0 - 2.0 * d["ramp"])
+        d["tau"] += rate * self.DEMO_STREAM_S
+        seg = d["path"].segment(d["tau"])
+        if seg != d["i"]:
+            d["i"] = seg
+            self.events.append({"type": "demo", "on": True, "step": seg + 1, "n": d["path"].n})
+
+        def sent(ok, resp):
+            if self.demo is d and not ok:
+                self.demo_stop(f"traiettoria rifiutata: {resp}")
+        self.uart_send(d["path"].stream_line(d["tau"], int(self.DEMO_STREAM_S * 1000)), sent)
+
     def demo_stop(self, reason: str, hold: bool = False):
-        """hold: stop where the arm is (a 120 ms trajectory to the measured angles replaces the running one)."""
+        """hold: stop where the arm is (a 120 ms trajectory to the measured angles replaces the running one). The
+        smooth demo slows down to a stop instead (DEMO_RAMP_S) and ends there."""
         d = self.demo
         if not d:
             return
+        if hold and d.get("run"):
+            d["stopping"] = d["stopping"] or reason
+            return
+        self._demo_end(reason, hold)
+
+    def _demo_end(self, reason: str, hold: bool = False):
+        d = self.demo
         self.demo = None
         if hold and d["moving"] and all(k in self.telemetry for k in SERVO_KEYS):
             self.uart_send("SETPOSE_T_HR " + " ".join(str(int(round(self.telemetry[k] * 10))) for k in SERVO_KEYS)
@@ -520,7 +588,9 @@ class Core:
 
     def demo_status(self) -> dict | None:
         d = self.demo
-        return {"step": d["i"] + 1, "n": len(d["lines"])} if d else None
+        if not d:
+            return None
+        return {"step": d["i"] + 1, "n": len(d["lines"]), "style": d.get("style", "steps")}
 
     def _demo_next(self):
         d = self.demo
@@ -580,6 +650,8 @@ class Core:
             return
         if self.robot_state != "IDLE":
             self.demo_stop(f"robot in {self.robot_state}")
+        elif d.get("run"):
+            self._demo_stream(now)
         elif d["moving"] and now > d["deadline"]:
             self.demo_stop(f"passo {d['i'] + 1} senza SETPOSE_DONE entro {self.DEMO_STEP_TIMEOUT_S:.0f} s")
 
@@ -671,6 +743,105 @@ def demo_lines(cfg: dict) -> list[str]:
             for x in cfg.get("settings", {}).get("demo", DEMO_DEFAULT)]
 
 
+DEMO_ROLL_DEFAULT = 20.0      # deg of roll oscillation in the smooth demo (cut to the roll joint's room, 2 deg margin)
+DEMO_ROLL_PERIOD_S = 9.0
+
+
+class DemoPath:
+    """The smooth demo (20/11/2026): a closed curve through the demo poses (virtual degrees). Each stretch takes as
+    long as the step's SETPOSE would (largest joint change / the firmware's speed for its speed_pct), so the pace
+    is the old one without the stops. PCHIP per joint: never beyond the poses' own range (a joint that turns back
+    at a pose slows to zero there, the others keep going). Roll: + roll_deg * sin(2 pi t / 9 s) on top."""
+
+    MIN_SEG_S = 0.8
+
+    def __init__(self, cfg: dict):
+        st = cfg.get("settings", {})
+        s = settings_from_config(cfg)
+        self.offsets, self.limits = s["offsets"], s["limits"]
+        self.dirs = [-1 if d < 0 else 1 for d in s["dirs"]]
+        steps = st.get("demo", DEMO_DEFAULT)
+        pts, speeds = [], []
+        for x in steps:
+            p = [float(v) for v in x["angles"]]
+            if not pts or p != pts[-1]:
+                pts.append(p)
+                speeds.append(int(x.get("speed_pct", POSE_DEFAULTS["speed_pct"])))
+        if len(pts) > 1 and pts[0] == pts[-1]:
+            pts.pop(), speeds.pop()
+        if len(pts) < 2:                              # one pose: hold it, roll only
+            pts = [pts[0], list(pts[0])] if pts else [[90.0] * 6, [90.0] * 6]
+            speeds = (speeds * 2)[:2] or [POSE_DEFAULTS["speed_pct"]] * 2
+        self.pts, self.n = pts, len(pts)
+        self.t = [0.0]
+        for k in range(self.n):
+            a, b = pts[k], pts[(k + 1) % self.n]
+            v = 1.0 + max(1, min(100, speeds[(k + 1) % self.n])) / 100.0 * 119.0   # firmware SETPOSE deg/s
+            self.t.append(self.t[-1] + max(self.MIN_SEG_S, max(abs(x - y) for x, y in zip(a, b)) / v))
+        self.period = self.t[-1]
+        self.m = [self._slopes(j) for j in range(6)]
+        roll = float(st.get("demo_roll_deg", DEMO_ROLL_DEFAULT))
+        lo, hi = self.limits[5]
+        rmin, rmax = min(p[5] for p in pts), max(p[5] for p in pts)
+        room = min(self._virtual(5, hi) - rmax, rmin - self._virtual(5, lo)) if self.dirs[5] > 0 else \
+            min(self._virtual(5, lo) - rmax, rmin - self._virtual(5, hi))
+        self.roll = max(0.0, min(roll, room - 2.0))
+
+    def _virtual(self, j: int, phys: float) -> float:
+        return 90.0 + (phys - self.offsets[j]) / self.dirs[j]
+
+    def _slopes(self, j: int) -> list[float]:
+        """PCHIP (Fritsch-Butland) tangents of joint j on the closed loop, deg/s."""
+        n, h, d = self.n, [], []
+        for k in range(n):
+            h.append(self.t[k + 1] - self.t[k])
+            d.append((self.pts[(k + 1) % n][j] - self.pts[k][j]) / h[k])
+        m = []
+        for k in range(n):
+            d0, d1, h0, h1 = d[k - 1], d[k], h[k - 1], h[k]
+            if d0 * d1 <= 0:
+                m.append(0.0)
+            else:
+                w1, w2 = 2 * h1 + h0, h1 + 2 * h0
+                m.append((w1 + w2) / (w1 / d0 + w2 / d1))
+        return m
+
+    def segment(self, tau: float) -> int:
+        u = tau % self.period
+        return next(k for k in range(self.n) if u < self.t[k + 1] or k == self.n - 1)
+
+    def virtual(self, tau: float) -> list[float]:
+        k = self.segment(tau)
+        h = self.t[k + 1] - self.t[k]
+        x = min(1.0, max(0.0, (tau % self.period - self.t[k]) / h))
+        x2, x3 = x * x, x * x * x
+        h00, h10, h01, h11 = 2 * x3 - 3 * x2 + 1, x3 - 2 * x2 + x, -2 * x3 + 3 * x2, x3 - x2
+        a, b = self.pts[k], self.pts[(k + 1) % self.n]
+        out = [h00 * a[j] + h10 * h * self.m[j][k] + h01 * b[j] + h11 * h * self.m[j][(k + 1) % self.n]
+               for j in range(6)]
+        out[5] += self.roll * math.sin(2 * math.pi * tau / DEMO_ROLL_PERIOD_S)
+        return out
+
+    def physical(self, tau: float) -> list[float]:
+        out = []
+        for j, v in enumerate(self.virtual(tau)):
+            p = max(5.0, min(175.0, self.offsets[j] + self.dirs[j] * (v - 90.0)))
+            out.append(max(self.limits[j][0], min(self.limits[j][1], p)))
+        return out
+
+    def start_line(self, current=None) -> str:
+        """The way to the start of the curve, at the speed of a 20 % SETPOSE (24.8 deg/s) from `current` (servo
+        degrees, telemetry), in tenths like the stream so the first segment does not twitch by a rounding."""
+        target = self.physical(0.0)
+        ms = 3000
+        if current and len(current) == 6 and all(isinstance(v, (int, float)) for v in current):
+            ms = max(300, int(max(abs(a - b) for a, b in zip(target, current)) / 24.8 * 1000))
+        return "SETPOSE_T_HR " + " ".join(str(int(round(v * 10))) for v in target) + f" {ms} RTR5"
+
+    def stream_line(self, tau: float, ms: int) -> str:
+        return "SETPOSE_T_HR " + " ".join(str(int(round(v * 10))) for v in self.physical(tau)) + f" {ms} RTR3"
+
+
 def settings_from_config(cfg: dict) -> dict:
     """What the dashboard edits, read back from the boot lines (the firmware's view) and cfg["settings"]."""
     lines = [l for l in cfg.get("boot_commands", []) if l not in ("IMUON", "IMUOFF")]   # older configs
@@ -694,7 +865,9 @@ def poses_from_settings(st: dict) -> dict:
             "speed_pct": int(st.get("speed_pct", POSE_DEFAULTS["speed_pct"])),
             "profile": str(st.get("profile", POSE_DEFAULTS["profile"])),
             "auto_park_s": int(st.get("auto_park_s", POSE_DEFAULTS["auto_park_s"])),
-            "demo": [dict(x) for x in st.get("demo", DEMO_DEFAULT)]}
+            "demo": [dict(x) for x in st.get("demo", DEMO_DEFAULT)],
+            "demo_style": str(st.get("demo_style", "smooth")),
+            "demo_roll_deg": float(st.get("demo_roll_deg", DEMO_ROLL_DEFAULT))}
 
 
 def poses_from_settings_msg(s: dict) -> tuple[dict | None, str | None]:
@@ -738,6 +911,15 @@ def poses_from_settings_msg(s: dict) -> tuple[dict | None, str | None]:
             if prof not in ("RTR5", "RTR3", "BCB", "BB"):
                 return None, f"demo passo {k + 1}: profilo RTR5, RTR3, BCB o BB"
             out["demo"].append({"angles": [round(float(x), 1) for x in a], "speed_pct": int(pct), "profile": prof})
+    if s.get("demo_style") is not None:
+        if s["demo_style"] not in ("smooth", "steps"):
+            return None, "demo_style: smooth o steps"
+        out["demo_style"] = s["demo_style"]
+    if s.get("demo_roll_deg") is not None:
+        v = s["demo_roll_deg"]
+        if not (isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 40):
+            return None, "demo_roll_deg: 0..40"
+        out["demo_roll_deg"] = round(float(v), 1)
     return out, None
 
 
@@ -1166,7 +1348,11 @@ class Server:
             await ws.send(json.dumps({"type": "imu_campaign", **res}))
         elif typ == "demo":                          # dashboard "Demo": the saved pose sequence, looped
             with self.lock:
-                if msg.get("on"):
+                if msg.get("on") and self.core.demo:
+                    ok, err = False, "demo già in corso"
+                elif msg.get("on") and self.cfg.get("settings", {}).get("demo_style", "smooth") == "smooth":
+                    ok, err = self.core.demo_start_smooth(DemoPath(self.cfg))
+                elif msg.get("on"):
                     ok, err = self.core.demo_start(demo_lines(self.cfg))
                 else:
                     self.core.demo_stop("dashboard", hold=True)

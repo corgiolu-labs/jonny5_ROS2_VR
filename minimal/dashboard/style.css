@@ -107,6 +107,9 @@ canvas { width: 100%; display: block; background: var(--panel2); border-radius: 
 .joint .name { font-weight: 600; }
 .joint input[type=range] { width: 100%; }
 .joint .meas { font-size: 12px; color: var(--muted); line-height: 1.3; }
+.camarm { margin-top: 10px; }
+.camarm .joint { grid-template-columns: 92px 1fr 64px 70px; margin: 4px 0; }
+.camarm .joint input[type=range] { height: 26px; }
 .cmdline, pre { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; color: #b8c3d6; }
 pre { background: rgba(0, 0, 0, .3); border-radius: 8px; padding: 10px; margin: 8px 0 0; white-space: pre-wrap; max-height: 420px; overflow: auto; }
 pre.small { max-height: 260px; }

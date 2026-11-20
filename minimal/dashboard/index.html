@@ -159,6 +159,16 @@
         <div><h3>Destra <small>cam1</small> <button id="cam-shot1" class="tiny">istantanea</button></h3>
           <video id="cam-v1" autoplay muted playsinline poster="data:image/gif;base64,R0lGODlhAQABAAAAACw="></video><pre id="cam-s1" class="small">fermo</pre></div>
       </div>
+      <div class="camarm">
+        <h4>Muovi il braccio <small>gli slider muovono il robot mentre li trascini: guardi il video e aggiusti</small></h4>
+        <div id="cjoints"></div>
+        <div class="row">
+          <button id="c-meas" title="riporta gli slider dove si trova il braccio">slider = posa misurata</button>
+          <button id="c-home" class="motion" title="tutti i giunti a 90° virtuali">HOME</button>
+          <label>velocità <select id="c-speed"><option value="20">lenta</option><option value="45" selected>media</option><option value="80">veloce</option></select></label>
+          <span id="c-why" class="note"></span>
+        </div>
+      </div>
       <pre id="cam-cmp" class="small"></pre>
       <pre id="cam-vision" class="small"></pre>
       <h4>Distanza stereo</h4>

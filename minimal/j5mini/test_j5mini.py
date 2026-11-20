@@ -975,6 +975,7 @@ def test_demo_loops_the_saved_sequence_and_stops(lib):
     cfg = json.loads(json.dumps(CFG))
     cfg["settings"]["demo"] = [{"angles": [90, 90, 90, 90, 90, 90], "speed_pct": 60, "profile": "RTR5"},
                                {"angles": [100, 90, 90, 90, 90, 90], "speed_pct": 60, "profile": "RTR3"}]
+    cfg["settings"]["demo_style"] = "steps"
     r = Rig(lib, cfg)
     r.run(1000)
     r.run(2200, intent())                                   # IDLE, and a STATUS? poll has seen it
@@ -990,7 +991,7 @@ def test_demo_loops_the_saved_sequence_and_stops(lib):
     r.run(6000, intent())
     steps = [e["step"] for e in r.core.events if e["type"] == "demo" and e.get("on")]
     assert steps[:4] == [1, 2, 1, 2], steps                 # it loops
-    assert r.core.telemetry_message()["demo"] in ({"step": 1, "n": 2}, {"step": 2, "n": 2})
+    assert r.core.telemetry_message()["demo"] in ({"step": 1, "n": 2, "style": "steps"}, {"step": 2, "n": 2, "style": "steps"})
     sent = [e for e in r.core.events if e["type"] == "uart_response" and e["cmd"].startswith("SETPOSE ")]
     assert sent and all(e["ok"] for e in sent)
     assert sent[0]["cmd"] == "SETPOSE 88 85 83 90 90 98 60 RTR5"      # virtual 90 = the offsets
@@ -1147,3 +1148,68 @@ def test_auto_park_after_a_minute_without_the_grips(lib):
     r.run(2000, held); r.run(25000, intent(mode=0))
     assert r.core.auto_park_in() is None
 
+
+
+def test_smooth_demo_streams_a_curve_with_roll_and_slows_to_a_stop(lib):
+    """Smooth demo (20/11/2026, the default): the way to the start of the curve, then SETPOSE_T_HR every 40 ms along
+    a curve through the poses that never stops at them, the roll oscillating; the dashboard stop slows it down and
+    it ends where it is. The stream stays out of the client events."""
+    cfg = json.loads(json.dumps(CFG))
+    cfg["settings"]["demo"] = [{"angles": [90, 90, 90, 90, 90, 90], "speed_pct": 20, "profile": "RTR5"},
+                               {"angles": [110, 95, 100, 90, 85, 90], "speed_pct": 20, "profile": "RTR5"},
+                               {"angles": [70, 95, 100, 90, 85, 90], "speed_pct": 20, "profile": "RTR5"}]
+    path = j5mini.DemoPath(cfg)
+    assert path.n == 3 and path.roll > 5
+    # never beyond the poses' range (PCHIP), roll aside; the curve passes through every pose
+    for k in range(400):
+        v = path.virtual(path.period * k / 400)
+        assert 70 - 1e-6 <= v[0] <= 110 + 1e-6 and 90 - 1e-6 <= v[1] <= 95 + 1e-6
+    assert [round(x, 3) for x in path.virtual(path.t[1])[:5]] == [110, 95, 100, 90, 85]
+    r = Rig(lib, cfg)
+    r.run(1000)
+    r.run(2200, intent())
+    assert r.core.robot_state == "IDLE"
+    srv = j5mini.Server(r.core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+    ws = FakeWs()
+
+    def msg(m):
+        asyncio.run(srv.on_message(ws, m))
+
+    msg({"type": "demo", "on": True})
+    assert ws.sent[-1]["ok"] is True
+    seen = []
+    orig = r.core.uart_send
+
+    def spy(cmd, cb=None):
+        if cmd.startswith("SETPOSE_T_HR "):
+            seen.append((r.sim.now_ms(), cmd))
+        return orig(cmd, cb)
+    r.core.uart_send = spy
+    r.run(int(path.period * 1000) + 6000, intent())
+    stream = [(t, c) for t, c in seen if c.split()[-2] == "40"]
+    assert len(stream) > 100
+    gaps = [b[0] - a[0] for a, b in zip(stream, stream[1:])]
+    assert max(gaps) <= 50 and sum(gaps) / len(gaps) == pytest.approx(40, abs=2)
+    rolls = [int(c.split()[6]) for _, c in stream]
+    assert max(rolls) - min(rolls) > 100                    # the roll moves (> 10 deg)
+    steps = [e["step"] for e in r.core.events if e["type"] == "demo" and e.get("on")]
+    assert {1, 2, 3} <= set(steps)
+    assert not any(e["type"] == "uart_response" and e["cmd"].endswith(" 40 RTR3") for e in r.core.events)
+    # consecutive targets close, no jumps: at 20 % (24.8 deg/s between poses) the peak stays under 50 deg/s
+    pts = [[int(x) for x in c.split()[1:7]] for _, c in stream]
+    assert max(abs(a - b) for p, q in zip(pts, pts[1:]) for a, b in zip(p, q)) <= 20
+    msg({"type": "demo", "on": False})
+    assert r.core.demo is not None                          # slowing down
+    r.run(2500, intent())
+    assert r.core.demo is None
+    ends = [e for e in r.core.events if e["type"] == "demo" and not e.get("on")]
+    assert ends[-1]["reason"] == "dashboard"
+    tail = [[int(x) for x in c.split()[1:7]] for _, c in seen[-5:]]
+    assert max(abs(a - b) for p, q in zip(tail, tail[1:]) for a, b in zip(p, q)) <= 2    # it was nearly still
+
+
+def test_demo_style_and_roll_are_saved(tmp_path):
+    out, err = j5mini.poses_from_settings_msg({"demo_style": "steps", "demo_roll_deg": 15})
+    assert err is None and out == {"demo_style": "steps", "demo_roll_deg": 15.0}
+    assert j5mini.poses_from_settings_msg({"demo_style": "x"})[1]
+    assert j5mini.poses_from_settings_msg({"demo_roll_deg": 90})[1]

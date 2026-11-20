@@ -436,14 +436,85 @@ function buildJoints() {
   clampTarget();
   S.target.forEach((v, i) => { $("j-r" + i).value = $("j-n" + i).value = v; });
   $("t-sweep-j").innerHTML = JN.map((n, i) => `<option value="${i}">${n}</option>`).join("");
+  buildCamJoints();
   targetChanged();
 }
+
+// ---- Camere tab: the same target, moved live while dragging (20/11/2026), to see what the robot sees
+function buildCamJoints() {
+  const box = $("cjoints");
+  box.innerHTML = "";
+  JN.forEach((name, i) => {
+    const [lo, hi] = virtualRange(i);
+    const row = document.createElement("div");
+    row.className = "joint";
+    row.innerHTML = `<span class="name">${name}</span>
+      <input type="range" min="${lo.toFixed(1)}" max="${hi.toFixed(1)}" step="0.5" id="c-r${i}">
+      <span class="live" id="c-v${i}"></span><span class="meas" id="c-m${i}">–</span>`;
+    box.appendChild(row);
+    const r = row.querySelector("input");
+    r.addEventListener("input", () => {
+      S.target[i] = Number(r.value); clampTarget();
+      syncJointInputs();
+      camArmSend();
+    });
+  });
+  syncJointInputs();
+}
+
+/** Both tabs' sliders show S.target; the Braccio tab's command line and 3D view follow. */
+function syncJointInputs() {
+  S.target.forEach((v, i) => {
+    if ($("j-r" + i)) $("j-r" + i).value = $("j-n" + i).value = v;
+    if ($("c-r" + i)) { $("c-r" + i).value = v; $("c-v" + i).textContent = v.toFixed(1) + "°"; }
+  });
+  $("go-cmd").textContent = setposeCmd(S.target, Number($("move-ms").value), $("move-prof").value);
+  draw3d(measuredVirtual());
+}
+
+/** Why the Camere sliders cannot move the arm now ("" = they can). Quiet: shown next to the sliders. */
+function camArmBlocked() {
+  if (!S.connected) return "non collegato";
+  if (!$("motion").checked) return "attiva 'comandi di movimento' in alto";
+  if (teleopDriving()) return "il visore sta comandando il braccio";
+  if (S.tm && S.tm.demo) return "demo in corso: fermala prima";
+  if (S.tm && S.tm.robot_state !== "IDLE") return `robot in ${S.tm ? S.tm.robot_state : "?"}: serve ENABLE`;
+  return "";
+}
+
+const camArm = { last: 0, timer: null, sent: null };
+function camArmSend() {
+  const why = camArmBlocked();
+  $("c-why").textContent = why;
+  if (why) return;
+  const wait = 100 - (performance.now() - camArm.last);     // at most 10 trajectories a second, the last one always
+  clearTimeout(camArm.timer);
+  if (wait > 0) { camArm.timer = setTimeout(camArmSend, wait); return; }
+  camArm.last = performance.now();
+  const from = camArm.sent || measuredVirtual() || S.target;
+  const delta = Math.max(...S.target.map((v, i) => Math.abs(v - from[i])));
+  if (delta < 0.2) return;
+  camArm.sent = S.target.slice();
+  uart(setposeCmd(S.target, Math.max(120, delta * 1000 / Number($("c-speed").value)), "RTR5"));
+  setTimeout(() => { if (performance.now() - camArm.last > 1500) camArm.sent = null; }, 1600);
+}
+$("c-meas").onclick = () => { const mv = measuredVirtual(); if (mv) { S.target = mv.slice(); clampTarget(); camArm.sent = null; syncJointInputs(); } };
+$("c-home").onclick = () => {
+  const why = camArmBlocked();
+  if (why) return toast(why, true);
+  camArm.sent = null;
+  S.target = [90, 90, 90, 90, 90, 90]; clampTarget(); syncJointInputs();
+  const mv = measuredVirtual() || S.target;
+  const delta = Math.max(...S.target.map((v, i) => Math.abs(v - mv[i])));
+  uart(setposeCmd(S.target, Math.max(400, delta * 1000 / 30), "RTR5"));
+};
 
 function updateJointsMeas(mv) {
   if (!mv || !S.jointsBuilt) return;
   mv.forEach((v, i) => {
     const phys = S.tm[SK[i]];
     $("j-m" + i).textContent = `mis. ${v.toFixed(0)}°\nfisico ${phys}°`;
+    if ($("c-m" + i)) $("c-m" + i).textContent = `mis. ${v.toFixed(0)}°`;
   });
 }
 
