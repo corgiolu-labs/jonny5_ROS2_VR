@@ -1029,15 +1029,31 @@ class Cameras:
     state in /dev/shm/jonny5_cam0_zoom.json; vr_zoom0/1 in the telemetry are the residual digital zoom."""
     PORT_BASE = 5600
     STATE_PATH = "/dev/shm/jonny5_cam0_zoom.json"
+    # stereo head (jonny5-stereo-head sender/src/protocol.hpp): ControlHeader + payload on its control port
+    J5_MAGIC, CTRL_EXPOSURE, CTRL_FOCUS = 0x4A35, 14, 15
+    FOCUS_AUTO, FOCUS_ONESHOT, FOCUS_FIXED, FOCUS_HOLD = 0, 1, 2, 3
 
-    def __init__(self, state_path: str = STATE_PATH, clock: Callable[[], float] = time.monotonic, sendto=None):
+    def __init__(self, state_path: str = STATE_PATH, clock: Callable[[], float] = time.monotonic, sendto=None,
+                 board_ctrl_port: int | None = None):
+        """board_ctrl_port: the robot has the stereo head (config board.ctrl_port, 20/11/2026): focus, refocus,
+        focus hold and brightness go to its sender as binary control datagrams; zoom and tele/wide are the
+        headset's business there and are not forwarded."""
         self.state_path, self.clock = state_path, clock
         self._sock = None
         self._sendto = sendto or self._udp
+        self.board_port = board_ctrl_port
         self.zoom = self.ev = self.mode = None
         self.zoom_sent = self.ev_sent = self.mode_sent = -1e9
         self.vr_zoom = [None, None]
         self.last_af = -1e9
+        self.focus_hold = False
+
+    def _board(self, typ: int, payload: bytes):
+        hdr = struct.pack("<HBBI", self.J5_MAGIC, typ, 0, int(time.monotonic() * 1e6) & 0xFFFFFFFF)
+        self._sendto(hdr + payload, self.board_port)
+
+    def _board_focus(self, mode: int, dioptres: float = 0.0):
+        self._board(self.CTRL_FOCUS, struct.pack("<BBH", mode, 0, int(round(max(0.0, min(16.0, dioptres)) * 256))))
 
     def _udp(self, data: bytes, port: int):
         import socket
@@ -1058,6 +1074,8 @@ class Cameras:
         return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
     def on_message(self, msg: dict) -> bool:
+        if self.board_port:
+            return self._on_board_message(msg)
         typ = msg.get("type")
         if typ == "vr_zoom_state":
             for i in (0, 1):
@@ -1084,13 +1102,45 @@ class Cameras:
             return False
         return True
 
+    def _on_board_message(self, msg: dict) -> bool:
+        typ = msg.get("type")
+        if typ == "vr_zoom_state":
+            for i in (0, 1):
+                if self._num(msg.get(f"zoom{i}")):
+                    self.vr_zoom[i] = float(msg[f"zoom{i}"])
+        elif typ == "cam_mode":
+            pass
+        elif typ == "cam_exposure":
+            if self._num(msg.get("ev")):
+                self.ev = max(-2.0, min(2.0, float(msg["ev"])))
+                self._board(self.CTRL_EXPOSURE, struct.pack("<hBB", int(round(self.ev * 256)), 0, 0))
+        elif typ == "cam_autofocus":                 # dashboard Refocus: one search, then stereo focus (or held)
+            self.autofocus()
+        elif typ == "cam_focus":
+            v = "auto" if msg.get("auto") else msg.get("dioptres", "auto")
+            if v == "auto":
+                self.focus_hold = False
+                self._board_focus(self.FOCUS_AUTO)
+            elif self._num(v):
+                self.focus_hold = False
+                self._board_focus(self.FOCUS_FIXED, float(v))
+        elif typ == "cam_focus_hold":                # lock both lenses where they are / back to automatic
+            self.focus_hold = bool(msg.get("on"))
+            self._board_focus(self.FOCUS_HOLD if self.focus_hold else self.FOCUS_AUTO)
+        else:
+            return False
+        return True
+
     def autofocus(self) -> bool:
         """One-shot AF on both cameras (POST /api/refocus-cameras); False within 1 s of the last one."""
         now = self.clock()
         if now - self.last_af < 1.0:
             return False
         self.last_af = now
-        self._send({"af": {"src": "button"}})
+        if self.board_port:
+            self._board_focus(self.FOCUS_ONESHOT)
+        else:
+            self._send({"af": {"src": "button"}})
         return True
 
     def state(self):
@@ -1105,6 +1155,14 @@ class Cameras:
 
     def telemetry(self) -> dict:
         now, out = self.clock(), {}
+        if self.board_port:
+            out["cam_focus_hold"] = self.focus_hold
+            if self.ev is not None:
+                out["cam_ev"] = self.ev
+            for i in (0, 1):
+                if self.vr_zoom[i] is not None:
+                    out[f"vr_zoom{i}"] = max(1.0, self.vr_zoom[i])
+            return out
         st = self.state()
         cz = float(st.get("zoom", 1.0)) if st else None
         if cz is not None:
@@ -1924,7 +1982,7 @@ def main():
         spi = SpidevBackend(cfg["spi"]["device"], int(cfg["spi"].get("speed_hz", 1000000)))
         uart = SerialBackend(cfg["uart"]["device"], int(cfg["uart"].get("baud", 115200)))
     core = Core(cfg, spi, uart)
-    cams = Cameras()
+    cams = Cameras(board_ctrl_port=cfg.get("board", {}).get("ctrl_port"))
     lock, stop = threading.Lock(), threading.Event()
     threading.Thread(target=control_thread, args=(core, lock, stop), kwargs={"sim": sim}, daemon=True,
                      name="j5mini-100hz").start()

@@ -55,7 +55,13 @@ export class CamTest {
     this.timer = null;
     const $ = id => document.getElementById(id);
     $("cam-start").onclick = () => (this.pcs.some(Boolean) ? this.stop() : this.start());
-    $("cam-af").onclick = () => { this.send({ type: "cam_autofocus" }); this.toast("autofocus su tutte e due le camere"); };
+    $("cam-af").onclick = () => { this.send({ type: "cam_autofocus" }); this.toast("refocus: una ricerca del fuoco, la seconda camera segue"); };
+    $("cam-hold").onclick = () => {
+      const on = !(this.getTm() || {}).cam_focus_hold;
+      if (!this.send({ type: "cam_focus_hold", on })) return this.toast("non collegato", true);
+      this.toast(on ? "fuoco bloccato dov'è, uguale sulle due camere" : "fuoco di nuovo automatico");
+      if (!on) $("cam-focus").value = "auto";
+    };
     $("cam-analyze").onclick = () => {
       this.visionReq = (this.visionReq || 0) + 1;
       if (!this.send({ type: "vision_request", action: "analyze", req: "cam" + this.visionReq })) return this.toast("non collegato", true);

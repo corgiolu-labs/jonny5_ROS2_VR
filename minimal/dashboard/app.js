@@ -277,6 +277,9 @@ function demoButton() {
   const d = S.tm && S.tm.demo;
   $("h-demo").textContent = d ? `Demo ${d.step}/${d.n} ■` : "Demo";
   $("h-demo").classList.toggle("on", !!d);
+  const held = !!(S.tm && S.tm.cam_focus_hold);                    // Camere: focus hold (stereo head)
+  $("cam-hold").classList.toggle("on", held);
+  $("cam-hold").textContent = held ? "Fuoco bloccato" : "Blocca fuoco";
 }
 
 function horizonButtons() {

@@ -1213,3 +1213,31 @@ def test_demo_style_and_roll_are_saved(tmp_path):
     assert err is None and out == {"demo_style": "steps", "demo_roll_deg": 15.0}
     assert j5mini.poses_from_settings_msg({"demo_style": "x"})[1]
     assert j5mini.poses_from_settings_msg({"demo_roll_deg": 90})[1]
+
+
+def test_stereo_head_camera_controls_are_binary_datagrams():
+    """On the stereo head (board.ctrl_port, 20/11/2026) the dashboard's focus, refocus, focus hold and brightness
+    become the sender's own control datagrams (protocol.hpp); zoom and tele/wide are not forwarded."""
+    sent = []
+    cams = j5mini.Cameras("/nonexistent", sendto=lambda d, p: sent.append((d, p)), board_ctrl_port=5601)
+
+    def last():
+        d, p = sent[-1]
+        magic, typ, ver, _ = struct.unpack("<HBBI", d[:8])
+        assert (magic, ver, p) == (0x4A35, 0, 5601)
+        return typ, d[8:]
+    assert cams.on_message({"type": "cam_autofocus"})
+    assert last() == (15, struct.pack("<BBH", 1, 0, 0))                 # one-shot
+    assert cams.on_message({"type": "cam_focus_hold", "on": True})
+    assert last() == (15, struct.pack("<BBH", 3, 0, 0)) and cams.telemetry()["cam_focus_hold"] is True
+    assert cams.on_message({"type": "cam_focus_hold", "on": False})
+    assert last() == (15, struct.pack("<BBH", 0, 0, 0)) and cams.telemetry()["cam_focus_hold"] is False
+    assert cams.on_message({"type": "cam_focus", "dioptres": 2})
+    assert last() == (15, struct.pack("<BBH", 2, 0, 512))               # fixed 50 cm
+    assert cams.on_message({"type": "cam_exposure", "ev": -1})
+    assert last() == (14, struct.pack("<hBB", -256, 0, 0))
+    n = len(sent)
+    assert cams.on_message({"type": "vr_zoom_state", "camera": True, "zoom0": 2, "zoom1": 2})
+    assert cams.on_message({"type": "cam_mode", "mode": "wide"})
+    cams.telemetry()
+    assert len(sent) == n                                               # nothing else, no periodic re-send
