@@ -618,7 +618,7 @@ class Core:
         self.events.append({"type": "demo", "on": True, "step": d["i"] + 1, "n": len(d["lines"])})
 
     # ---------------- object following (dashboard "Segui", stereo head boxes) ----------------
-    def track_start(self, box: dict, t_capture: float) -> tuple[bool, str]:
+    def track_start(self, box: dict, t_capture: float, kin: dict | None = None) -> tuple[bool, str]:
         if self.robot_state != "IDLE":
             return False, f"robot in {self.robot_state}: serve IDLE"
         if self.demo:
@@ -628,7 +628,7 @@ class Core:
             return False, "posa del braccio sconosciuta (nessuna telemetria)"
         s = settings_from_config(self.cfg_for_init)
         virt = [90.0 + (float(ph) - s["offsets"][j]) / (-1 if s["dirs"][j] < 0 else 1) for j, ph in enumerate(pose)]
-        self.track = Tracker(self.cfg_for_init, virt, box, t_capture, self.clock())
+        self.track = Tracker(self.cfg_for_init, virt, box, t_capture, self.clock(), kin=kin)
         self.events.append({"type": "track", "on": True, "cls": self.track.cls})
         self.log(f"[j5mini] follow class {self.track.cls} from box {box}")
         return True, ""
@@ -926,9 +926,52 @@ TRACK_DEFAULTS = {
     "size_memory_s": 3.0,          # how long the last uncut size on an axis is used to rebuild a cut box
     "max_predict_s": 0.6,
     "gate_px": 260,                # a box farther than this (+ the box size) from where the target should be: not it
+    "base_joint": 0,               # the base turns too when the wrist yaw runs out of room (None: wrist only)
+    "base_gain": 1.0,              # pan per base degree, in wrist yaw degrees, when there is no kinematics
+                                   # (with kinematics.json it comes from the pose: 1 with shoulder + elbow at 90)
+    "base_dead_deg": 15.0,         # the base stays put while the wrist yaw is within this of its centre
+    "base_tau_s": 1.0,             # ... beyond it the base brings the wrist back towards the centre
+    "base_max_deg_s": 20.0,        # the base carries the whole arm: slower than the wrist
+    "base_max_acc_deg_s2": 40.0,
     "hold_after_s": 0.8,           # target not seen: the prediction stops, the arm holds
     "give_up_s": 8.0,              # ... and the follower ends
 }
+
+
+def _rodrigues(w, a: float) -> list[list[float]]:
+    """Rotation by `a` rad about the unit axis w (3x3, rows)."""
+    x, y, z = w
+    c, s_, t = math.cos(a), math.sin(a), 1.0 - math.cos(a)
+    return [[t * x * x + c, t * x * y - s_ * z, t * x * z + s_ * y],
+            [t * x * y + s_ * z, t * y * y + c, t * y * z - s_ * x],
+            [t * x * z - s_ * y, t * y * z + s_ * x, t * z * z + c]]
+
+
+def _mat_mul(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+
+
+def camera_axes_coefficients(kin: dict, virtual: list) -> tuple[list[float], list[float]] | None:
+    """How much each joint turns the camera about its own up axis (the image moves sideways) and its own side
+    axis (the image moves up/down), per degree, at this pose (virtual degrees): the joint's POE axis seen from the
+    camera frame. 1 for wrist yaw and base at HOME; the wrist yaw drops with the cosine of the camera's pitch
+    (park pose: 0.77, measured 13.4 / 17.1 px per degree on 21/11/2026). None when kin is unusable."""
+    try:
+        axes = [[float(v) for v in row[:3]] for row in kin["S"]][:6]
+        m = [[float(v) for v in row[:3]] for row in kin["M"][:3]]
+        if len(axes) < 6 or len(m) < 3:
+            return None
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    r = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    spatial = []
+    for i, w in enumerate(axes):
+        spatial.append([sum(r[a][k] * w[k] for k in range(3)) for a in range(3)])
+        r = _mat_mul(r, _rodrigues(w, math.radians(float(virtual[i]) - 90.0)))
+    rc = _mat_mul(r, m)                                 # camera (end-effector) frame: x optical axis, z up
+    up = [sum(rc[k][2] * w[k] for k in range(3)) for w in spatial]
+    side = [sum(rc[k][1] * w[k] for k in range(3)) for w in spatial]
+    return up, side
 
 
 class Tracker:
@@ -949,7 +992,7 @@ class Tracker:
     STREAM_S = 0.04
     W, H = 1920, 1080
 
-    def __init__(self, cfg: dict, start_virtual, box: dict, t_capture: float, now: float):
+    def __init__(self, cfg: dict, start_virtual, box: dict, t_capture: float, now: float, kin: dict | None = None):
         self.p = p = {**TRACK_DEFAULTS, **cfg.get("settings", {}).get("track", {})}
         s = settings_from_config(cfg)
         self.offsets, self.dirs = s["offsets"], [-1 if d < 0 else 1 for d in s["dirs"]]
@@ -962,10 +1005,19 @@ class Tracker:
             lo, hi = (max(5, self.plimits[j][0]), min(175, self.plimits[j][1]))
             a, b = self._virtual(j, lo), self._virtual(j, hi)
             self.vlim.append((min(a, b), max(a, b)))
+        bj = p.get("base_joint")
+        self.bj = int(bj) if isinstance(bj, (int, float)) and int(bj) not in self.j and 0 <= int(bj) < 6 else None
+        if self.bj is not None:
+            lo, hi = (max(5, self.plimits[self.bj][0]), min(175, self.plimits[self.bj][1]))
+            a, b = self._virtual(self.bj, lo), self._virtual(self.bj, hi)
+            self.blim = (min(a, b), max(a, b))
+        self.bvel, self.bmoving = 0.0, False
+        self.kin = kin if kin and camera_axes_coefficients(kin, self.cmd) else None
+        self._update_coefficients()
         self.vel = [0.0, 0.0]
-        self.hist = collections.deque(maxlen=250)      # (t, [pan, tilt]) commanded, 10 s at 25 Hz
-        self.hist.append((now - 10.0, [self.cmd[j] for j in self.j]))
-        self.hist.append((now, [self.cmd[j] for j in self.j]))
+        self.hist = collections.deque(maxlen=250)      # (t, [yaw, pitch, base]) commanded, 10 s at 25 Hz
+        self.hist.append((now - 10.0, self._raw()))
+        self.hist.append((now, self._raw()))
         self.cls = int(box["cls"])
         self.x: list[float] | None = None              # filtered object direction (virtual deg of the two joints)
         self.v = [0.0, 0.0]
@@ -982,6 +1034,35 @@ class Tracker:
     def _virtual(self, j: int, phys: float) -> float:
         return 90.0 + (phys - self.offsets[j]) / self.dirs[j]
 
+    def _raw(self) -> list[float]:
+        return [self.cmd[self.j[0]], self.cmd[self.j[1]], self.cmd[self.bj] if self.bj is not None else 90.0]
+
+    def _update_coefficients(self):
+        """Pixel scale per axis (px_per_deg x how much the joint turns the camera at this pose) and the base's
+        worth in wrist yaw degrees; from kinematics.json, or the plain px_per_deg / base_gain without it."""
+        c = camera_axes_coefficients(self.kin, self.cmd) if self.kin else None
+        if c:
+            up, side = c
+            yaw = up[self.j[0]] if abs(up[self.j[0]]) >= 0.3 else math.copysign(0.3, up[self.j[0]] or 1.0)
+            tilt = side[self.j[1]] if abs(side[self.j[1]]) >= 0.3 else math.copysign(0.3, side[self.j[1]] or 1.0)
+            self.scale = [yaw, tilt]
+            self.kb = up[self.bj] / yaw if self.bj is not None else 0.0
+        else:
+            self.scale = [1.0, 1.0]
+            self.kb = float(self.p["base_gain"]) if self.bj is not None else 0.0
+        if self.bj is not None:
+            ends = [w + self.kb * (b - 90.0) for w in self.vlim[0] for b in self.blim]
+            self.plim = (min(ends), max(ends))
+        else:
+            self.plim = self.vlim[0]
+
+    def _ppd(self, i: int) -> float:
+        return self.ppd[i] * self.scale[i]
+
+    def _axes(self, raw: list[float]) -> list[float]:
+        """[pan, tilt] of a [yaw, pitch, base] pose: pan in wrist yaw degrees, the base counted at its worth."""
+        return [raw[0] + self.kb * (raw[2] - 90.0), raw[1]]
+
     def physical(self) -> list[float]:
         out = []
         for j, v in enumerate(self.cmd):
@@ -994,14 +1075,14 @@ class Tracker:
         t -= self.p["lag_s"]
         h = self.hist
         if t <= h[0][0]:
-            return list(h[0][1])
+            return self._axes(h[0][1])
         prev = h[0]
         for e in h:
             if e[0] >= t:
                 u = (t - prev[0]) / (e[0] - prev[0]) if e[0] > prev[0] else 1.0
-                return [a + (b - a) * u for a, b in zip(prev[1], e[1])]
+                return self._axes([a + (b - a) * u for a, b in zip(prev[1], e[1])])
             prev = e
-        return list(h[-1][1])
+        return self._axes(h[-1][1])
 
     def _centre(self, b: dict) -> tuple[float, float]:
         return b["x"] + b["w"] / 2.0, b["y"] + b["h"] / 2.0
@@ -1031,7 +1112,7 @@ class Tracker:
         pose = self.pose_at(t)
         dt = max(0.0, min(self.p["max_predict_s"], t - self.t_meas))
         a = [x + v * dt for x, v in zip(self.x, self.v)]
-        return (self.W / 2 + self.ppd[0] * (pose[0] - a[0]), self.H / 2 + self.ppd[1] * (pose[1] - a[1]))
+        return (self.W / 2 + self._ppd(0) * (pose[0] - a[0]), self.H / 2 + self._ppd(1) * (pose[1] - a[1]))
 
     def on_boxes(self, boxes: list, t_capture: float, now: float) -> bool:
         """One detection frame. True when the target was in it (and the estimate was updated)."""
@@ -1073,7 +1154,7 @@ class Tracker:
                 self.x[i] = pred
                 self.v[i] *= 0.7
                 continue
-            a = pose[i] + ((self.W if i == 0 else self.H) / 2 - c) / self.ppd[i]
+            a = pose[i] + ((self.W if i == 0 else self.H) / 2 - c) / self._ppd(i)
             if first:
                 self.x[i] = a
                 continue
@@ -1107,13 +1188,15 @@ class Tracker:
         if not fresh:
             self.v = [0.0, 0.0]                        # lost: hold on the last estimate
         moved = False
+        self._update_coefficients()
         for i, j in enumerate(self.j):
             lead = max(0.0, min(p["max_predict_s"], now - self.t_meas + p["lag_s"]))
             v = self._v_eff(i)
             want = self.x[i] + v * lead
-            lo, hi = self.vlim[i]
+            lo, hi = self.plim if i == 0 else self.vlim[i]
             want = max(lo, min(hi, want))
-            err = want - self.cmd[j]
+            cur = self._axes(self._raw())[i]
+            err = want - cur
             still = abs(v) < 1.0
             if still and abs(err) < p["deadband_deg"] * (0.3 if self.moving[i] else 1.0):
                 self.moving[i] = False
@@ -1126,27 +1209,62 @@ class Tracker:
             self.vel[i] += dv
             if not self.moving[i] and abs(self.vel[i]) < p["max_acc_deg_s2"] * dt:
                 self.vel[i] = 0.0
-            new = max(lo, min(hi, self.cmd[j] + self.vel[i] * dt))
+            new = max(lo, min(hi, cur + self.vel[i] * dt))
             if new in (lo, hi):
                 self.vel[i] = 0.0
+            if i == 0 and self.bj is not None:
+                moved |= self._split_pan(new, fresh, dt)
+                continue
             if abs(new - self.cmd[j]) > 1e-4:
                 moved = True
             self.cmd[j] = new
-        self.hist.append((now, [self.cmd[j] for j in self.j]))
+        self.hist.append((now, self._raw()))
         if not moved:
             return None
         return "SETPOSE_T_HR " + " ".join(str(int(round(v * 10))) for v in self.physical()) + \
             f" {int(self.STREAM_S * 1000)} RTR3"
 
+    def _split_pan(self, pan: float, fresh: bool, dt: float) -> bool:
+        """Share the pan between wrist yaw (fast, does the following) and base (slow): beyond base_dead_deg of
+        wrist yaw from its centre the base turns to bring the wrist back, and the wrist gives back what the base
+        adds, so the camera keeps pointing where the follower wants. True when a joint moved."""
+        p, jy, jb = self.p, self.j[0], self.bj
+        e = self.cmd[jy] - 90.0
+        dead = p["base_dead_deg"] * (0.3 if self.bmoving else 1.0)
+        target = 0.0
+        if fresh and abs(e) > dead and abs(self.kb) > 0.2:
+            target = (e - math.copysign(dead, e)) / self.kb / p["base_tau_s"]
+            self.bmoving = abs(target) >= 0.5 or not self.bmoving   # no endless creeping at the end
+            if not self.bmoving:
+                target = 0.0
+        else:
+            self.bmoving = False
+        target = max(-p["base_max_deg_s"], min(p["base_max_deg_s"], target))
+        acc = p["base_max_acc_deg_s2"] * dt
+        self.bvel += max(-acc, min(acc, target - self.bvel))
+        if not self.bmoving and abs(self.bvel) < acc:
+            self.bvel = 0.0
+        lo, hi = self.blim
+        b = max(lo, min(hi, self.cmd[jb] + self.bvel * dt))
+        if b in (lo, hi):
+            self.bvel = 0.0
+        lo, hi = self.vlim[0]
+        y = max(lo, min(hi, pan - self.kb * (b - 90.0)))
+        moved = abs(b - self.cmd[jb]) > 1e-4 or abs(y - self.cmd[jy]) > 1e-4
+        self.cmd[jb], self.cmd[jy] = b, y
+        return moved
+
     def status(self, now: float) -> dict:
         err = None
         if self.x is not None:
-            err = [round(self.x[i] - self.cmd[j], 1) for i, j in enumerate(self.j)]
+            err = [round(self.x[i] - c, 1) for i, c in enumerate(self._axes(self._raw()))]
         lost = self.lost_for(now)
         return {"state": "segue" if lost < self.p["hold_after_s"] else "perso", "cls": self.cls,
                 "box": [self.box["x"], self.box["y"], self.box["w"], self.box["h"]],
                 "lost_ms": int(lost * 1000), "err_deg": err, "speed_deg_s": [round(v, 1) for v in self.v],
-                "n": self.n_meas, "trust": list(self.trust)}
+                "n": self.n_meas, "trust": list(self.trust),
+                "base": round(self.cmd[self.bj], 1) if self.bj is not None else None,
+                "scale": [round(v, 2) for v in self.scale], "base_gain": round(self.kb, 2)}
 
 
 def track_pick(boxes: list, x: float | None = None, y: float | None = None) -> dict | None:
@@ -1825,7 +1943,7 @@ class Server:
         with self.lock:
             if self.core.track:
                 self.core.track_stop("nuovo bersaglio")
-            return self.core.track_start(box, b.boxes_tcap)
+            return self.core.track_start(box, b.boxes_tcap, kin=self.kin)
 
     def pose_command(self, cmd: str):
         """PARK / TELEOPPOSE as ws-teleop: SETPOSE to the saved pose; the reply goes out under the client's command,

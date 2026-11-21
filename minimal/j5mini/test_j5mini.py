@@ -1288,9 +1288,10 @@ class TrackWorld:
     `noise_px` / `size_noise` jitter of the box centre (px, gaussian) and of its size (fraction)."""
 
     def __init__(self, obj, start=(90.0, 90.0), latency=0.15, ppd=(17.1, -17.1), lag=0.2, period=0.2,
-                 size=(80, 120), noise_px=0.0, size_noise=0.0, seed=1):
+                 size=(80, 120), noise_px=0.0, size_noise=0.0, seed=1, base_gain=1.0, track=None):
         self.cfg = json.loads(json.dumps(CFG))
-        self.cfg["settings"]["track"] = {"px_per_deg": list(ppd), "lag_s": lag}
+        self.cfg["settings"]["track"] = {"px_per_deg": list(ppd), "lag_s": lag, **(track or {})}
+        self.base_gain = base_gain                     # what one base degree really is in pan (the tracker: 1)
         self.obj, self.latency, self.ppd, self.lag, self.period = obj, latency, ppd, lag, period
         self.size, self.noise_px, self.size_noise = size, noise_px, size_noise
         self.rng = random.Random(seed)
@@ -1339,7 +1340,11 @@ class TrackWorld:
             line = self.tr.tick(self.t)
             if line:
                 self.lines.append((self.t, line))
-            self.cmds.append((self.t, [self.tr.cmd[3], self.tr.cmd[4]]))
+            self.cmds.append((self.t, self.pan_tilt()))
+
+    def pan_tilt(self):
+        c = self.tr.cmd
+        return [c[3] + self.base_gain * (c[0] - 90.0), c[4]]
 
     def err(self, t):
         cam, o = self.cam(t), self.obj(t)
@@ -1444,6 +1449,52 @@ def test_follower_ignores_the_cut_side_of_a_box():
     w.run(4.0)
     rms, rev = pan_reversals(w, 16.0)
     assert rms < 4.0 and rev <= 35, (rms, rev)
+
+
+def test_follower_turns_the_base_when_the_wrist_runs_out_of_room():
+    """An object going 50 deg to the side (the wrist yaw has 45): the wrist follows, the base takes over beyond
+    base_dead_deg and gives the wrist back its room, at most base_max_deg_s; the camera ends on the object."""
+    w = TrackWorld(lambda t: (90.0 + min(50.0, 12.0 * t), 90.0), period=0.15)
+    w.run(10.0)
+    ex, _ = w.err(w.t)
+    c = w.tr.cmd
+    assert abs(ex) < 1.5 and abs(c[3] - 90.0) < 6.0 and c[0] > 130.0, (ex, c[3], c[0])
+    bases = [int(l.split()[1]) / 10 for _, l in w.lines]                       # physical base, deg
+    speeds = [abs(b - a) / 0.04 for a, b in zip(bases, bases[1:])]
+    assert max(speeds) <= 21.0, max(speeds)
+    st = w.tr.status(w.t)
+    assert st["base"] == round(c[0], 1) and abs(st["err_deg"][0]) < 1.5
+    # without the base: stuck at the wrist's limit
+    w = TrackWorld(lambda t: (90.0 + min(50.0, 12.0 * t), 90.0), period=0.15, track={"base_joint": None})
+    w.run(10.0)
+    assert w.tr.cmd[0] == 90.0 and w.err(w.t)[0] < -4.0, (w.tr.cmd[0], w.err(w.t))
+
+
+def test_follower_with_the_base_worth_less_than_assumed_still_gets_there():
+    """The base's worth comes from the kinematics; when it is off (here 0.8 real vs 1.0 assumed) the boxes still
+    close the loop: the camera ends on the object, the wrist a little off its centre."""
+    w = TrackWorld(lambda t: (90.0 + min(40.0, 12.0 * t), 90.0), period=0.15, base_gain=0.8)
+    w.run(12.0)
+    assert abs(w.err(w.t)[0]) < 2.0, w.err(w.t)
+
+
+def test_camera_axes_from_the_kinematics():
+    """Base and wrist yaw turn the camera about its up axis by 1 deg per deg at HOME; in the park pose (camera
+    looking 60 deg down) the wrist yaw is worth cos 40 = 0.77 (measured on the robot: 13.4 of 17.1 px per deg)
+    and the base 0.5, i.e. 0.65 wrist degrees per base degree."""
+    kin = j5mini.load_kinematics()
+    up, side = j5mini.camera_axes_coefficients(kin, [90.0] * 6)
+    assert [round(v, 3) for v in up] == [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+    assert [round(v, 3) for v in side] == [0.0, 1.0, 1.0, 0.0, 1.0, 0.0]
+    park = [90.0, 50.0, 150.0, 90.0, 130.0, 90.0]
+    up, side = j5mini.camera_axes_coefficients(kin, park)
+    assert abs(up[3] - 0.766) < 0.01 and abs(up[0] - 0.5) < 0.01 and abs(side[4] - 1.0) < 1e-6
+    box = {"x": 900, "y": 500, "w": 100, "h": 100, "cls": 39, "score": 0.8}
+    tr = j5mini.Tracker(json.loads(json.dumps(CFG)), park, box, 0.0, 0.1, kin=kin)
+    assert abs(tr.scale[0] - 0.766) < 0.01 and abs(tr.kb - 0.653) < 0.01
+    assert j5mini.camera_axes_coefficients({"S": [[0, 0, 1]]}, park) is None
+    tr = j5mini.Tracker(json.loads(json.dumps(CFG)), park, box, 0.0, 0.1, kin={"S": "x"})
+    assert tr.scale == [1.0, 1.0] and tr.kb == 1.0                              # no kinematics: plain gains
 
 
 def test_follower_holds_when_the_object_is_lost_and_ignores_other_objects():
