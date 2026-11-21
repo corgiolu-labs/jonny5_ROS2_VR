@@ -47,8 +47,9 @@ export function verdict(s) {
 }
 
 export class CamTest {
-  constructor({ send, getTelemetry, getCollimation, toast }) {
+  constructor({ send, getTelemetry, getCollimation, toast, motionAllowed }) {
     this.send = send; this.getTm = getTelemetry; this.getCol = getCollimation; this.toast = toast;
+    this.motionAllowed = motionAllowed || (() => true);
     this.pcs = [null, null]; this.prev = [null, null]; this.stats = [null, null];
     this.scratch = document.createElement("canvas");
     this.scratch.width = 320; this.scratch.height = 180;
@@ -76,6 +77,16 @@ export class CamTest {
       this.send(v === "auto" ? { type: "cam_focus", auto: true } : { type: "cam_focus", dioptres: Number(v) });
     };
     CAMS.forEach((c, i) => { $(`cam-shot${i}`).onclick = () => this.snapshot(i); });
+    // Segui (21/11/2026): j5mini muove yaw e pitch del polso per tenere al centro l'oggetto (box YOLO della NPU).
+    // Il pulsante prende l'oggetto sotto il mirino; un clic nel video sinistro prende quello cliccato.
+    $("cam-track").onclick = () => {
+      if ((this.getTm() || {}).track) { this.send({ type: "track", on: false }); return; }
+      this.startTrack();
+    };
+    $("cam-ov0").onclick = e => {
+      const r = e.currentTarget.getBoundingClientRect();
+      this.startTrack(Math.round((e.clientX - r.left) / r.width * 1920), Math.round((e.clientY - r.top) / r.height * 1080));
+    };
     // Mirino (21/11/2026): il centro dell'occhio sinistro, dove il collimatore misura la distanza. Disegnato sul
     // canvas che ridisegna il video (un elemento sopra al <video> lo rende nero in Chromium, vedi onDetections).
     this.crosshair = true;
@@ -86,6 +97,13 @@ export class CamTest {
       try { localStorage.setItem("j5.cam.crosshair", this.crosshair ? "1" : "0"); } catch { /* private mode */ }
       this.kickOverlay();
     };
+  }
+
+  startTrack(x, y) {
+    if (!this.motionAllowed()) return;
+    const m = { type: "track", on: true };
+    if (x !== undefined) { m.x = x; m.y = y; }
+    if (!this.send(m)) this.toast("non collegato", true);
   }
 
   kickOverlay() {
@@ -159,6 +177,18 @@ export class CamTest {
       const tw = g.measureText(tgt.label).width + 10 * k, th = 24 * k, ly = y + h + th <= H ? y + h + 2 * k : y - th;
       g.fillStyle = "rgba(0, 0, 0, 0.75)"; g.fillRect(x, ly, tw, th);
       g.fillStyle = "#FFBE5A"; g.fillText(tgt.label, x + 5 * k, ly + 3 * k);
+    }
+    const tr = (this.getTm() || {}).track;
+    if (tr && tr.box) {   // l'oggetto seguito: magenta (tratteggiato quando è perso)
+      const [bx, by, bw, bh] = tr.box, lost = tr.state !== "segue";
+      const x = bx * sx, y = by * sy, w = bw * sx, h = bh * sy;
+      g.lineWidth = 4 * k; g.strokeStyle = "rgba(255, 70, 200, 0.95)";
+      g.setLineDash(lost ? [10 * k, 8 * k] : []); g.strokeRect(x, y, w, h); g.setLineDash([]);
+      const label = `seguo ${COCO[tr.cls] || "cls " + tr.cls}` + (lost ? ` · perso da ${(tr.lost_ms / 1000).toFixed(1)} s` : "");
+      g.font = `bold ${Math.round(16 * k)}px system-ui, sans-serif`;
+      const tw = g.measureText(label).width + 10 * k, th = 22 * k, ly = y + h + th <= H ? y + h + 2 * k : y - th;
+      g.fillStyle = "rgba(0, 0, 0, 0.75)"; g.fillRect(x, ly, tw, th);
+      g.fillStyle = "#FF7AD9"; g.fillText(label, x + 5 * k, ly + 3 * k);
     }
     if (this.crosshair) this.drawCrosshair(g, W, H, k);
     requestAnimationFrame(() => this.ovFrame());

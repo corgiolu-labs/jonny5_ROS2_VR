@@ -245,6 +245,7 @@ class Core:
         self.diag: dict = {}
         self.events: list[dict] = []        # unsolicited lines, uart responses (drained by the server)
         self.demo: dict | None = None       # running pose sequence (demo_start), see _demo_next
+        self.track: Tracker | None = None   # object following (track_start), see _track_tick
         self.stats = dict(spi_tx=0, spi_rx_ok=0, spi_rx_bad=0, neutral=0, uart_tx=0, uart_rx=0, uart_timeouts=0,
                           spi_shift=0, smoothed=0)
 
@@ -353,6 +354,8 @@ class Core:
         if line.startswith("STATUS:"):
             self.robot_state = line[7:].strip()
             return
+        if self.track and line.startswith("SETPOSE_DONE"):
+            return                                    # end of one 40 ms segment of the follower
         if self.demo and line.startswith("SETPOSE_DONE") and self.demo.get("style") == "smooth":
             d = self.demo
             if d["run"]:
@@ -382,8 +385,8 @@ class Core:
             self._boot_next()
         if cb:
             cb(ok, resp)
-        if ok and cmd.startswith("SETPOSE_T_HR ") and self.demo and self.demo.get("run"):
-            return                                    # 25 a second while the smooth demo runs
+        if ok and cmd.startswith("SETPOSE_T_HR ") and (self.demo and self.demo.get("run") or self.track):
+            return                                    # 25 a second while the smooth demo / the follower runs
         self.events.append({"type": "uart_response", "cmd": cmd, "ok": ok, "response": resp})
 
     def _start_boot_push(self, booted: bool = False):
@@ -477,6 +480,7 @@ class Core:
         now = self.clock()
         self._init_pose_check()
         self._demo_tick(now)
+        self._track_tick(now)
         self._auto_park_tick(now)
         if not self.boot_done and now - self.t0 >= self.BOOT_FALLBACK_S:
             self.log("[j5mini] no BOOT_READY seen: pushing configuration anyway")
@@ -512,6 +516,8 @@ class Core:
             return False, "nessun passo"
         if self.robot_state != "IDLE":
             return False, f"robot in {self.robot_state}: serve IDLE"
+        if self.track:
+            return False, "sta seguendo un oggetto: fermalo prima"
         self.demo = {"lines": list(lines), "i": -1, "deadline": 0.0, "moving": False}
         self._demo_next()
         return True, ""
@@ -522,6 +528,8 @@ class Core:
         playback speed ramps up from 0 at the start and back to 0 when the dashboard stops it."""
         if self.robot_state != "IDLE":
             return False, f"robot in {self.robot_state}: serve IDLE"
+        if self.track:
+            return False, "sta seguendo un oggetto: fermalo prima"
         self.demo = {"style": "smooth", "path": path, "lines": [None] * path.n, "i": 0, "moving": False,
                      "deadline": 0.0, "run": False, "tau": 0.0, "ramp": 0.0, "stopping": None, "next": 0.0,
                      "last": 0.0}
@@ -609,6 +617,56 @@ class Core:
         self.uart_send(line, sent)
         self.events.append({"type": "demo", "on": True, "step": d["i"] + 1, "n": len(d["lines"])})
 
+    # ---------------- object following (dashboard "Segui", stereo head boxes) ----------------
+    def track_start(self, box: dict, t_capture: float) -> tuple[bool, str]:
+        if self.robot_state != "IDLE":
+            return False, f"robot in {self.robot_state}: serve IDLE"
+        if self.demo:
+            return False, "demo in corso: fermala prima"
+        pose = [self.telemetry.get(k) for k in SERVO_KEYS]
+        if not all(isinstance(v, (int, float)) for v in pose):
+            return False, "posa del braccio sconosciuta (nessuna telemetria)"
+        s = settings_from_config(self.cfg_for_init)
+        virt = [90.0 + (float(ph) - s["offsets"][j]) / (-1 if s["dirs"][j] < 0 else 1) for j, ph in enumerate(pose)]
+        self.track = Tracker(self.cfg_for_init, virt, box, t_capture, self.clock())
+        self.events.append({"type": "track", "on": True, "cls": self.track.cls})
+        self.log(f"[j5mini] follow class {self.track.cls} from box {box}")
+        return True, ""
+
+    def track_boxes(self, boxes: list, t_capture: float):
+        if self.track:
+            self.track.on_boxes(boxes, t_capture, self.clock())
+
+    def track_stop(self, reason: str, hold: bool = False):
+        t = self.track
+        if not t:
+            return
+        self.track = None
+        if hold:
+            self.uart_send("SETPOSE_T_HR " + " ".join(str(int(round(v * 10))) for v in t.physical()) + " 120 RTR3")
+        self.events.append({"type": "track", "on": False, "reason": reason})
+        self.log(f"[j5mini] follow stopped ({reason}), {t.n_meas} detections used")
+
+    def _track_tick(self, now: float):
+        t = self.track
+        if not t:
+            return
+        if self.robot_state != "IDLE":
+            self.track_stop(f"robot in {self.robot_state}")
+            return
+        if self.diag.get("deadman") is True:
+            self.track_stop("grilletti del visore premuti")
+            return
+        if t.lost_for(now) > t.p["give_up_s"]:
+            self.track_stop(f"oggetto perso da {t.p['give_up_s']:.0f} s")
+            return
+        line = t.tick(now)
+        if line:
+            def sent(ok, resp):
+                if self.track is t and not ok:
+                    self.track_stop(f"traiettoria rifiutata: {resp}")
+            self.uart_send(line, sent)
+
     # ---------------- auto-park: the arm parks itself when the operator leaves it idle ----------------
     def auto_park_in(self, now: float | None = None) -> int | None:
         """Seconds left before the automatic PARK, or None when the countdown is not running."""
@@ -632,7 +690,7 @@ class Core:
             return
         if self.auto_park_done or self.auto_park_s <= 0 or now - self.idle_since < self.auto_park_s:
             return
-        if self.robot_state != "IDLE" or self.demo:
+        if self.robot_state != "IDLE" or self.demo or self.track:
             return                                    # try again next tick, the countdown stays at zero
         park = pose_physical(self.cfg_for_init, self.cfg_for_init.get("settings", {}).get("park", POSE_DEFAULTS["park"]))
         pose = [self.telemetry.get(k) for k in SERVO_KEYS]
@@ -672,7 +730,8 @@ class Core:
                 # mode echoed by the firmware in its STATUS reply
                 "vr_q": [round(v, 4) for v in self.samples[-1][2]] if live and self.samples else None,
                 "vr_heartbeat": self.last_hb if live else None, "mode_echo": self.diag.get("mode_echo"),
-                "demo": self.demo_status(), "auto_park_in": self.auto_park_in(), "link": dict(self.stats)}
+                "demo": self.demo_status(), "auto_park_in": self.auto_park_in(), "link": dict(self.stats),
+                "track": self.track.status(self.clock()) if self.track else None}
 
 
 # ------------------------------------------------------------------ settings (dashboard)
@@ -840,6 +899,215 @@ class DemoPath:
 
     def stream_line(self, tau: float, ms: int) -> str:
         return "SETPOSE_T_HR " + " ".join(str(int(round(v * 10))) for v in self.physical(tau)) + f" {ms} RTR3"
+
+
+# ------------------------------------------------------------------ object following (dashboard "Segui")
+
+TRACK_DEFAULTS = {
+    "joints": [3, 4],              # pan = wrist yaw (Y), tilt = wrist pitch (P)
+    "px_per_deg": [17.1, -17.1],   # how far (left-eye px) a still object moves in the image for +1 virtual deg of
+                                   # each joint, sign included. Measured on the robot 21/11/2026 (park pose, camera
+                                   # looking down): yaw +13.4 px/deg on x, pitch -12 px/deg on y, i.e. ~17 level
+                                   # (f_px 981); the pitch servo has ~4 deg of backlash (5 deg steps: 12 px)
+    "lag_s": 0.20,                 # servos behind the firmware's trajectory (IMU campaign 18/10/2026: 200-250 ms)
+    "max_deg_s": 35.0,             # command speed limit per joint
+    "max_acc_deg_s2": 150.0,
+    "tau_s": 0.15,                 # time constant of the approach to the target direction
+    "deadband_deg": 1.0,           # a still object within this of the command: no motion (no hunting)
+    "alpha": 0.7, "beta": 0.4,     # alpha-beta filter of the object's direction (per detection: tuned at
+                                   # 5-10 Hz in test_j5mini TrackWorld)
+    "max_predict_s": 0.6,
+    "gate_px": 260,                # a box farther than this (+ the box size) from where the target should be: not it
+    "hold_after_s": 0.8,           # target not seen: the prediction stops, the arm holds
+    "give_up_s": 8.0,              # ... and the follower ends
+}
+
+
+class Tracker:
+    """Follow an object with the camera (21/11/2026, dashboard "Segui"). The YOLO boxes of the stereo head (left
+    eye, ~5 Hz, kCtrlVideoMeta via the meta mirror) steer two joints, by default wrist yaw (pan) and wrist pitch
+    (tilt), with one SETPOSE_T_HR every 40 ms like the smooth demo.
+
+    A box is 100-200 ms old when it gets here and the servos are another ~200 ms behind the commands: a plain
+    "move by the offset from the centre" loop over-corrects and swings. So each box becomes the object's ABSOLUTE
+    direction in joint space: the joint where the camera was when the frame was taken (this follower's own command
+    history, lag_s earlier) + the box's offset from the centre / px_per_deg. An alpha-beta filter estimates that
+    direction and its speed; the command goes towards where the object will be when the servos get there (lag_s
+    ahead), with speed and acceleration limits and a dead band for a still object. The other joints stay put.
+
+    No box matching the target for hold_after_s: no more prediction (the arm stops on the last estimate); after
+    give_up_s the follower ends (Core.track_stop). Pure logic: Core feeds boxes and time."""
+
+    STREAM_S = 0.04
+    W, H = 1920, 1080
+
+    def __init__(self, cfg: dict, start_virtual, box: dict, t_capture: float, now: float):
+        self.p = p = {**TRACK_DEFAULTS, **cfg.get("settings", {}).get("track", {})}
+        s = settings_from_config(cfg)
+        self.offsets, self.dirs = s["offsets"], [-1 if d < 0 else 1 for d in s["dirs"]]
+        self.plimits = s["limits"]
+        self.j = [int(x) for x in p["joints"]][:2]
+        self.ppd = [float(v) if abs(float(v)) > 1e-3 else 17.1 for v in p["px_per_deg"]][:2]
+        self.cmd = [float(v) for v in start_virtual]
+        self.vlim = []
+        for j in self.j:                               # the joint's room in virtual degrees
+            lo, hi = (max(5, self.plimits[j][0]), min(175, self.plimits[j][1]))
+            a, b = self._virtual(j, lo), self._virtual(j, hi)
+            self.vlim.append((min(a, b), max(a, b)))
+        self.vel = [0.0, 0.0]
+        self.hist = collections.deque(maxlen=250)      # (t, [pan, tilt]) commanded, 10 s at 25 Hz
+        self.hist.append((now - 10.0, [self.cmd[j] for j in self.j]))
+        self.hist.append((now, [self.cmd[j] for j in self.j]))
+        self.cls = int(box["cls"])
+        self.x: list[float] | None = None              # filtered object direction (virtual deg of the two joints)
+        self.v = [0.0, 0.0]
+        self.t_meas = t_capture
+        self.seen = now
+        self.box = dict(box)
+        self.n_meas = 0
+        self.moving = [False, False]
+        self.next = now
+        self.measure(box, t_capture, now)
+
+    def _virtual(self, j: int, phys: float) -> float:
+        return 90.0 + (phys - self.offsets[j]) / self.dirs[j]
+
+    def physical(self) -> list[float]:
+        out = []
+        for j, v in enumerate(self.cmd):
+            ph = max(5.0, min(175.0, self.offsets[j] + self.dirs[j] * (v - 90.0)))
+            out.append(max(self.plimits[j][0], min(self.plimits[j][1], ph)))
+        return out
+
+    def pose_at(self, t: float) -> list[float]:
+        """The camera's two joints at time t: the commands of lag_s before (the servos follow that far behind)."""
+        t -= self.p["lag_s"]
+        h = self.hist
+        if t <= h[0][0]:
+            return list(h[0][1])
+        prev = h[0]
+        for e in h:
+            if e[0] >= t:
+                u = (t - prev[0]) / (e[0] - prev[0]) if e[0] > prev[0] else 1.0
+                return [a + (b - a) * u for a, b in zip(prev[1], e[1])]
+            prev = e
+        return list(h[-1][1])
+
+    def _centre(self, b: dict) -> tuple[float, float]:
+        return b["x"] + b["w"] / 2.0, b["y"] + b["h"] / 2.0
+
+    def expected_px(self, t: float) -> tuple[float, float]:
+        """Where the target should be in a frame taken at t (box centre if no estimate yet)."""
+        if self.x is None:
+            return self._centre(self.box)
+        pose = self.pose_at(t)
+        dt = max(0.0, min(self.p["max_predict_s"], t - self.t_meas))
+        a = [x + v * dt for x, v in zip(self.x, self.v)]
+        return (self.W / 2 + self.ppd[0] * (pose[0] - a[0]), self.H / 2 + self.ppd[1] * (pose[1] - a[1]))
+
+    def on_boxes(self, boxes: list, t_capture: float, now: float) -> bool:
+        """One detection frame. True when the target was in it (and the estimate was updated)."""
+        if t_capture <= self.t_meas:
+            return False
+        ex, ey = self.expected_px(t_capture)
+        size = max(self.box["w"], self.box["h"])
+        best, best_d = None, None
+        for b in boxes:
+            if int(b["cls"]) != self.cls:
+                continue
+            cx, cy = self._centre(b)
+            d = math.hypot(cx - ex, cy - ey)
+            if d <= self.p["gate_px"] + 0.75 * size and (best is None or d < best_d):
+                best, best_d = b, d
+        if best is None:
+            return False
+        self.measure(best, t_capture, now)
+        return True
+
+    def measure(self, b: dict, t: float, now: float):
+        cx, cy = self._centre(b)
+        pose = self.pose_at(t)
+        a = [pose[0] + (self.W / 2 - cx) / self.ppd[0], pose[1] + (self.H / 2 - cy) / self.ppd[1]]
+        if self.x is None:
+            self.x = a
+        else:
+            dt = max(1e-3, t - self.t_meas)
+            vmax = self.p["max_deg_s"] * 2
+            for i in range(2):
+                pred = self.x[i] + self.v[i] * dt
+                r = a[i] - pred
+                self.x[i] = pred + self.p["alpha"] * r
+                self.v[i] = max(-vmax, min(vmax, self.v[i] + self.p["beta"] * r / dt))
+        self.t_meas, self.seen, self.box = t, now, dict(b)
+        self.n_meas += 1
+
+    def lost_for(self, now: float) -> float:
+        return now - self.seen
+
+    def tick(self, now: float) -> str | None:
+        """Every STREAM_S: the next SETPOSE_T_HR, or None when the arm stays where it is."""
+        if now < self.next:
+            return None
+        self.next = max(self.next + self.STREAM_S, now + self.STREAM_S * 0.5)
+        p, dt = self.p, self.STREAM_S
+        fresh = self.lost_for(now) < p["hold_after_s"]
+        if not fresh:
+            self.v = [0.0, 0.0]                        # lost: hold on the last estimate
+        moved = False
+        for i, j in enumerate(self.j):
+            lead = max(0.0, min(p["max_predict_s"], now - self.t_meas + p["lag_s"]))
+            want = self.x[i] + self.v[i] * lead
+            lo, hi = self.vlim[i]
+            want = max(lo, min(hi, want))
+            err = want - self.cmd[j]
+            still = abs(self.v[i]) < 3.0
+            if still and abs(err) < p["deadband_deg"] * (0.3 if self.moving[i] else 1.0):
+                self.moving[i] = False
+                target_v = 0.0
+            else:
+                self.moving[i] = True
+                target_v = self.v[i] + err / p["tau_s"]
+            target_v = max(-p["max_deg_s"], min(p["max_deg_s"], target_v))
+            dv = max(-p["max_acc_deg_s2"] * dt, min(p["max_acc_deg_s2"] * dt, target_v - self.vel[i]))
+            self.vel[i] += dv
+            if not self.moving[i] and abs(self.vel[i]) < p["max_acc_deg_s2"] * dt:
+                self.vel[i] = 0.0
+            new = max(lo, min(hi, self.cmd[j] + self.vel[i] * dt))
+            if new in (lo, hi):
+                self.vel[i] = 0.0
+            if abs(new - self.cmd[j]) > 1e-4:
+                moved = True
+            self.cmd[j] = new
+        self.hist.append((now, [self.cmd[j] for j in self.j]))
+        if not moved:
+            return None
+        return "SETPOSE_T_HR " + " ".join(str(int(round(v * 10))) for v in self.physical()) + \
+            f" {int(self.STREAM_S * 1000)} RTR3"
+
+    def status(self, now: float) -> dict:
+        err = None
+        if self.x is not None:
+            err = [round(self.x[i] - self.cmd[j], 1) for i, j in enumerate(self.j)]
+        lost = self.lost_for(now)
+        return {"state": "segue" if lost < self.p["hold_after_s"] else "perso", "cls": self.cls,
+                "box": [self.box["x"], self.box["y"], self.box["w"], self.box["h"]],
+                "lost_ms": int(lost * 1000), "err_deg": err, "speed_deg_s": [round(v, 1) for v in self.v],
+                "n": self.n_meas}
+
+
+def track_pick(boxes: list, x: float | None = None, y: float | None = None) -> dict | None:
+    """The box to follow: the smallest one containing (x, y) (default the crosshair, the image centre), else the
+    nearest one to it within 200 px."""
+    x = Tracker.W / 2 if x is None else float(x)
+    y = Tracker.H / 2 if y is None else float(y)
+    inside = [b for b in boxes if b["x"] <= x <= b["x"] + b["w"] and b["y"] <= y <= b["y"] + b["h"]]
+    if inside:
+        return min(inside, key=lambda b: b["w"] * b["h"])
+    def gap(b):
+        dx = max(b["x"] - x, 0, x - b["x"] - b["w"]); dy = max(b["y"] - y, 0, y - b["y"] - b["h"])
+        return math.hypot(dx, dy)
+    near = [b for b in boxes if gap(b) <= 200]
+    return min(near, key=gap) if near else None
 
 
 def settings_from_config(cfg: dict) -> dict:
@@ -1429,6 +1697,9 @@ class Server:
                     self.core.demo_stop("dashboard", hold=True)
                     ok, err = True, ""
             await ws.send(json.dumps({"type": "demo", "ok": ok, "on": bool(msg.get("on")) and ok, "error": err or None}))
+        elif typ == "track":                         # dashboard "Segui": follow the object under (x, y)
+            ok, err = self._track_message(msg)
+            await ws.send(json.dumps({"type": "track", "ok": ok, "on": bool(msg.get("on")) and ok, "error": err or None}))
         elif typ == "horizon_lock":                  # "Orizzonte": the image stays level in every mode
             on = bool(msg.get("on"))
             with self.lock:
@@ -1481,6 +1752,26 @@ class Server:
         elif typ not in self.ignored:
             self.ignored.add(typ)
             self.core.log(f"[j5mini] message type {typ!r} not handled by the minimal controller (ignored)")
+
+    def _track_message(self, msg: dict) -> tuple[bool, str]:
+        if not msg.get("on"):
+            with self.lock:
+                self.core.track_stop("dashboard", hold=True)
+            return True, ""
+        b = self.board
+        if b is None:
+            return False, "nessuna testa stereo (meta NPU) su questo controllore"
+        fresh = time.monotonic() - b.boxes_at < 1.0
+        x, y = msg.get("x"), msg.get("y")
+        if x is not None and not (isinstance(x, (int, float)) and isinstance(y, (int, float))):
+            return False, "coordinate non valide"
+        box = track_pick(b.boxes if fresh else [], x, y)
+        if box is None:
+            return False, ("nessun oggetto riconosciuto lì" if fresh else "nessun oggetto riconosciuto dalla NPU")
+        with self.lock:
+            if self.core.track:
+                self.core.track_stop("nuovo bersaglio")
+            return self.core.track_start(box, b.boxes_tcap)
 
     def pose_command(self, cmd: str):
         """PARK / TELEOPPOSE as ws-teleop: SETPOSE to the saved pose; the reply goes out under the client's command,
@@ -1875,7 +2166,8 @@ class BoardMeta(asyncio.DatagramProtocol):
 
     def __init__(self, srv: "Server", loop: asyncio.AbstractEventLoop):
         self.srv, self.loop, self.n, self.last_det = srv, loop, 0, 0.0
-        self.boxes, self.boxes_at, self.infer_us = [], 0.0, 0
+        self.boxes, self.boxes_at, self.boxes_tcap, self.infer_us = [], 0.0, 0.0, 0
+        self.age_ms = None                     # last detection: capture -> here (the sender stamps the frame PTS)
         self.collim, self.collim_at = None, 0.0
         srv.board = self
 
@@ -1923,6 +2215,11 @@ class BoardMeta(asyncio.DatagramProtocol):
             self.srv.core.log(f"[j5mini] stereo head meta from {addr[0]}:{addr[1]}")
         if typ == self.T_META and len(data) >= 16:
             frame_id, eye, count, infer_us = struct.unpack_from("<IBBH", data, 8)
+            # capture time: the header's ts_us is the frame's PTS (CLOCK_MONOTONIC us, same clock as ours: the
+            # sender runs on this board); an older sender stamps the send time -> + the inference only
+            now = time.monotonic()
+            age = (int(now * 1e6) - struct.unpack_from("<I", data, 4)[0]) & 0xFFFFFFFF
+            t_cap = now - age / 1e6 if age < 2000000 else now - infer_us / 1e6 - 0.05
             boxes = []
             for i in range(min(count, 32)):
                 o = 16 + i * 10
@@ -1930,13 +2227,18 @@ class BoardMeta(asyncio.DatagramProtocol):
                     break
                 x, y, w, h, cls, score = struct.unpack_from("<HHHHBB", data, o)
                 boxes.append({"x": x, "y": y, "w": w, "h": h, "cls": cls, "score": round(score / 255.0, 2)})
+            self.age_ms = int((now - t_cap) * 1000)
             if boxes:
-                self.boxes, self.boxes_at, self.infer_us = boxes, time.monotonic(), infer_us
+                self.boxes, self.boxes_at, self.boxes_tcap, self.infer_us = boxes, now, t_cap, infer_us
+            if getattr(self.srv.core, 'track', None):
+                with self.srv.lock:
+                    self.srv.core.track_boxes(boxes, t_cap)
             if not boxes and time.monotonic() - self.last_det < 1.0:
                 return            # the board's empty heartbeat: nothing new to draw
             self.last_det = time.monotonic()
             asyncio.ensure_future(self.srv.broadcast({"type": "npu_detections", "frame_id": frame_id, "eye": eye,
-                                                       "infer_us": infer_us, "w": 1920, "h": 1080, "boxes": boxes}))
+                                                       "infer_us": infer_us, "w": 1920, "h": 1080, "boxes": boxes,
+                                                       "age_ms": self.age_ms}))
         elif typ == self.T_COLLIM and len(data) >= 16:
             dx, dy, dist, score, flags = struct.unpack_from("<hhHBB", data, 8)
             self.collim = {"type": "stereo_collimation", "lock": bool(flags & 1), "dx": dx / 16.0, "dy": dy / 16.0,

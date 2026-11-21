@@ -4,6 +4,7 @@
 """
 import asyncio
 import json
+import math
 import pathlib
 import struct
 import sys
@@ -1275,3 +1276,174 @@ def test_stereo_head_calibration_goes_to_the_sender_and_back():
     m = srv.out[-1]
     assert m["type"] == "stereo_calibration" and m["status"] == "full" and m["ok"] and m["points"] == 2
     assert m["distance_mm"] == 1590 and abs(m["dx_inf"] - 34.06) < 0.05 and m["f_px"] == 981 and abs(m["dx"] + 4.8) < 0.1
+
+
+# ------------------------------------------------------------------ object following (21/11/2026)
+
+class TrackWorld:
+    """The follower against a simulated head: the camera's joints = the commands lag_s late (servos), a detection
+    every 0.2 s delivered `latency` after the frame, the object's direction a function of time (virtual deg)."""
+
+    def __init__(self, obj, start=(90.0, 90.0), latency=0.15, ppd=(17.1, -17.1), lag=0.2, period=0.2):
+        self.cfg = json.loads(json.dumps(CFG))
+        self.cfg["settings"]["track"] = {"px_per_deg": list(ppd), "lag_s": lag}
+        self.obj, self.latency, self.ppd, self.lag, self.period = obj, latency, ppd, lag, period
+        self.cmds = [(-10.0, list(start))]
+        self.lines = []
+        start6 = [90.0, 90.0, 90.0, start[0], start[1], 90.0]
+        self.tr = j5mini.Tracker(self.cfg, start6, self.box(0.0), 0.0, latency)
+        self.t = latency
+        self.queue = []
+        self.next_frame = period
+
+    def cam(self, t):
+        t -= self.lag
+        last = self.cmds[0][1]
+        for tt, c in self.cmds:
+            if tt > t:
+                break
+            last = c
+        return last
+
+    def box(self, t):
+        cam, (ox, oy) = self.cam(t), self.obj(t)
+        u = 960 + self.ppd[0] * (cam[0] - ox)
+        v = 540 + self.ppd[1] * (cam[1] - oy)
+        return {"x": u - 40, "y": v - 60, "w": 80, "h": 120, "cls": 39, "score": 0.8}
+
+    def run(self, seconds, visible=lambda t: True):
+        end = self.t + seconds
+        while self.t < end - 1e-9:
+            self.t = round(self.t + 0.01, 6)
+            if self.t >= self.next_frame:
+                tc = self.next_frame
+                self.next_frame += self.period
+                self.queue.append((tc + self.latency, tc, [self.box(tc)] if visible(tc) else []))
+            while self.queue and self.queue[0][0] <= self.t:
+                _, tc, boxes = self.queue.pop(0)
+                self.tr.on_boxes(boxes, tc, self.t)
+            line = self.tr.tick(self.t)
+            if line:
+                self.lines.append((self.t, line))
+            self.cmds.append((self.t, [self.tr.cmd[3], self.tr.cmd[4]]))
+
+    def err(self, t):
+        cam, o = self.cam(t), self.obj(t)
+        return cam[0] - o[0], cam[1] - o[1]
+
+
+def test_follower_centres_a_still_object_without_swinging():
+    """A still object 10 deg right and 8 deg down: the camera gets there in a few seconds, does not overshoot by
+    more than 1.5 deg and then stops streaming (dead band: no hunting)."""
+    w = TrackWorld(lambda t: (100.0, 82.0))
+    w.run(4.0)
+    ex, ey = w.err(w.t)
+    assert abs(ex) < 1.0 and abs(ey) < 1.0, (ex, ey)
+    pans = [c[0] for _, c in w.cmds]
+    tilts = [c[1] for _, c in w.cmds]
+    assert max(pans) < 101.5 and min(tilts) > 80.5, (max(pans), min(tilts))
+    n = len(w.lines)
+    w.run(3.0)
+    assert len(w.lines) == n                           # still: nothing more sent
+    st = w.tr.status(w.t)
+    assert st["state"] == "segue" and st["cls"] == 39 and abs(st["err_deg"][0]) < 1.0
+
+
+def swing_rms(period, **track):
+    """RMS pan error (deg) following an object swinging +-15 deg in 6 s (up to 16 deg/s), 150 ms detection
+    latency, 200 ms servo lag, one detection every `period` s."""
+    def obj(t):
+        return 90.0 + 15.0 * math.sin(2 * math.pi * t / 6.0), 90.0 + 5.0 * math.sin(2 * math.pi * t / 6.0)
+    w = TrackWorld(obj, period=period)
+    w.tr.p.update(track)
+    w.run(6.0)
+    errs = []
+    for _ in range(300):
+        w.run(0.04)
+        errs.append(w.err(w.t))
+    return math.sqrt(sum(e[0] ** 2 for e in errs) / len(errs)), w
+
+
+def test_follower_keeps_up_with_a_moving_object_thanks_to_the_prediction():
+    """The object's speed from the alpha-beta filter, extrapolated over the latency + servo lag: half the error of
+    going to the last measured direction (already compensated for the camera's own motion), less with 10 Hz
+    detections."""
+    rms5, w = swing_rms(0.2)
+    rms_still_target, _ = swing_rms(0.2, alpha=1.0, beta=0.0)           # no speed estimate
+    rms10, _ = swing_rms(0.1)
+    assert rms5 < 4.0 and rms_still_target > 1.6 * rms5 and rms10 < 2.6, (rms5, rms_still_target, rms10)
+    # every line is a 40 ms segment, consecutive targets close (no jumps)
+    pts = [[int(x) for x in l.split()[1:7]] for _, l in w.lines]
+    assert all(l.split()[-2:] == ["40", "RTR3"] for _, l in w.lines)
+    assert max(abs(a - b) for p, q in zip(pts, pts[1:]) for a, b in zip(p, q)) <= 20     # tenths: <= 2 deg
+
+
+def test_follower_holds_when_the_object_is_lost_and_ignores_other_objects():
+    w = TrackWorld(lambda t: (90.0 + 10.0 * t if t < 1.0 else 100.0, 90.0))
+    w.run(1.0)
+    w.run(3.0, visible=lambda t: False)
+    n = len(w.lines)
+    w.run(1.0, visible=lambda t: False)
+    assert len(w.lines) == n and w.tr.status(w.t)["state"] == "perso" and w.tr.lost_for(w.t) > 3
+    # another class at the expected place, or the same class far away: not the target
+    assert not w.tr.on_boxes([{"x": 900, "y": 480, "w": 80, "h": 120, "cls": 0, "score": 0.9}], w.t, w.t + 0.1)
+    assert not w.tr.on_boxes([{"x": 10, "y": 10, "w": 80, "h": 120, "cls": 39, "score": 0.9}], w.t + 0.2, w.t + 0.3)
+
+
+def test_track_pick_takes_the_box_under_the_point():
+    a = {"x": 800, "y": 400, "w": 400, "h": 300, "cls": 60, "score": 0.5}
+    b = {"x": 900, "y": 500, "w": 100, "h": 100, "cls": 39, "score": 0.7}
+    c = {"x": 100, "y": 100, "w": 50, "h": 50, "cls": 41, "score": 0.9}
+    assert j5mini.track_pick([a, b, c]) is b                       # smallest containing the crosshair
+    assert j5mini.track_pick([a, b, c], 120, 120) is c
+    assert j5mini.track_pick([c], 300, 120) is c                    # 150 px away: near enough
+    assert j5mini.track_pick([c], 900, 900) is None
+
+
+def test_follow_from_the_dashboard_streams_and_stops_where_it_is(lib):
+    """Server "track" message with the stereo head's boxes: the follower starts from the measured pose, streams
+    40 ms segments towards the object (pan joint = wrist yaw), stays out of the client events; the dashboard stop
+    holds the arm; the demo is refused meanwhile."""
+    cfg = json.loads(json.dumps(CFG))
+    r = Rig(lib, cfg)
+    r.run(1000)
+    r.run(2200, intent())
+    assert r.core.robot_state == "IDLE"
+    srv = j5mini.Server(r.core, threading.Lock(), cfg, j5mini.Cameras("/nonexistent", sendto=lambda d, p: None))
+    ws = FakeWs()
+
+    class Board:
+        boxes = [{"x": 1300, "y": 480, "w": 120, "h": 120, "cls": 39, "score": 0.8}]   # 400 px right of centre
+
+    Board.boxes_at, Board.boxes_tcap = time.monotonic(), r.core.clock() - 0.15
+    srv.board = Board
+
+    def msg(m):
+        asyncio.run(srv.on_message(ws, m))
+
+    msg({"type": "track", "on": True, "x": 1350, "y": 540})
+    assert ws.sent[-1] == {"type": "track", "ok": True, "on": True, "error": None}
+    seen = []
+    orig = r.core.uart_send
+
+    def spy(cmd, cb=None):
+        if cmd.startswith("SETPOSE_T_HR "):
+            seen.append(cmd)
+        return orig(cmd, cb)
+    r.core.uart_send = spy
+    y0 = r.core.telemetry["servo_deg_Y"]
+    r.run(1500, intent())
+    assert len(seen) > 10 and all(c.endswith(" 40 RTR3") for c in seen)
+    ys = [int(c.split()[4]) for c in seen]
+    assert abs(ys[-1] - y0 * 10) > 50                               # the wrist yaw moved > 5 deg
+    assert r.core.telemetry_message()["track"]["cls"] == 39
+    assert not any(e["type"] == "uart_response" and e["cmd"].startswith("SETPOSE_T_HR") for e in r.core.events)
+    msg({"type": "demo", "on": True})
+    assert ws.sent[-1]["ok"] is False and "oggetto" in ws.sent[-1]["error"]
+    msg({"type": "track", "on": False})
+    assert r.core.track is None and seen[-1].endswith(" 120 RTR3")
+    assert [e for e in r.core.events if e["type"] == "track"][-1] == {"type": "track", "on": False,
+                                                                       "reason": "dashboard"}
+    Board.boxes = []                                                # no boxes: refused
+    msg({"type": "track", "on": True})
+    assert ws.sent[-1]["ok"] is False

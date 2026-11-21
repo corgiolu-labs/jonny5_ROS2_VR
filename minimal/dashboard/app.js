@@ -126,6 +126,11 @@ function onMessage(m) {
     case "ws_pong": if (S.onPong) S.onPong(m); break;
     case "horizon_lock": S.horizon = !!m.on; horizonButtons(); toast(S.horizon ? "Orizzonte acceso" : "Orizzonte spento"); break;
     case "auto_park": toast(`PARK automatico: ${m.after_s} s senza grip`); log("⇠ auto-park " + m.line, "uns"); break;
+    case "track":
+      if (m.ok === false) toast("segui: " + m.error, true);
+      else if (m.ok && m.on) toast("seguo l'oggetto: muovilo piano, il braccio va dietro");
+      else if (m.on === false && m.reason && m.reason !== "dashboard" && m.reason !== "nuovo bersaglio") toast("segui fermato: " + m.reason, true);
+      break;
     case "demo":
       if (m.ok === false) toast("demo: " + m.error, true);
       else if (m.on && m.step === 1 && !m.reason) { /* step messages: the Demo button shows step/n */ }
@@ -278,6 +283,9 @@ function demoButton() {
   const d = S.tm && S.tm.demo;
   $("h-demo").textContent = d ? `Demo ${d.step}/${d.n} ■` : "Demo";
   $("h-demo").classList.toggle("on", !!d);
+  const tr = S.tm && S.tm.track;                                     // Camere: object follower
+  $("cam-track").classList.toggle("on", !!tr);
+  $("cam-track").textContent = tr ? (tr.state === "segue" ? "Segue ■" : "Cerca… ■") : "Segui";
   const held = !!(S.tm && S.tm.cam_focus_hold);                    // Camere: focus hold (stereo head)
   $("cam-hold").classList.toggle("on", held);
   $("cam-hold").textContent = held ? "Fuoco bloccato" : "Blocca fuoco";
@@ -482,6 +490,7 @@ function camArmBlocked() {
   if (!$("motion").checked) return "attiva 'comandi di movimento' in alto";
   if (teleopDriving()) return "il visore sta comandando il braccio";
   if (S.tm && S.tm.demo) return "demo in corso: fermala prima";
+  if (S.tm && S.tm.track) return "sta seguendo un oggetto: ferma Segui";
   if (S.tm && S.tm.robot_state !== "IDLE") return `robot in ${S.tm ? S.tm.robot_state : "?"}: serve ENABLE`;
   return "";
 }
@@ -1006,7 +1015,7 @@ const headerH = () => document.documentElement.style.setProperty("--header-h", d
 new ResizeObserver(headerH).observe(document.querySelector("header"));
 headerH();
 
-const camTest = new CamTest({ send, getTelemetry: () => S.tm, toast,
+const camTest = new CamTest({ send, getTelemetry: () => S.tm, toast, motionAllowed,
   getCollimation: () => (S.col && Date.now() - S.colAt < 2000 ? S.col : null) });
 loadPoses(); renderPoses();
 try { const t = localStorage.getItem("j5.tab"); if (t && $(t)) showTab(t); } catch { /* private mode */ }
