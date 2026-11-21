@@ -915,11 +915,16 @@ TRACK_DEFAULTS = {
     "max_acc_deg_s2": 300.0,
     "tau_s": 0.15,                 # time constant of the approach to the target direction
     "deadband_deg": 1.5,           # a still object within this of the command: no motion (no hunting)
-    "alpha": 0.5, "beta": 0.4,     # alpha-beta filter of the object's direction (per detection; tuned 21/11/2026
+    "alpha": 0.6, "beta": 0.4,     # alpha-beta filter of the object's direction (for gain_dt_s; alpha 0.5 until the
+                                   # time-based gains of 22/11/2026, tuned at 6.7-15 Hz; first tuned 21/11/2026
                                    # with noisy, frame-cut boxes in test_j5mini TrackWorld: still object 44 -> ~6
                                    # direction reversals in 16 s, person bigger than the frame 14 -> 8 deg RMS)
     "max_dv_deg_s": 12.0,          # one detection changes the speed estimate by at most this (a box that jumps
                                    # or changes shape is not a sudden speed: the robot hunted with +-55 deg/s)
+    "gain_dt_s": 0.15,             # alpha, beta, max_dv and the decays above are for detections this far apart;
+                                   # other intervals rescale them (alpha compounds, beta x (dt/gain_dt)^beta_exp,
+                                   # max_dv and the decay per second), so 15 Hz does not take in twice the noise
+    "beta_exp": 1.5,
     "v_dead_deg_s": 5.0,           # speed below this is noise: the prediction uses |v| - v_dead
     "edge_px": 24,                 # a box side this close to the frame's edge is cut: the box centre is not the
                                    # object's centre on that axis (21/11/2026: person close to the camera). YOLO's
@@ -1151,27 +1156,31 @@ class Tracker:
         dt = max(1e-3, t - self.t_meas)
         vmax = p["max_deg_s"] * 2
         first = self.n_meas == 0
+        k = max(0.2, min(2.0, dt / p["gain_dt_s"]))    # this interval in units of the one the gains are for
+        decay = 0.7 ** k
         for i in range(2):
             c, w = self._axis(b, i, t)
             self.trust[i] = w
             pred = self.x[i] + (0.0 if first else self.v[i] * dt)
             if c is None:                              # nothing to measure on this axis: coast, slowing down
                 self.x[i] = pred
-                self.v[i] *= 0.7
+                self.v[i] *= decay
                 continue
             a = pose[i] + ((self.W if i == 0 else self.H) / 2 - c) / self._ppd(i)
             if first:
                 self.x[i] = a
                 continue
             r = a - pred
-            alpha = p["alpha"] * (1.0 if w >= 0.5 else 0.4)
-            beta = p["beta"] * (1.0 if w >= 1.0 else 0.5 if w >= 0.5 else 0.0) * (0.0 if reshaped else 1.0)
+            alpha = 1.0 - (1.0 - p["alpha"] * (1.0 if w >= 0.5 else 0.4)) ** k
+            beta = p["beta"] * k ** p["beta_exp"] * (1.0 if w >= 1.0 else 0.5 if w >= 0.5 else 0.0) * \
+                (0.0 if reshaped else 1.0)
             self.x[i] = pred + alpha * r
             if beta > 0:
-                dv = max(-p["max_dv_deg_s"], min(p["max_dv_deg_s"], beta * r / dt))
+                dvmax = p["max_dv_deg_s"] * k
+                dv = max(-dvmax, min(dvmax, beta * r / dt))
                 self.v[i] = max(-vmax, min(vmax, self.v[i] + dv))
             else:
-                self.v[i] *= 0.7
+                self.v[i] *= decay
         self.t_meas, self.seen, self.box = t, now, dict(b)
         self.n_meas += 1
 

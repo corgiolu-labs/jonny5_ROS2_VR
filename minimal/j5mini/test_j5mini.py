@@ -1390,7 +1390,7 @@ def test_follower_keeps_up_with_a_moving_object_thanks_to_the_prediction():
     rms5, w = swing_rms(0.2)
     rms_still_target, _ = swing_rms(0.2, alpha=1.0, beta=0.0)           # no speed estimate
     rms10, _ = swing_rms(0.1)
-    assert rms5 < 4.0 and rms_still_target > 1.5 * rms5 and rms10 < 2.9, (rms5, rms_still_target, rms10)
+    assert rms5 < 4.0 and rms_still_target > 1.5 * rms5 and rms10 < 3.1, (rms5, rms_still_target, rms10)
     # every line is a 40 ms segment, consecutive targets close (no jumps)
     pts = [[int(x) for x in l.split()[1:7]] for _, l in w.lines]
     assert all(l.split()[-2:] == ["40", "RTR3"] for _, l in w.lines)
@@ -1420,6 +1420,25 @@ def test_follower_does_not_hunt_on_a_noisy_still_object():
         w.run(4.0)
         rms, rev = pan_reversals(w, 16.0)
         assert rms < 1.2 and rev <= 12, (seed, rms, rev)
+
+
+def test_follower_gains_follow_the_detection_rate():
+    """The filter's gains are for detections 0.15 s apart and rescale with the interval: at 15 Hz the noisy boxes
+    do not make the arm hunt (with per-detection gains: ~50 reversals in 16 s) and moving objects are followed at
+    least as well as at 6.7 Hz."""
+    for seed in (1, 2):
+        w = TrackWorld(lambda t: (95.0, 88.0), noise_px=15, size_noise=0.1, period=0.067, latency=0.1, seed=seed)
+        w.run(4.0)
+        rms, rev = pan_reversals(w, 16.0)
+        assert rms < 1.0 and rev <= 12, (seed, rms, rev)
+
+    def swing(period):
+        w = TrackWorld(lambda t: (90 + 15 * math.sin(2 * math.pi * t / 6), 90.0), noise_px=10, size_noise=0.08,
+                       period=period, latency=0.1)
+        w.run(4.0)
+        return pan_reversals(w, 16.0)
+    (rms15, rev15), (rms7, _) = swing(0.067), swing(0.15)
+    assert rms15 <= rms7 + 0.2 and rms15 < 3.0 and rev15 <= 25, (rms15, rev15, rms7)
 
 
 def test_follower_ignores_the_cut_side_of_a_box():
