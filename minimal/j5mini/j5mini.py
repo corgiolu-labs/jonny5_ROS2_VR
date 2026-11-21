@@ -910,8 +910,9 @@ TRACK_DEFAULTS = {
                                    # looking down): yaw +13.4 px/deg on x, pitch -12 px/deg on y, i.e. ~17 level
                                    # (f_px 981); the pitch servo has ~4 deg of backlash (5 deg steps: 12 px)
     "lag_s": 0.20,                 # servos behind the firmware's trajectory (IMU campaign 18/10/2026: 200-250 ms)
-    "max_deg_s": 35.0,             # command speed limit per joint
-    "max_acc_deg_s2": 150.0,
+    "max_deg_s": 50.0,             # command speed limit per joint (35 until 22/11/2026: a person close to the
+                                   # camera stepping sideways went up to ~80 deg/s and the arm fell behind)
+    "max_acc_deg_s2": 200.0,
     "tau_s": 0.15,                 # time constant of the approach to the target direction
     "deadband_deg": 1.5,           # a still object within this of the command: no motion (no hunting)
     "alpha": 0.5, "beta": 0.4,     # alpha-beta filter of the object's direction (per detection; tuned 21/11/2026
@@ -925,14 +926,18 @@ TRACK_DEFAULTS = {
                                    # cut boxes stop short of the far edges: right side 1899-1908, bottom 1062-1066
     "size_memory_s": 3.0,          # how long the last uncut size on an axis is used to rebuild a cut box
     "max_predict_s": 0.6,
+    "max_predict_deg": 10.0,       # the prediction never puts the target more than this ahead of the estimate:
+                                   # at a reversal it overshot by 14 deg (46 deg/s x 0.3 s) and the arm swung
+    "near_box_px": [700, 1300],    # a box this wide (person close: quick, jerky directions) gets less prediction,
+    "near_lead_frac": 0.4,         # down to this fraction of the lead at the upper width
     "gate_px": 260,                # a box farther than this (+ the box size) from where the target should be: not it
     "base_joint": 0,               # the base turns too when the wrist yaw runs out of room (None: wrist only)
     "base_gain": 1.0,              # pan per base degree, in wrist yaw degrees, when there is no kinematics
                                    # (with kinematics.json it comes from the pose: 1 with shoulder + elbow at 90)
     "base_dead_deg": 15.0,         # the base stays put while the wrist yaw is within this of its centre
     "base_tau_s": 1.0,             # ... beyond it the base brings the wrist back towards the centre
-    "base_max_deg_s": 20.0,        # the base carries the whole arm: slower than the wrist
-    "base_max_acc_deg_s2": 40.0,
+    "base_max_deg_s": 30.0,        # the base carries the whole arm: slower than the wrist (20 until 22/11/2026)
+    "base_max_acc_deg_s2": 60.0,
     "hold_after_s": 0.8,           # target not seen: the prediction stops, the arm holds
     "give_up_s": 8.0,              # ... and the follower ends
 }
@@ -1170,6 +1175,12 @@ class Tracker:
         self.t_meas, self.seen, self.box = t, now, dict(b)
         self.n_meas += 1
 
+    def _lead_frac(self) -> float:
+        """Less prediction for a big box (a person close to the camera: big angles, quick reversals)."""
+        lo, hi = self.p["near_box_px"]
+        u = (self.box["w"] - lo) / max(1.0, hi - lo)
+        return 1.0 - (1.0 - self.p["near_lead_frac"]) * max(0.0, min(1.0, u))
+
     def _v_eff(self, i: int) -> float:
         """The speed used for the prediction: the estimate minus its noise floor."""
         v, d = self.v[i], self.p["v_dead_deg_s"]
@@ -1190,9 +1201,10 @@ class Tracker:
         moved = False
         self._update_coefficients()
         for i, j in enumerate(self.j):
-            lead = max(0.0, min(p["max_predict_s"], now - self.t_meas + p["lag_s"]))
+            lead = max(0.0, min(p["max_predict_s"], now - self.t_meas + p["lag_s"])) * self._lead_frac()
             v = self._v_eff(i)
-            want = self.x[i] + v * lead
+            ahead = max(-p["max_predict_deg"], min(p["max_predict_deg"], v * lead))
+            want = self.x[i] + ahead
             lo, hi = self.plim if i == 0 else self.vlim[i]
             want = max(lo, min(hi, want))
             cur = self._axes(self._raw())[i]

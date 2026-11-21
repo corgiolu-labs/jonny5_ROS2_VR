@@ -1461,7 +1461,7 @@ def test_follower_turns_the_base_when_the_wrist_runs_out_of_room():
     assert abs(ex) < 1.5 and abs(c[3] - 90.0) < 6.0 and c[0] > 130.0, (ex, c[3], c[0])
     bases = [int(l.split()[1]) / 10 for _, l in w.lines]                       # physical base, deg
     speeds = [abs(b - a) / 0.04 for a, b in zip(bases, bases[1:])]
-    assert max(speeds) <= 21.0, max(speeds)
+    assert max(speeds) <= 31.0, max(speeds)                                  # base_max_deg_s 30
     st = w.tr.status(w.t)
     assert st["base"] == round(c[0], 1) and abs(st["err_deg"][0]) < 1.5
     # without the base: stuck at the wrist's limit
