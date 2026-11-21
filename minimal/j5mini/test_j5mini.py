@@ -6,6 +6,7 @@ import asyncio
 import json
 import math
 import pathlib
+import random
 import struct
 import sys
 import threading
@@ -1282,12 +1283,17 @@ def test_stereo_head_calibration_goes_to_the_sender_and_back():
 
 class TrackWorld:
     """The follower against a simulated head: the camera's joints = the commands lag_s late (servos), a detection
-    every 0.2 s delivered `latency` after the frame, the object's direction a function of time (virtual deg)."""
+    every 0.2 s delivered `latency` after the frame, the object's direction a function of time (virtual deg).
+    `size` the object's box (px; a function of time allowed), cut by the frame's edges like YOLO's boxes;
+    `noise_px` / `size_noise` jitter of the box centre (px, gaussian) and of its size (fraction)."""
 
-    def __init__(self, obj, start=(90.0, 90.0), latency=0.15, ppd=(17.1, -17.1), lag=0.2, period=0.2):
+    def __init__(self, obj, start=(90.0, 90.0), latency=0.15, ppd=(17.1, -17.1), lag=0.2, period=0.2,
+                 size=(80, 120), noise_px=0.0, size_noise=0.0, seed=1):
         self.cfg = json.loads(json.dumps(CFG))
         self.cfg["settings"]["track"] = {"px_per_deg": list(ppd), "lag_s": lag}
         self.obj, self.latency, self.ppd, self.lag, self.period = obj, latency, ppd, lag, period
+        self.size, self.noise_px, self.size_noise = size, noise_px, size_noise
+        self.rng = random.Random(seed)
         self.cmds = [(-10.0, list(start))]
         self.lines = []
         start6 = [90.0, 90.0, 90.0, start[0], start[1], 90.0]
@@ -1307,9 +1313,16 @@ class TrackWorld:
 
     def box(self, t):
         cam, (ox, oy) = self.cam(t), self.obj(t)
-        u = 960 + self.ppd[0] * (cam[0] - ox)
-        v = 540 + self.ppd[1] * (cam[1] - oy)
-        return {"x": u - 40, "y": v - 60, "w": 80, "h": 120, "cls": 39, "score": 0.8}
+        u = 960 + self.ppd[0] * (cam[0] - ox) + self.rng.gauss(0, self.noise_px)
+        v = 540 + self.ppd[1] * (cam[1] - oy) + self.rng.gauss(0, self.noise_px)
+        w, h = self.size(t) if callable(self.size) else self.size
+        k = 1.0 + self.rng.gauss(0, self.size_noise)
+        w, h = w * k, h * k
+        x1, y1 = max(0.0, u - w / 2), max(0.0, v - h / 2)
+        x2, y2 = min(1919.0, u + w / 2), min(1079.0, v + h / 2)
+        if x2 - x1 < 10 or y2 - y1 < 10:
+            return None
+        return {"x": round(x1), "y": round(y1), "w": round(x2 - x1), "h": round(y2 - y1), "cls": 39, "score": 0.8}
 
     def run(self, seconds, visible=lambda t: True):
         end = self.t + seconds
@@ -1318,7 +1331,8 @@ class TrackWorld:
             if self.t >= self.next_frame:
                 tc = self.next_frame
                 self.next_frame += self.period
-                self.queue.append((tc + self.latency, tc, [self.box(tc)] if visible(tc) else []))
+                b = self.box(tc) if visible(tc) else None
+                self.queue.append((tc + self.latency, tc, [b] if b else []))
             while self.queue and self.queue[0][0] <= self.t:
                 _, tc, boxes = self.queue.pop(0)
                 self.tr.on_boxes(boxes, tc, self.t)
@@ -1365,17 +1379,71 @@ def swing_rms(period, **track):
 
 
 def test_follower_keeps_up_with_a_moving_object_thanks_to_the_prediction():
-    """The object's speed from the alpha-beta filter, extrapolated over the latency + servo lag: half the error of
-    going to the last measured direction (already compensated for the camera's own motion), less with 10 Hz
-    detections."""
+    """The object's speed from the alpha-beta filter, extrapolated over the latency + servo lag: well under the
+    error of going to the last measured direction (already compensated for the camera's own motion), less with
+    10 Hz detections. (Noise-free boxes; the defaults trade a little of this for no hunting on noisy ones.)"""
     rms5, w = swing_rms(0.2)
     rms_still_target, _ = swing_rms(0.2, alpha=1.0, beta=0.0)           # no speed estimate
     rms10, _ = swing_rms(0.1)
-    assert rms5 < 4.0 and rms_still_target > 1.6 * rms5 and rms10 < 2.6, (rms5, rms_still_target, rms10)
+    assert rms5 < 4.0 and rms_still_target > 1.5 * rms5 and rms10 < 2.9, (rms5, rms_still_target, rms10)
     # every line is a 40 ms segment, consecutive targets close (no jumps)
     pts = [[int(x) for x in l.split()[1:7]] for _, l in w.lines]
     assert all(l.split()[-2:] == ["40", "RTR3"] for _, l in w.lines)
     assert max(abs(a - b) for p, q in zip(pts, pts[1:]) for a, b in zip(p, q)) <= 20     # tenths: <= 2 deg
+
+
+def pan_reversals(w, seconds):
+    """Run `seconds` more; RMS pan error (deg) and how often the commanded pan changed direction."""
+    errs, rev, prev, last = [], 0, 0, w.tr.cmd[3]
+    for _ in range(int(seconds / 0.04)):
+        w.run(0.04)
+        errs.append(w.err(w.t)[0])
+        d = w.tr.cmd[3] - last
+        last = w.tr.cmd[3]
+        if abs(d) > 1e-3:
+            s = 1 if d > 0 else -1
+            rev += 1 if prev and s != prev else 0
+            prev = s
+    return math.sqrt(sum(e * e for e in errs) / len(errs)), rev
+
+
+def test_follower_does_not_hunt_on_a_noisy_still_object():
+    """YOLO's boxes jitter (here 15 px and 10 % in size, at 6-7 Hz): a still object stays centred within a degree
+    and the arm does not keep going back and forth (21/11/2026 on the robot: 102 reversals in 60 s)."""
+    for seed in (1, 2, 3):
+        w = TrackWorld(lambda t: (95.0, 88.0), noise_px=15, size_noise=0.1, period=0.15, seed=seed)
+        w.run(4.0)
+        rms, rev = pan_reversals(w, 16.0)
+        assert rms < 1.2 and rev <= 12, (seed, rms, rev)
+
+
+def test_follower_ignores_the_cut_side_of_a_box():
+    """A person close to the camera: the box is cut by the frame and its centre is not the person's. A box cut on
+    both sides of an axis measures nothing on it; one cut side is rebuilt from the last whole size."""
+    cfg = json.loads(json.dumps(CFG))
+    whole = {"x": 1300, "y": 300, "w": 400, "h": 500, "cls": 0, "score": 0.8}
+    tr = j5mini.Tracker(cfg, [90.0] * 6, whole, 0.0, 0.1)
+    x0 = list(tr.x)
+    # wider and taller than the frame: no measurement on either axis, the estimate does not move
+    assert tr.on_boxes([{"x": 0, "y": 0, "w": 1919, "h": 1079, "cls": 0, "score": 0.8}], 0.2, 0.3)
+    assert tr.trust == [0.0, 0.0] and max(abs(a - b) for a, b in zip(tr.x, x0)) < 1e-6
+    # cut on the right: rebuilt from the left side + the 400 px seen before (centre 1800, not 1759)
+    assert tr._axis({"x": 1600, "y": 300, "w": 319, "h": 500}, 0, 0.4) == (1800.0, 0.5)
+    # cut with no size known yet (or a size older than size_memory_s): only a nudge
+    assert tr._axis({"x": 0, "y": 0, "w": 300, "h": 900}, 1, 0.4) == (450.0, 0.25)
+    assert tr._axis({"x": 1600, "y": 300, "w": 319, "h": 500}, 0, 9.0) == (1759.5, 0.25)
+    # a person bigger than the frame swinging +-10 deg: followed within ~10 deg, without hunting
+    w = TrackWorld(lambda t: (90 + 10 * math.sin(2 * math.pi * t / 6), 90.0), size=(2100, 1300), noise_px=25,
+                   size_noise=0.12, period=0.15)
+    w.run(4.0)
+    rms, rev = pan_reversals(w, 16.0)
+    assert rms < 10.0 and rev <= 15, (rms, rev)
+    # ... and one about as wide as the frame (cut on one side at a time): a few degrees
+    w = TrackWorld(lambda t: (90 + 10 * math.sin(2 * math.pi * t / 6), 90.0), size=(1400, 1250), noise_px=25,
+                   size_noise=0.12, period=0.15)
+    w.run(4.0)
+    rms, rev = pan_reversals(w, 16.0)
+    assert rms < 4.0 and rev <= 35, (rms, rev)
 
 
 def test_follower_holds_when_the_object_is_lost_and_ignores_other_objects():

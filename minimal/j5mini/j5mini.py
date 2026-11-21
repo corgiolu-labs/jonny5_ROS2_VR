@@ -913,9 +913,16 @@ TRACK_DEFAULTS = {
     "max_deg_s": 35.0,             # command speed limit per joint
     "max_acc_deg_s2": 150.0,
     "tau_s": 0.15,                 # time constant of the approach to the target direction
-    "deadband_deg": 1.0,           # a still object within this of the command: no motion (no hunting)
-    "alpha": 0.7, "beta": 0.4,     # alpha-beta filter of the object's direction (per detection: tuned at
-                                   # 5-10 Hz in test_j5mini TrackWorld)
+    "deadband_deg": 1.5,           # a still object within this of the command: no motion (no hunting)
+    "alpha": 0.5, "beta": 0.4,     # alpha-beta filter of the object's direction (per detection; tuned 21/11/2026
+                                   # with noisy, frame-cut boxes in test_j5mini TrackWorld: still object 44 -> ~6
+                                   # direction reversals in 16 s, person bigger than the frame 14 -> 8 deg RMS)
+    "max_dv_deg_s": 12.0,          # one detection changes the speed estimate by at most this (a box that jumps
+                                   # or changes shape is not a sudden speed: the robot hunted with +-55 deg/s)
+    "v_dead_deg_s": 5.0,           # speed below this is noise: the prediction uses |v| - v_dead
+    "edge_px": 6,                  # a box side this close to the frame's edge is cut: the box centre is not the
+                                   # object's centre on that axis (21/11/2026: person close to the camera)
+    "size_memory_s": 3.0,          # how long the last uncut size on an axis is used to rebuild a cut box
     "max_predict_s": 0.6,
     "gate_px": 260,                # a box farther than this (+ the box size) from where the target should be: not it
     "hold_after_s": 0.8,           # target not seen: the prediction stops, the arm holds
@@ -967,6 +974,8 @@ class Tracker:
         self.n_meas = 0
         self.moving = [False, False]
         self.next = now
+        self.size = [None, None]                       # last uncut (extent, t) per axis, to rebuild cut boxes
+        self.trust = [1.0, 1.0]                        # how the last box was used per axis (status/debug)
         self.measure(box, t_capture, now)
 
     def _virtual(self, j: int, phys: float) -> float:
@@ -995,6 +1004,24 @@ class Tracker:
 
     def _centre(self, b: dict) -> tuple[float, float]:
         return b["x"] + b["w"] / 2.0, b["y"] + b["h"] / 2.0
+
+    def _axis(self, b: dict, i: int, t: float) -> tuple[float | None, float]:
+        """The object's centre along axis i (0 = x, 1 = y) and how far to trust it:
+        1 the box is whole on that axis; 0.5 one side is cut by the frame and the centre is rebuilt from the
+        other side and the last uncut size; 0.25 one side cut and no size known (the box centre lies towards the
+        inside of the frame: only a nudge); 0 both sides cut (the object is bigger than the frame: no measure)."""
+        lo, ext = (b["x"], b["w"]) if i == 0 else (b["y"], b["h"])
+        n, e = (self.W if i == 0 else self.H), self.p["edge_px"]
+        cut_lo, cut_hi = lo <= e, lo + ext >= n - e
+        if not cut_lo and not cut_hi:
+            self.size[i] = (ext, t)
+            return lo + ext / 2.0, 1.0
+        if cut_lo and cut_hi:
+            return None, 0.0
+        known = self.size[i]
+        if known and t - known[1] <= self.p["size_memory_s"] and known[0] > ext:
+            return ((lo + ext - known[0] / 2.0) if cut_lo else (lo + known[0] / 2.0)), 0.5
+        return lo + ext / 2.0, 0.25
 
     def expected_px(self, t: float) -> tuple[float, float]:
         """Where the target should be in a frame taken at t (box centre if no estimate yet)."""
@@ -1025,21 +1052,46 @@ class Tracker:
         return True
 
     def measure(self, b: dict, t: float, now: float):
-        cx, cy = self._centre(b)
-        pose = self.pose_at(t)
-        a = [pose[0] + (self.W / 2 - cx) / self.ppd[0], pose[1] + (self.H / 2 - cy) / self.ppd[1]]
+        """One box of the target: update the direction estimate axis by axis, as far as the box can be trusted.
+        A box that changed size a lot since the last one (turning, partly hidden, YOLO's box breathing) moves the
+        position but not the speed; a cut side is handled by _axis."""
+        p, pose = self.p, self.pose_at(t)
+        area0 = max(1.0, self.box["w"] * self.box["h"])
+        ratio = (b["w"] * b["h"]) / area0
+        reshaped = self.x is not None and not (0.6 <= ratio <= 1.0 / 0.6)
         if self.x is None:
-            self.x = a
-        else:
-            dt = max(1e-3, t - self.t_meas)
-            vmax = self.p["max_deg_s"] * 2
-            for i in range(2):
-                pred = self.x[i] + self.v[i] * dt
-                r = a[i] - pred
-                self.x[i] = pred + self.p["alpha"] * r
-                self.v[i] = max(-vmax, min(vmax, self.v[i] + self.p["beta"] * r / dt))
+            self.x = [pose[0], pose[1]]
+        dt = max(1e-3, t - self.t_meas)
+        vmax = p["max_deg_s"] * 2
+        first = self.n_meas == 0
+        for i in range(2):
+            c, w = self._axis(b, i, t)
+            self.trust[i] = w
+            pred = self.x[i] + (0.0 if first else self.v[i] * dt)
+            if c is None:                              # nothing to measure on this axis: coast, slowing down
+                self.x[i] = pred
+                self.v[i] *= 0.7
+                continue
+            a = pose[i] + ((self.W if i == 0 else self.H) / 2 - c) / self.ppd[i]
+            if first:
+                self.x[i] = a
+                continue
+            r = a - pred
+            alpha = p["alpha"] * (1.0 if w >= 0.5 else 0.4)
+            beta = p["beta"] * (1.0 if w >= 1.0 else 0.5 if w >= 0.5 else 0.0) * (0.0 if reshaped else 1.0)
+            self.x[i] = pred + alpha * r
+            if beta > 0:
+                dv = max(-p["max_dv_deg_s"], min(p["max_dv_deg_s"], beta * r / dt))
+                self.v[i] = max(-vmax, min(vmax, self.v[i] + dv))
+            else:
+                self.v[i] *= 0.7
         self.t_meas, self.seen, self.box = t, now, dict(b)
         self.n_meas += 1
+
+    def _v_eff(self, i: int) -> float:
+        """The speed used for the prediction: the estimate minus its noise floor."""
+        v, d = self.v[i], self.p["v_dead_deg_s"]
+        return math.copysign(max(0.0, abs(v) - d), v)
 
     def lost_for(self, now: float) -> float:
         return now - self.seen
@@ -1056,17 +1108,18 @@ class Tracker:
         moved = False
         for i, j in enumerate(self.j):
             lead = max(0.0, min(p["max_predict_s"], now - self.t_meas + p["lag_s"]))
-            want = self.x[i] + self.v[i] * lead
+            v = self._v_eff(i)
+            want = self.x[i] + v * lead
             lo, hi = self.vlim[i]
             want = max(lo, min(hi, want))
             err = want - self.cmd[j]
-            still = abs(self.v[i]) < 3.0
+            still = abs(v) < 1.0
             if still and abs(err) < p["deadband_deg"] * (0.3 if self.moving[i] else 1.0):
                 self.moving[i] = False
                 target_v = 0.0
             else:
                 self.moving[i] = True
-                target_v = self.v[i] + err / p["tau_s"]
+                target_v = v + err / p["tau_s"]
             target_v = max(-p["max_deg_s"], min(p["max_deg_s"], target_v))
             dv = max(-p["max_acc_deg_s2"] * dt, min(p["max_acc_deg_s2"] * dt, target_v - self.vel[i]))
             self.vel[i] += dv
@@ -1092,7 +1145,7 @@ class Tracker:
         return {"state": "segue" if lost < self.p["hold_after_s"] else "perso", "cls": self.cls,
                 "box": [self.box["x"], self.box["y"], self.box["w"], self.box["h"]],
                 "lost_ms": int(lost * 1000), "err_deg": err, "speed_deg_s": [round(v, 1) for v in self.v],
-                "n": self.n_meas}
+                "n": self.n_meas, "trust": list(self.trust)}
 
 
 def track_pick(boxes: list, x: float | None = None, y: float | None = None) -> dict | None:
