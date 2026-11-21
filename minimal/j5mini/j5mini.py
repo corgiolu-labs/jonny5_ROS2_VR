@@ -910,9 +910,9 @@ TRACK_DEFAULTS = {
                                    # looking down): yaw +13.4 px/deg on x, pitch -12 px/deg on y, i.e. ~17 level
                                    # (f_px 981); the pitch servo has ~4 deg of backlash (5 deg steps: 12 px)
     "lag_s": 0.20,                 # servos behind the firmware's trajectory (IMU campaign 18/10/2026: 200-250 ms)
-    "max_deg_s": 50.0,             # command speed limit per joint (35 until 22/11/2026: a person close to the
-                                   # camera stepping sideways went up to ~80 deg/s and the arm fell behind)
-    "max_acc_deg_s2": 200.0,
+    "max_deg_s": 70.0,             # command speed limit per joint (35, then 50 on 22/11/2026: a person close to
+                                   # the camera stepping sideways went up to ~80 deg/s and the arm fell behind)
+    "max_acc_deg_s2": 300.0,
     "tau_s": 0.15,                 # time constant of the approach to the target direction
     "deadband_deg": 1.5,           # a still object within this of the command: no motion (no hunting)
     "alpha": 0.5, "beta": 0.4,     # alpha-beta filter of the object's direction (per detection; tuned 21/11/2026
