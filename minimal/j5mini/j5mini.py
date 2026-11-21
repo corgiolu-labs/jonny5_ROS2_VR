@@ -920,8 +920,9 @@ TRACK_DEFAULTS = {
     "max_dv_deg_s": 12.0,          # one detection changes the speed estimate by at most this (a box that jumps
                                    # or changes shape is not a sudden speed: the robot hunted with +-55 deg/s)
     "v_dead_deg_s": 5.0,           # speed below this is noise: the prediction uses |v| - v_dead
-    "edge_px": 6,                  # a box side this close to the frame's edge is cut: the box centre is not the
-                                   # object's centre on that axis (21/11/2026: person close to the camera)
+    "edge_px": 24,                 # a box side this close to the frame's edge is cut: the box centre is not the
+                                   # object's centre on that axis (21/11/2026: person close to the camera). YOLO's
+                                   # cut boxes stop short of the far edges: right side 1899-1908, bottom 1062-1066
     "size_memory_s": 3.0,          # how long the last uncut size on an axis is used to rebuild a cut box
     "max_predict_s": 0.6,
     "gate_px": 260,                # a box farther than this (+ the box size) from where the target should be: not it
